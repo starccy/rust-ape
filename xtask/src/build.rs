@@ -9,8 +9,8 @@ use std::process::Command;
 
 #[derive(Args)]
 pub struct BuildArgs {
-    /// Project directory (defaults to the current one)
-    #[arg(long, default_value = ".")]
+    /// The project to build.
+    #[arg(long)]
     pub project: PathBuf,
     #[arg(long)]
     pub release: bool,
@@ -137,7 +137,7 @@ fn verify_patches(root: &Path, meta: &Value) -> Result<()> {
     let mut msg =
         String::from("these crates still resolve to crates.io, so their patches are inert:\n");
     for (name, ver, got) in &bad {
-        msg += &format!("  {name}: got {got}, the patch is for {ver}\n");
+        msg += &format!("  {name} {got} came from the registry, not vendor/patches (patch targets {ver})\n");
     }
     msg += "to fix:\n";
     for (name, ver, _) in &bad {
