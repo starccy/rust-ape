@@ -1,0 +1,416 @@
+diff a/library/Cargo.lock b/library/Cargo.lock
+--- a/library/Cargo.lock
++++ b/library/Cargo.lock
+@@ -147,8 +147,6 @@
+ [[package]]
+ name = "libc"
+ version = "0.2.189"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
+ dependencies = [
+  "rustc-std-workspace-core",
+ ]
+diff a/library/Cargo.toml b/library/Cargo.toml
+--- a/library/Cargo.toml
++++ b/library/Cargo.toml
+@@ -81,6 +81,9 @@
+ ]
+ 
+ [patch.crates-io]
++# cosmo-adapted libc. Re-add this after updating library/.
++libc = { path = '../patches/libc' }
++
+ # See comments in `library/rustc-std-workspace-core/README.md` for what's going on here
+ rustc-std-workspace-core = { path = 'rustc-std-workspace-core' }
+ rustc-std-workspace-alloc = { path = 'rustc-std-workspace-alloc' }
+diff a/library/std/src/sys/fd/unix.rs b/library/std/src/sys/fd/unix.rs
+--- a/library/std/src/sys/fd/unix.rs
++++ b/library/std/src/sys/fd/unix.rs
+@@ -615,16 +615,7 @@
+         Ok(())
+     }
+ 
+-    #[cfg(target_os = "linux")]
+-    pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
+-        unsafe {
+-            let v = nonblocking as libc::c_int;
+-            cvt(libc::ioctl(self.as_raw_fd(), libc::FIONBIO, &v))?;
+-            Ok(())
+-        }
+-    }
+-
+-    #[cfg(not(target_os = "linux"))]
++    // cosmo: no ioctl FIONBIO (ENOTSUP), so take the fcntl path everywhere.
+     pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
+         unsafe {
+             let previous = cvt(libc::fcntl(self.as_raw_fd(), libc::F_GETFL))?;
+diff a/library/std/src/sys/io/error/unix.rs b/library/std/src/sys/io/error/unix.rs
+--- a/library/std/src/sys/io/error/unix.rs
++++ b/library/std/src/sys/io/error/unix.rs
+@@ -136,8 +136,95 @@
+     errno == libc::EINTR
+ }
+ 
++// cosmo: errno is whatever the host uses (WSA codes on Windows), so the match
++// below sends everything to Uncategorized — and an unrecognized EWOULDBLOCK
++// turns non-blocking IO into a hard error. Try the runtime symbols first.
++fn cosmo_decode_error_kind(errno: i32) -> Option<io::ErrorKind> {
++    use io::ErrorKind::*;
++    unsafe extern "C" {
++        #[link_name = "EAGAIN"]
++        static EAGAIN: c_int;
++        #[link_name = "EWOULDBLOCK"]
++        static EWOULDBLOCK: c_int;
++        #[link_name = "EINPROGRESS"]
++        static EINPROGRESS: c_int;
++        #[link_name = "ECONNREFUSED"]
++        static ECONNREFUSED: c_int;
++        #[link_name = "ECONNRESET"]
++        static ECONNRESET: c_int;
++        #[link_name = "ECONNABORTED"]
++        static ECONNABORTED: c_int;
++        #[link_name = "ETIMEDOUT"]
++        static ETIMEDOUT: c_int;
++        #[link_name = "ENETUNREACH"]
++        static ENETUNREACH: c_int;
++        #[link_name = "ENETDOWN"]
++        static ENETDOWN: c_int;
++        #[link_name = "EHOSTUNREACH"]
++        static EHOSTUNREACH: c_int;
++        #[link_name = "ENOTCONN"]
++        static ENOTCONN: c_int;
++        #[link_name = "EADDRINUSE"]
++        static EADDRINUSE: c_int;
++        #[link_name = "EADDRNOTAVAIL"]
++        static EADDRNOTAVAIL: c_int;
++        #[link_name = "EPIPE"]
++        static EPIPE: c_int;
++        #[link_name = "EINTR"]
++        static EINTR: c_int;
++        #[link_name = "EINVAL"]
++        static EINVAL: c_int;
++        #[link_name = "EACCES"]
++        static EACCES: c_int;
++        #[link_name = "EPERM"]
++        static EPERM: c_int;
++        #[link_name = "ENOENT"]
++        static ENOENT: c_int;
++        #[link_name = "EEXIST"]
++        static EEXIST: c_int;
++        #[link_name = "ENOSYS"]
++        static ENOSYS: c_int;
++    }
++    let e = errno as c_int;
++    // EWOULDBLOCK and EAGAIN may well be the same value here.
++    let table: [(c_int, io::ErrorKind); 21] = unsafe {
++        [
++            (EAGAIN, WouldBlock),
++            (EWOULDBLOCK, WouldBlock),
++            (EINPROGRESS, InProgress),
++            (ECONNREFUSED, ConnectionRefused),
++            (ECONNRESET, ConnectionReset),
++            (ECONNABORTED, ConnectionAborted),
++            (ETIMEDOUT, TimedOut),
++            (ENETUNREACH, NetworkUnreachable),
++            (ENETDOWN, NetworkDown),
++            (EHOSTUNREACH, HostUnreachable),
++            (ENOTCONN, NotConnected),
++            (EADDRINUSE, AddrInUse),
++            (EADDRNOTAVAIL, AddrNotAvailable),
++            (EPIPE, BrokenPipe),
++            (EINTR, Interrupted),
++            (EINVAL, InvalidInput),
++            (EACCES, PermissionDenied),
++            (EPERM, PermissionDenied),
++            (ENOENT, NotFound),
++            (EEXIST, AlreadyExists),
++            (ENOSYS, Unsupported),
++        ]
++    };
++    for &(val, kind) in table.iter() {
++        if e == val {
++            return Some(kind);
++        }
++    }
++    None
++}
++
+ pub fn decode_error_kind(errno: i32) -> io::ErrorKind {
+     use io::ErrorKind::*;
++    if let Some(kind) = cosmo_decode_error_kind(errno) {
++        return kind;
++    }
+     match errno as libc::c_int {
+         libc::E2BIG => ArgumentListTooLong,
+         libc::EADDRINUSE => AddrInUse,
+@@ -216,7 +303,9 @@
+     let p = buf.as_mut_ptr();
+     unsafe {
+         if strerror_r(errno as c_int, p, buf.len()) < 0 {
+-            panic!("strerror_r failure");
++            // cosmo: strerror_r chokes on the WSA codes Windows passes through,
++            // and panicking takes the whole error-formatting path down with it.
++            return format!("os error {errno}");
+         }
+ 
+         let p = p as *const _;
+diff a/library/std/src/sys/net/connection/socket/mod.rs b/library/std/src/sys/net/connection/socket/mod.rs
+--- a/library/std/src/sys/net/connection/socket/mod.rs
++++ b/library/std/src/sys/net/connection/socket/mod.rs
+@@ -70,10 +70,23 @@
+         target_os = "nto", target_os = "qnx",
+         target_os = "cygwin",
+     ) => {
+-        use libc::MSG_NOSIGNAL;
++        // cosmo: MSG_NOSIGNAL is a runtime constant, and Windows has no such
++        // flag at all. Shadow it with a fn of the same name — call sites only
++        // grow a pair of parens.
++        unsafe extern "C" {
++            #[link_name = "MSG_NOSIGNAL"]
++            static COSMO_MSG_NOSIGNAL: c_int;
++        }
++        #[allow(non_snake_case)]
++        fn MSG_NOSIGNAL() -> c_int {
++            unsafe { COSMO_MSG_NOSIGNAL }
++        }
+     }
+     _ => {
+-        const MSG_NOSIGNAL: c_int = 0x0;
++        #[allow(non_snake_case)]
++        fn MSG_NOSIGNAL() -> c_int {
++            0x0
++        }
+     }
+ }
+ 
+@@ -217,12 +230,85 @@
+ ///
+ /// # Safety
+ /// `T` must be the type associated with the given socket option.
++// cosmo: SOL_SOCKET/SO_*/TCP_*/IP_*/IPV6_* are runtime values (WSA's on
++// Windows), so translate at the get/setsockopt boundary. IPPROTO_* are real
++// protocol numbers and stay as they are.
++fn cosmo_sockopt(level: c_int, name: c_int) -> (c_int, c_int) {
++    unsafe extern "C" {
++        #[link_name = "SOL_SOCKET"]
++        static COSMO_SOL_SOCKET: c_int;
++        #[link_name = "SO_ERROR"]
++        static COSMO_SO_ERROR: c_int;
++        #[link_name = "SO_REUSEADDR"]
++        static COSMO_SO_REUSEADDR: c_int;
++        #[link_name = "SO_BROADCAST"]
++        static COSMO_SO_BROADCAST: c_int;
++        #[link_name = "SO_RCVTIMEO"]
++        static COSMO_SO_RCVTIMEO: c_int;
++        #[link_name = "SO_SNDTIMEO"]
++        static COSMO_SO_SNDTIMEO: c_int;
++        #[link_name = "SO_LINGER"]
++        static COSMO_SO_LINGER: c_int;
++        #[link_name = "SO_KEEPALIVE"]
++        static COSMO_SO_KEEPALIVE: c_int;
++        #[link_name = "TCP_NODELAY"]
++        static COSMO_TCP_NODELAY: c_int;
++        #[link_name = "IP_TTL"]
++        static COSMO_IP_TTL: c_int;
++        #[link_name = "IP_MULTICAST_TTL"]
++        static COSMO_IP_MULTICAST_TTL: c_int;
++        #[link_name = "IP_MULTICAST_LOOP"]
++        static COSMO_IP_MULTICAST_LOOP: c_int;
++        #[link_name = "IP_ADD_MEMBERSHIP"]
++        static COSMO_IP_ADD_MEMBERSHIP: c_int;
++        #[link_name = "IP_DROP_MEMBERSHIP"]
++        static COSMO_IP_DROP_MEMBERSHIP: c_int;
++        #[link_name = "IPV6_V6ONLY"]
++        static COSMO_IPV6_V6ONLY: c_int;
++        #[link_name = "IPV6_MULTICAST_LOOP"]
++        static COSMO_IPV6_MULTICAST_LOOP: c_int;
++        #[link_name = "IPV6_JOIN_GROUP"]
++        static COSMO_IPV6_JOIN_GROUP: c_int;
++        #[link_name = "IPV6_LEAVE_GROUP"]
++        static COSMO_IPV6_LEAVE_GROUP: c_int;
++    }
++    // (Linux level, Linux name, cosmo level, cosmo name)
++    let table: [(c_int, c_int, c_int, c_int); 17] = unsafe {
++        [
++            (c::SOL_SOCKET, c::SO_ERROR, COSMO_SOL_SOCKET, COSMO_SO_ERROR),
++            (c::SOL_SOCKET, c::SO_REUSEADDR, COSMO_SOL_SOCKET, COSMO_SO_REUSEADDR),
++            (c::SOL_SOCKET, c::SO_BROADCAST, COSMO_SOL_SOCKET, COSMO_SO_BROADCAST),
++            (c::SOL_SOCKET, c::SO_RCVTIMEO, COSMO_SOL_SOCKET, COSMO_SO_RCVTIMEO),
++            (c::SOL_SOCKET, c::SO_SNDTIMEO, COSMO_SOL_SOCKET, COSMO_SO_SNDTIMEO),
++            (c::SOL_SOCKET, c::SO_LINGER, COSMO_SOL_SOCKET, COSMO_SO_LINGER),
++            (c::SOL_SOCKET, c::SO_KEEPALIVE, COSMO_SOL_SOCKET, COSMO_SO_KEEPALIVE),
++            (c::IPPROTO_TCP, c::TCP_NODELAY, c::IPPROTO_TCP, COSMO_TCP_NODELAY),
++            (c::IPPROTO_IP, c::IP_TTL, c::IPPROTO_IP, COSMO_IP_TTL),
++            (c::IPPROTO_IP, c::IP_MULTICAST_TTL, c::IPPROTO_IP, COSMO_IP_MULTICAST_TTL),
++            (c::IPPROTO_IP, c::IP_MULTICAST_LOOP, c::IPPROTO_IP, COSMO_IP_MULTICAST_LOOP),
++            (c::IPPROTO_IP, c::IP_ADD_MEMBERSHIP, c::IPPROTO_IP, COSMO_IP_ADD_MEMBERSHIP),
++            (c::IPPROTO_IP, c::IP_DROP_MEMBERSHIP, c::IPPROTO_IP, COSMO_IP_DROP_MEMBERSHIP),
++            (c::IPPROTO_IPV6, c::IPV6_V6ONLY, c::IPPROTO_IPV6, COSMO_IPV6_V6ONLY),
++            (c::IPPROTO_IPV6, c::IPV6_MULTICAST_LOOP, c::IPPROTO_IPV6, COSMO_IPV6_MULTICAST_LOOP),
++            (c::IPPROTO_IPV6, c::IPV6_ADD_MEMBERSHIP, c::IPPROTO_IPV6, COSMO_IPV6_JOIN_GROUP),
++            (c::IPPROTO_IPV6, c::IPV6_DROP_MEMBERSHIP, c::IPPROTO_IPV6, COSMO_IPV6_LEAVE_GROUP),
++        ]
++    };
++    for &(lin_l, lin_n, cos_l, cos_n) in table.iter() {
++        if level == lin_l && name == lin_n {
++            return (cos_l, cos_n);
++        }
++    }
++    (level, name)
++}
++
+ pub unsafe fn setsockopt<T>(
+     sock: &Socket,
+     level: c_int,
+     option_name: c_int,
+     option_value: T,
+ ) -> io::Result<()> {
++    let (level, option_name) = cosmo_sockopt(level, option_name);
+     let option_len = size_of::<T>() as c::socklen_t;
+     // SAFETY:
+     // * `sock` is opened for the duration of this call, as `sock` owns the socket.
+@@ -251,6 +337,7 @@
+     level: c_int,
+     option_name: c_int,
+ ) -> io::Result<T> {
++    let (level, option_name) = cosmo_sockopt(level, option_name);
+     let mut option_value = MaybeUninit::<T>::zeroed();
+     let mut option_len = size_of::<T>() as c::socklen_t;
+ 
+@@ -432,7 +519,7 @@
+     pub fn write(&self, buf: &[u8]) -> io::Result<usize> {
+         let len = cmp::min(buf.len(), <wrlen_t>::MAX as usize) as wrlen_t;
+         let ret = cvt(unsafe {
+-            c::send(self.inner.as_raw(), buf.as_ptr() as *const c_void, len, MSG_NOSIGNAL)
++            c::send(self.inner.as_raw(), buf.as_ptr() as *const c_void, len, MSG_NOSIGNAL())
+         })?;
+         Ok(ret as usize)
+     }
+@@ -714,7 +801,7 @@
+                 self.inner.as_raw(),
+                 buf.as_ptr() as *const c_void,
+                 len,
+-                MSG_NOSIGNAL,
++                MSG_NOSIGNAL(),
+                 dst.as_ptr(),
+                 dstlen,
+             )
+@@ -862,7 +949,7 @@
+     pub fn send(&self, buf: &[u8]) -> io::Result<usize> {
+         let len = cmp::min(buf.len(), <wrlen_t>::MAX as usize) as wrlen_t;
+         let ret = cvt(unsafe {
+-            c::send(self.inner.as_raw(), buf.as_ptr() as *const c_void, len, MSG_NOSIGNAL)
++            c::send(self.inner.as_raw(), buf.as_ptr() as *const c_void, len, MSG_NOSIGNAL())
+         })?;
+         Ok(ret as usize)
+     }
+diff a/library/std/src/sys/net/connection/socket/unix.rs b/library/std/src/sys/net/connection/socket/unix.rs
+--- a/library/std/src/sys/net/connection/socket/unix.rs
++++ b/library/std/src/sys/net/connection/socket/unix.rs
+@@ -1,5 +1,16 @@
+ use libc::{MSG_PEEK, c_int, c_void, size_t, sockaddr, socklen_t};
+ 
++// cosmo: SOCK_CLOEXEC is a runtime constant, not libc's 0x80000; passing the
++// musl value to socket() on Windows fails with EINVAL.
++unsafe extern "C" {
++    #[link_name = "SOCK_CLOEXEC"]
++    static COSMO_SOCK_CLOEXEC: c_int;
++}
++
++fn sock_cloexec() -> c_int {
++    unsafe { COSMO_SOCK_CLOEXEC }
++}
++
+ #[cfg(not(any(target_os = "espidf", target_os = "nuttx")))]
+ use crate::ffi::CStr;
+ use crate::io::{self, BorrowedBuf, BorrowedCursor, IoSlice, IoSliceMut};
+@@ -82,7 +93,7 @@
+                 // On platforms that support it we pass the SOCK_CLOEXEC
+                 // flag to atomically create the socket and set it as
+                 // CLOEXEC. On Linux this was added in 2.6.27.
+-                let fd = cvt(unsafe { libc::socket(family, ty | libc::SOCK_CLOEXEC, 0) })?;
++                let fd = cvt(unsafe { libc::socket(family, ty | sock_cloexec(), 0) })?;
+                 let socket = Socket(unsafe { FileDesc::from_raw_fd(fd) });
+ 
+                 // DragonFlyBSD, FreeBSD and NetBSD use `SO_NOSIGPIPE` as a `setsockopt`
+@@ -128,7 +139,7 @@
+                     target_os = "qnx",
+                 ) => {
+                     // Like above, set cloexec atomically
+-                    cvt(libc::socketpair(fam, ty | libc::SOCK_CLOEXEC, 0, fds.as_mut_ptr()))?;
++                    cvt(libc::socketpair(fam, ty | sock_cloexec(), 0, fds.as_mut_ptr()))?;
+                     Ok((Socket(FileDesc::from_raw_fd(fds[0])), Socket(FileDesc::from_raw_fd(fds[1]))))
+                 }
+                 _ => {
+@@ -258,7 +269,7 @@
+                 target_os = "cygwin",
+             ) => {
+                 unsafe {
+-                    let fd = cvt_r(|| libc::accept4(self.as_raw_fd(), storage, len, libc::SOCK_CLOEXEC))?;
++                    let fd = cvt_r(|| libc::accept4(self.as_raw_fd(), storage, len, sock_cloexec()))?;
+                     Ok(Socket(FileDesc::from_raw_fd(fd)))
+                 }
+             }
+diff a/library/std/src/sys/random/linux.rs b/library/std/src/sys/random/linux.rs
+--- a/library/std/src/sys/random/linux.rs
++++ b/library/std/src/sys/random/linux.rs
+@@ -123,36 +123,22 @@
+                         GETRANDOM_AVAILABLE.store(false, Relaxed);
+                         break;
+                     }
+-                    other => {
+-                        panic!("failed to generate random data: errno={other:?}, flags={flags:?}")
+-                    }
+-                }
+-            }
+-        }
+-    }
+-
+-    // When we want cryptographic strength, we need to wait for the CPRNG-pool
+-    // to become initialized. Do this by polling `/dev/random` until it is ready.
+-    if !insecure {
+-        if !URANDOM_READY.load(Acquire) {
+-            let random = File::open("/dev/random").expect("failed to open /dev/random");
+-            let mut fd = libc::pollfd { fd: random.as_raw_fd(), events: libc::POLLIN, revents: 0 };
+-
+-            while !URANDOM_READY.load(Acquire) {
+-                let ret = unsafe { libc::poll(&mut fd, 1, -1) };
+-                match ret {
+-                    1 => {
+-                        assert_eq!(fd.revents, libc::POLLIN);
+-                        URANDOM_READY.store(true, Release);
++                    // cosmo: errno is the host's own value, so the arms
++                    // above may all miss. Getting here just means no
++                    // usable getrandom — fall back, don't panic.
++                    _ => {
++                        GETRANDOM_AVAILABLE.store(false, Relaxed);
+                         break;
+                     }
+-                    -1 if errno() == libc::EINTR => continue,
+-                    _ => panic!("poll(\"/dev/random\") failed"),
+                 }
+             }
+         }
+     }
+ 
++    // cosmo: dropped the /dev/random readiness poll — it hangs on Windows and
++    // only ever mattered for early Linux boot. Entropy is always up by now.
++    let _ = insecure;
++
+     DEVICE
+         .get_or_try_init(|| File::open("/dev/urandom"))
+         .and_then(|mut dev| dev.read_exact(bytes))
+diff a/library/std/src/sys/thread/unix.rs b/library/std/src/sys/thread/unix.rs
+--- a/library/std/src/sys/thread/unix.rs
++++ b/library/std/src/sys/thread/unix.rs
+@@ -446,8 +446,8 @@
+         // Available since glibc 2.12, musl 1.1.16, and uClibc 1.0.20 for Linux,
+         // FreeBSD 12.2 and 13.0, and DragonFly BSD 6.0.
+         let res = libc::pthread_setname_np(libc::pthread_self(), name.as_ptr());
+-        // We have no good way of propagating errors here, but in debug-builds let's check that this actually worked.
+-        debug_assert_eq!(res, 0);
++        // cosmo: ENOSYS on Windows; just ignore the error instead of asserting.
++        let _ = res;
+     }
+ }
+ 

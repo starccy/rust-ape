@@ -1,0 +1,23 @@
+diff a/getrandom/src/use_file.rs b/getrandom/src/use_file.rs
+--- a/getrandom/src/use_file.rs
++++ b/getrandom/src/use_file.rs
+@@ -52,9 +52,8 @@
+         return Ok(fd);
+     }
+ 
+-    // On Linux, /dev/urandom might return insecure values.
+-    #[cfg(any(target_os = "android", target_os = "linux"))]
+-    wait_until_rng_ready()?;
++    // cosmo: dropped the wait_until_rng_ready() call here — cosmo's /dev/random
++    // never goes POLLIN-ready on Windows, and entropy is up by now anyway.
+ 
+     let fd = unsafe { open_readonly(FILE_PATH)? };
+     // The fd always fits in a usize without conflicting with FD_UNINIT.
+@@ -66,6 +65,7 @@
+ 
+ // Succeeds once /dev/urandom is safe to read from
+ #[cfg(any(target_os = "android", target_os = "linux"))]
++#[allow(dead_code)] // cosmo: unused now, kept for reference
+ fn wait_until_rng_ready() -> Result<(), Error> {
+     // Poll /dev/random to make sure it is ok to read from /dev/urandom.
+     let fd = unsafe { open_readonly("/dev/random\0")? };

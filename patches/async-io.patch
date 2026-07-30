@@ -1,0 +1,39 @@
+diff a/async-io/src/lib.rs b/async-io/src/lib.rs
+--- a/async-io/src/lib.rs
++++ b/async-io/src/lib.rs
+@@ -2167,11 +2167,35 @@
+         #[cfg(unix)]
+         Err(rio::Errno::INPROGRESS) => {}
+         Err(rio::Errno::AGAIN) | Err(rio::Errno::WOULDBLOCK) => {}
++        // cosmo: Windows leaks raw WSA codes out of connect(), so the arms above
++        // miss the "in progress" case and we'd report a live connect as failed.
++        Err(err) if is_connect_in_progress(err.raw_os_error()) => {}
+         Err(err) => return Err(err.into()),
+     }
+     Ok(socket)
+ }
+ 
++// cosmo: errno differs per OS under cosmo, hence the runtime symbols; the bare numbers
++// are Windows leaking through.
++fn is_connect_in_progress(raw: i32) -> bool {
++    unsafe extern "C" {
++        #[link_name = "EINPROGRESS"]
++        static COSMO_EINPROGRESS: core::ffi::c_int;
++        #[link_name = "EWOULDBLOCK"]
++        static COSMO_EWOULDBLOCK: core::ffi::c_int;
++        #[link_name = "EAGAIN"]
++        static COSMO_EAGAIN: core::ffi::c_int;
++    }
++    let (einprogress, ewouldblock, eagain) =
++        unsafe { (COSMO_EINPROGRESS, COSMO_EWOULDBLOCK, COSMO_EAGAIN) };
++    raw == einprogress
++        || raw == ewouldblock
++        || raw == eagain
++        || raw == 10035 // WSAEWOULDBLOCK
++        || raw == 10036 // WSAEINPROGRESS
++        || raw == 10037 // WSAEALREADY
++}
++
+ #[inline]
+ fn setup_networking() {
+     #[cfg(windows)]

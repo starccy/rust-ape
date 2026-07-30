@@ -1,0 +1,37 @@
+diff a/async-process/src/lib.rs b/async-process/src/lib.rs
+--- a/async-process/src/lib.rs
++++ b/async-process/src/lib.rs
+@@ -715,28 +715,11 @@
+ #[inline]
+ pub fn driver() -> impl Future<Output = Infallible> + Send + 'static {
+     async {
+-        // Get the reaper.
+-        let reaper = Reaper::get();
+-
+-        // Make sure the reaper knows we're driving it.
+-        reaper.drivers.fetch_add(1, Ordering::SeqCst);
+-
+-        // Decrement the driver count when this future is dropped.
+-        let _guard = CallOnDrop(|| {
+-            let prev_count = reaper.drivers.fetch_sub(1, Ordering::SeqCst);
+-
+-            // If this was the last driver, and there are still resources actively using the
+-            // reaper, make sure that there is a thread driving the reaper.
+-            if prev_count == 1
+-                && (reaper.child_count.load(Ordering::SeqCst) > 0 || reaper.sys.has_zombies())
+-            {
+-                reaper.ensure_driven();
+-            }
+-        });
+-
+-        // Acquire the reaper lock and start polling the SIGCHLD event.
+-        let guard = reaper.sys.lock().await;
+-        reaper.sys.reap(guard).await
++        // cosmo: neither reaper backend works (no SIGCHLD on Windows, no
++        // pidfd/waitid anywhere) and smol spawns this driver unconditionally, so
++        // park instead of letting a worker init the reaper and take us down.
++        // No child processes until someone writes a cosmo reaper.
++        std::future::pending().await
+     }
+ }
+ 

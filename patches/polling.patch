@@ -1,0 +1,108 @@
+diff a/polling/src/poll.rs b/polling/src/poll.rs
+--- a/polling/src/poll.rs
++++ b/polling/src/poll.rs
+@@ -471,7 +471,103 @@
+             None => None,
+         };
+ 
+-        Ok(rustix::event::poll(fds, timeout.as_ref())?)
++        // cosmo: POLL* are runtime values (WSAPoll's on Windows) but this crate
++        // and rustix bake in the Linux ones. Translate around the call so the
++        // rest of the crate can go on pretending it's Linux.
++        cosmo_poll::translate_events_to_host(fds);
++        let ret = rustix::event::poll(fds, timeout.as_ref());
++        cosmo_poll::translate_revents_from_host(fds);
++        Ok(ret?)
++    }
++
++    // PollFd is repr(transparent) over c::pollfd — that's what makes the casts
++    // below legal.
++    mod cosmo_poll {
++        use super::PollFd;
++
++        #[repr(C)]
++        struct RawPollFd {
++            fd: i32,
++            events: i16,
++            revents: i16,
++        }
++
++        // (Linux bit, cosmo runtime symbol)
++        fn bit_pairs() -> [(i16, i16); 11] {
++            unsafe extern "C" {
++                #[link_name = "POLLIN"]
++                static POLLIN: i16;
++                #[link_name = "POLLPRI"]
++                static POLLPRI: i16;
++                #[link_name = "POLLOUT"]
++                static POLLOUT: i16;
++                #[link_name = "POLLERR"]
++                static POLLERR: i16;
++                #[link_name = "POLLHUP"]
++                static POLLHUP: i16;
++                #[link_name = "POLLNVAL"]
++                static POLLNVAL: i16;
++                #[link_name = "POLLRDNORM"]
++                static POLLRDNORM: i16;
++                #[link_name = "POLLRDBAND"]
++                static POLLRDBAND: i16;
++                #[link_name = "POLLWRNORM"]
++                static POLLWRNORM: i16;
++                #[link_name = "POLLWRBAND"]
++                static POLLWRBAND: i16;
++                #[link_name = "POLLRDHUP"]
++                static POLLRDHUP: i16;
++            }
++            unsafe {
++                [
++                    (0x001, POLLIN),
++                    (0x002, POLLPRI),
++                    (0x004, POLLOUT),
++                    (0x008, POLLERR),
++                    (0x010, POLLHUP),
++                    (0x020, POLLNVAL),
++                    (0x040, POLLRDNORM),
++                    (0x080, POLLRDBAND),
++                    (0x100, POLLWRNORM),
++                    (0x200, POLLWRBAND),
++                    (0x2000u16 as i16, POLLRDHUP),
++                ]
++            }
++        }
++
++        fn lin_to_host(bits: i16) -> i16 {
++            let mut out = 0i16;
++            for (lin, host) in bit_pairs() {
++                if bits & lin != 0 {
++                    out |= host;
++                }
++            }
++            out
++        }
++
++        fn host_to_lin(bits: i16) -> i16 {
++            let mut out = 0i16;
++            for (lin, host) in bit_pairs() {
++                if host != 0 && bits & host != 0 {
++                    out |= lin;
++                }
++            }
++            out
++        }
++
++        pub(super) fn translate_events_to_host(fds: &mut [PollFd<'_>]) {
++            for pfd in fds.iter_mut() {
++                let raw = pfd as *mut PollFd<'_> as *mut RawPollFd;
++                unsafe { (*raw).events = lin_to_host((*raw).events) };
++            }
++        }
++
++        pub(super) fn translate_revents_from_host(fds: &mut [PollFd<'_>]) {
++            for pfd in fds.iter_mut() {
++                let raw = pfd as *mut PollFd<'_> as *mut RawPollFd;
++                unsafe { (*raw).revents = host_to_lin((*raw).revents) };
++            }
++        }
+     }
+ }
+ 

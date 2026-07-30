@@ -1,0 +1,55 @@
+{
+  "arch": "x86_64",
+  "cpu": "x86-64",
+  "link-self-contained": {
+    "components": []
+  },
+  "crt-static-default": true,
+  "crt-static-respected": true,
+  "data-layout": "e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-f80:128-n8:16:32:64-S128",
+  "default-uwtable": false,
+  "dynamic-linking": false,
+  "env": "musl",
+  "has-rpath": false,
+  "has-thread-local": false,
+  "linker-flavor": "gcc",
+  "llvm-target": "x86_64-unknown-linux-musl",
+  "max-atomic-width": 64,
+  "metadata": {
+    "description": "64-bit Linux with musl 1.2.5",
+    "host_tools": true,
+    "std": true,
+    "tier": 2
+  },
+  "os": "linux",
+  "plt-by-default": false,
+  "position-independent-executables": false,
+  "pre-link-args": {
+    "gcc": [
+      "-static"
+    ]
+  },
+  "stack-probes": {
+    "kind": "none"
+  },
+  "static-position-independent-executables": false,
+  "supports-fentry": true,
+  "supports-xray": true,
+  "target-family": [
+    "unix"
+  ],
+  "target-pointer-width": 64,
+  "panic-strategy": "abort",
+  "exe-suffix": ".com.dbg",
+  "emit-debug-gdb-scripts": false,
+  "relocation-model": "static",
+  "disable-redzone": true,
+  "frame-pointer": "always",
+  "requires-lto": false,
+  "eh-frame-header": false,
+  "no-default-libraries": true,
+  "linker-is-gnu": true,
+  "trap-unreachable": true,
+  "linker": "@APE_LINKER@"
+}
+

@@ -1,0 +1,51 @@
+diff a/libc/src/unix/linux_like/linux/mod.rs b/libc/src/unix/linux_like/linux/mod.rs
+--- a/libc/src/unix/linux_like/linux/mod.rs
++++ b/libc/src/unix/linux_like/linux/mod.rs
+@@ -1289,7 +1289,9 @@
+ 
+ pub const GRND_NONBLOCK: c_uint = 0x0001;
+ pub const GRND_RANDOM: c_uint = 0x0002;
+-pub const GRND_INSECURE: c_uint = 0x0004;
++// cosmo: GRND_INSECURE isn't supported off Linux, and the EINVAL comes back as
++// a panic. GRND_NONBLOCK is a documented substitute that works everywhere.
++pub const GRND_INSECURE: c_uint = GRND_NONBLOCK;
+ 
+ // <linux/seccomp.h>
+ pub const SECCOMP_MODE_DISABLED: c_uint = 0;
+diff a/libc/src/unix/linux_like/linux/musl/b64/aarch64/mod.rs b/libc/src/unix/linux_like/linux/musl/b64/aarch64/mod.rs
+--- a/libc/src/unix/linux_like/linux/musl/b64/aarch64/mod.rs
++++ b/libc/src/unix/linux_like/linux/musl/b64/aarch64/mod.rs
+@@ -8,18 +8,20 @@
+ pub type stat64 = stat;
+ 
+ s! {
++    // cosmo: aarch64 shares x86_64's stat layout instead of musl's, so st_mode
++    // lands at 24 rather than 16. Offsets probed with cosmocc; get them wrong
++    // and is_dir() quietly lies.
+     pub struct stat {
+         pub st_dev: crate::dev_t,
+         pub st_ino: crate::ino_t,
++        pub st_nlink: c_ulong,
+         pub st_mode: crate::mode_t,
+-        pub st_nlink: crate::nlink_t,
+         pub st_uid: crate::uid_t,
+         pub st_gid: crate::gid_t,
++        __pad0: Padding<c_uint>,
+         pub st_rdev: crate::dev_t,
+-        __pad0: Padding<c_ulong>,
+         pub st_size: off_t,
+-        pub st_blksize: crate::blksize_t,
+-        __pad1: Padding<c_int>,
++        pub st_blksize: c_long,
+         pub st_blocks: crate::blkcnt_t,
+         pub st_atime: crate::time_t,
+         pub st_atime_nsec: c_long,
+@@ -27,7 +29,7 @@
+         pub st_mtime_nsec: c_long,
+         pub st_ctime: crate::time_t,
+         pub st_ctime_nsec: c_long,
+-        __unused: Padding<[c_uint; 2]>,
++        __unused: Padding<[c_long; 3]>,
+     }
+ 
+     pub struct user_regs_struct {

@@ -1,0 +1,6 @@
+[package]
+name = "ape"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Safe bindings to the Cosmopolitan runtime interfaces"
