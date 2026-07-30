@@ -156,7 +156,9 @@ pub fn avail_ram_bytes() -> i64 {
     avail_phys_pages().saturating_mul(page_size())
 }
 
-/// Path to our own executable, resolved per host — normalized on Windows.
+/// Path to our own executable, resolved per host and normalized on Windows.
+/// Prefer this over `std::env::current_exe`, which under APE hands back the
+/// loader (a ~9KB stub) instead of the program that's running.
 pub fn program_executable_name() -> Option<String> {
     unsafe { cstr(GetProgramExecutableName()) }
 }

@@ -3,6 +3,7 @@ mod concat;
 mod config;
 mod fetch;
 mod generate;
+mod metadata;
 mod setup;
 mod util;
 

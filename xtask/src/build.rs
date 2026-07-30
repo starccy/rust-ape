@@ -1,8 +1,8 @@
 use crate::config::{self, PATCHED_CRATES, TARGETS};
+use crate::metadata::{self, Metadata};
 use crate::util;
 use anyhow::{Context, Result, bail};
 use clap::Args;
-use serde_json::Value;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -33,13 +33,17 @@ pub fn run(args: &BuildArgs) -> Result<()> {
         .with_context(|| format!("no such project directory: {}", args.project.display()))?;
     preflight(&root)?;
 
-    let meta = cargo_metadata(&project)?;
+    let meta = metadata::load(&project)?;
     verify_patches(&root, &meta)?;
 
-    let artifact = match &args.bin {
-        Some(b) => b.clone(),
-        None => root_package_name(&meta)?,
-    };
+    let bins = bin_targets(&meta, args.bin.as_deref())?;
+    if args.output.is_some() && bins.len() > 1 {
+        bail!(
+            "--output names one file but {} binaries are being built ({}); pass --bin to pick one",
+            bins.len(),
+            bins.join(", ")
+        );
+    }
     let profile = if args.release { "release" } else { "debug" };
 
     // cargo treats build-std's std and libc as non-local and won't notice their
@@ -62,21 +66,22 @@ pub fn run(args: &BuildArgs) -> Result<()> {
         cargo_build(&root, &project, triple, arch, profile, args)?;
     }
 
-    let output = match &args.output {
-        Some(o) => o.clone(),
-        None => project.join("target/ape").join(format!("{artifact}.com")),
-    };
-    if let Some(parent) = output.parent() {
-        fs::create_dir_all(parent)?;
+    for bin in &bins {
+        let output = match &args.output {
+            Some(o) => o.clone(),
+            None => project.join("target/ape").join(format!("{bin}.com")),
+        };
+        if let Some(parent) = output.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        apelink(&root, &project, profile, bin, &output)?;
+        util::run(Command::new("ls").arg("-la").arg(&output))?;
     }
-    apelink(&root, &project, profile, &artifact, &output)?;
 
     if let Some(parent) = marker.parent() {
         fs::create_dir_all(parent)?;
     }
     fs::write(&marker, format!("{stamp}\n"))?;
-
-    util::run(Command::new("ls").arg("-la").arg(&output))?;
     Ok(())
 }
 
@@ -102,32 +107,15 @@ fn preflight(root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn cargo_metadata(project: &Path) -> Result<Value> {
-    let out = util::capture_with_stderr(
-        Command::new("cargo")
-            .current_dir(project)
-            .env("RUSTUP_TOOLCHAIN", config::rust_channel()?)
-            .args(["metadata", "--format-version", "1"]),
-    )?;
-    serde_json::from_str(&out).context("cargo metadata did not return valid JSON")
-}
-
 /// If a crate we must patch still resolves to crates.io (e.g. the registry
 /// published a newer version so the patch entry no longer matches), stop
 /// instead of producing a subtly wrong binary.
-fn verify_patches(root: &Path, meta: &Value) -> Result<()> {
-    let packages = meta["packages"]
-        .as_array()
-        .context("cargo metadata has no packages")?;
+fn verify_patches(root: &Path, meta: &Metadata) -> Result<()> {
     let mut bad = Vec::new();
     for &(name, ver) in PATCHED_CRATES {
-        for p in packages {
-            if p["name"].as_str() == Some(name)
-                && p["source"]
-                    .as_str()
-                    .is_some_and(|s| s.contains("crates.io"))
-            {
-                bad.push((name, ver, p["version"].as_str().unwrap_or("?").to_string()));
+        for p in &meta.packages {
+            if p.name == name && p.from_registry() {
+                bad.push((name, ver, p.version.as_str()));
             }
         }
     }
@@ -149,17 +137,35 @@ fn verify_patches(root: &Path, meta: &Value) -> Result<()> {
     bail!(msg);
 }
 
-fn root_package_name(meta: &Value) -> Result<String> {
-    let root_id = meta["resolve"]["root"]
-        .as_str()
+/// Which binaries to pack. `cargo build` already builds every bin in the
+/// package, so without --bin we pack all of them — the name doesn't have to
+/// match the package's.
+fn bin_targets(meta: &Metadata, only: Option<&str>) -> Result<Vec<String>> {
+    // An explicit --bin is taken at face value, which also keeps this working
+    // in a virtual workspace where there's no root package to ask.
+    if let Some(name) = only {
+        return Ok(vec![name.to_owned()]);
+    }
+    let root_id = meta
+        .resolve
+        .root
+        .as_deref()
         .context("could not tell which package is the root (virtual workspace?); pass --bin")?;
-    let packages = meta["packages"].as_array().context("no packages")?;
-    packages
+    let pkg = meta
+        .packages
         .iter()
-        .find(|p| p["id"] == root_id)
-        .and_then(|p| p["name"].as_str())
-        .map(str::to_owned)
-        .context("the root package is missing from packages")
+        .find(|p| p.id == root_id)
+        .context("the root package is missing from packages")?;
+    let bins: Vec<String> = pkg
+        .targets
+        .iter()
+        .filter(|t| t.kind.iter().any(|k| k == "bin"))
+        .map(|t| t.name.clone())
+        .collect();
+    if bins.is_empty() {
+        bail!("this project has no binaries to build");
+    }
+    Ok(bins)
 }
 
 /// Identity of everything std is built from: the library and libc stamps.
