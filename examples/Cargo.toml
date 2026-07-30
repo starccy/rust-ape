@@ -1,0 +1,22 @@
+[workspace]
+
+[package]
+name = "rust-ape-examples"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+ape = { path = "../ape" }
+# Pulls in async-io, async-process and polling, so building these examples
+# exercises those three patches.
+smol = "2"
+# Pulls in getrandom.
+rand = "0.8"
+
+[patch.crates-io]
+async-io = { path = "../vendor/patches/async-io" }
+async-process = { path = "../vendor/patches/async-process" }
+getrandom = { path = "../vendor/patches/getrandom" }
+libc = { path = "../vendor/patches/libc" }
+polling = { path = "../vendor/patches/polling" }

@@ -89,24 +89,24 @@ pub fn is_qemu_user() -> bool {
 // -------------------------------- system info --------------------------------
 
 unsafe extern "C" {
-    fn __get_cpu_count() -> c_int;
-    fn __get_phys_pages() -> c_long;
-    fn __get_avphys_pages() -> c_long;
-    fn GetProgramExecutableName() -> *mut c_char;
-    fn GetInterpreterExecutableName(buf: *mut c_char, size: usize) -> *mut c_char;
-    fn __get_tmpdir() -> *mut c_char;
-    fn getauxval(kind: c_ulong) -> c_ulong;
-    fn getpagesize() -> c_int;
+    unsafe fn __get_cpu_count() -> c_int;
+    unsafe fn __get_phys_pages() -> c_long;
+    unsafe fn __get_avphys_pages() -> c_long;
+    unsafe fn GetProgramExecutableName() -> *mut c_char;
+    unsafe fn GetInterpreterExecutableName(buf: *mut c_char, size: usize) -> *mut c_char;
+    unsafe fn __get_tmpdir() -> *mut c_char;
+    unsafe fn getauxval(kind: c_ulong) -> c_ulong;
+    unsafe fn getpagesize() -> c_int;
 }
 
 // GetCpuid* and __cpu_march are built on the x86 CPUID instruction; the symbols
 // don't exist on aarch64.
 #[cfg(target_arch = "x86_64")]
 unsafe extern "C" {
-    fn GetCpuidBrand(out: *mut c_char, leaf: u32);
-    fn GetCpuidOs() -> *const c_char;
-    fn GetCpuidEmulator() -> *const c_char;
-    fn __cpu_march(id: std::ffi::c_uint) -> *const c_char;
+    unsafe fn GetCpuidBrand(out: *mut c_char, leaf: u32);
+    unsafe fn GetCpuidOs() -> *const c_char;
+    unsafe fn GetCpuidEmulator() -> *const c_char;
+    unsafe fn __cpu_march(id: std::ffi::c_uint) -> *const c_char;
 }
 
 /// Turns a C string from cosmo into a String; null becomes None.
