@@ -56,6 +56,17 @@ nightly changes. Otherwise it is a no-op.
 > projects you already created. Re-running `setup` fixes the SDK itself, but you
 > would have to update those projects' `Cargo.toml` by hand.
 
+To confirm that worked, you can just build the bundled examples now:
+
+```sh
+cargo xtask build --project examples
+./examples/target/ape/platform.com
+```
+
+That leaves every binaries in `examples/target/ape/`, each one a scenario you
+can copy to another machine and run. They double as the test suite; see
+[What works](#what-works).
+
 **2. Create a project.**
 
 ```sh
@@ -81,15 +92,19 @@ Plain `cargo build` inside the project will **not** work. The build needs a
 patched std via `-Z build-std`, two `--cfg` flags, and `CC`/`CXX`/`AR` pointing
 at cosmocc. `cargo xtask build` sets all of that up.
 
-**4. Run it.** Copy the `.com` file to any supported machine and execute it. On
+**4. Run it.**
+
+Copy the `.com` file to any supported machine and execute it. On
 Unix you need the `./` prefix (or you might use `sh -c ./name.com`, see [this](https://github.com/jart/cosmopolitan#shells));
 on Windows, `.\name.com`.
 
 ## What works
 
 Everything in `examples/` is a self-contained scenario that exits non-zero on
-failure. Including TCP/UDP, blocking and async I/O, clocks, hashing, and an HTTPS
-client. CI builds them **once on Linux** and runs those same files on five platforms:
+failure. Including TCP/UDP server/client, blocking and async I/O, clocks, hashing,
+and an HTTPS client and so on. Build them all with `cargo xtask build --project examples`;
+they are the shortest way to see what does and doesn't work here.
+CI builds them **once on Linux** and runs those same files on five platforms:
 
 | | x86-64 | arm64 |
 | --- | --- | --- |
@@ -97,10 +112,10 @@ client. CI builds them **once on Linux** and runs those same files on five platf
 | Windows | ✅ | ✅ |
 | macOS | out of scope | ✅ |
 
-Intel Macs would in fact work since cosmo supports them, and the same file already
-carries x86-64 code. They are left out on purpose: Apple stopped shipping them
-in 2023 and the platform is dying out, so it doesn't seem worth a CI lane
-(for the same reason there is no Windows 7 lane).
+> Intel Macs would in fact work since cosmo supports them, and the same file already
+> carries x86-64 code. They are left out on purpose: Apple stopped shipping them
+> in 2023 and the platform is dying out, so it doesn't seem worth a CI lane
+> (for the same reason there is no Windows 7 lane).
 
 Dependencies with C, C++ or hand-written assembly work: the examples link
 `ring` (30 native objects) and `blake3`'s SIMD backends, both compiled by
