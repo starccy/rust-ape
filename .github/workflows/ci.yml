@@ -1,0 +1,175 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      strace:
+        description: "Run the examples under --strace (cosmo's syscall trace). Very verbose, useful for debugging hangs."
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The toolchain only runs on Linux since cosmocc is a Linux-hosted cross compiler.
+  # Build once here; the run jobs below all use the same files.
+  build:
+    name: build (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # cosmocc's zip is a little bit large and the patched crates come from crates.io.
+      # config.rs pins every one of those versions, so use it as the cache key.
+      - uses: actions/cache@v4
+        with:
+          path: cache
+          key: sdk-${{ runner.os }}-${{ hashFiles('xtask/src/config.rs') }}
+
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            examples
+
+      - run: cargo xtask setup
+
+      - name: Build the examples
+        shell: bash
+        run: |
+          set -o pipefail
+          cargo xtask build --project examples 2>&1 | tee build.log
+          if grep -q 'linking without Apple Silicon support' build.log; then
+            echo "::error::apelink dropped Apple Silicon support; macos-latest would fail"
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: examples
+          path: examples/target/ape/*.com
+          retention-days: 7
+          if-no-files-found: error
+
+  # Run the same set of binaries on every host.
+  run:
+    name: run (${{ matrix.label }})
+    needs: build
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    continue-on-error: ${{ matrix.experimental || false }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { label: linux-x64, os: ubuntu-latest }
+          - { label: linux-arm64, os: ubuntu-24.04-arm }
+          - { label: windows-x64, os: windows-latest }
+          - { label: windows-arm64, os: windows-11-arm, experimental: true }
+          - { label: macos-arm64, os: macos-latest }
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: examples
+          path: ape
+
+      - name: Run every example
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          chmod +x ape/*.com
+          # Give each example a 60s cap so a hanging example doesn't block the rest.
+          cat > /tmp/run-capped.pl <<'PERL'
+          my $t = shift;
+          my $pid = fork;
+          die "fork: $!" unless defined $pid;
+          if ($pid == 0) { exec @ARGV; exit 127 }
+          $SIG{ALRM} = sub { kill 'KILL', $pid; waitpid $pid, 0; exit 142 };
+          alarm $t;
+          waitpid $pid, 0;
+          exit($? & 127 ? 128 + ($? & 127) : $? >> 8);
+          PERL
+          # cosmo writes its trace to stderr and eats the flag before argv, so
+          # this doesn't disturb what the program itself sees or prints.
+          strace=""
+          [ "${{ inputs.strace }}" = "true" ] && strace="--strace"
+          fail=0
+          : > /tmp/summary.txt
+          for b in ape/*.com; do
+            name=$(basename "$b")
+            if perl /tmp/run-capped.pl 60 "$b" $strace >/tmp/out.txt 2>/tmp/err.txt; then
+              status="ok"
+            else
+              rc=$?
+              [ $rc -eq 142 ] && status="TIMED OUT after 60s" || status="FAILED (exit $rc)"
+              fail=1
+            fi
+            # Collapse output per binary, with the status in the group title.
+            # On a hang the partial output is often the only clue, and cosmo
+            # flushes the trace as it goes, so the last logged syscall shows
+            # where it stopped.
+            echo "::group::$name - $status"
+            cat /tmp/out.txt
+            if [ -s /tmp/err.txt ]; then
+              echo "--- stderr"
+              # Traces can be hundreds of lines, only keep the tail.
+              if [ -n "$strace" ]; then tail -200 /tmp/err.txt; else cat /tmp/err.txt; fi
+            fi
+            echo "::endgroup::"
+            [ "$status" = ok ] || echo "::error title=$name::$status"
+            printf '%-24s %s\n' "$name" "$status" >> /tmp/summary.txt
+          done
+          echo "=== summary"
+          cat /tmp/summary.txt
+          exit $fail
+
+      - name: Run every example
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # See the Unix step for why this doesn't disturb the program's argv.
+          $strace = if ("${{ inputs.strace }}" -eq "true") { @("--strace") } else { @() }
+          $fail = 0
+          $summary = @()
+          foreach ($b in Get-ChildItem ape\*.com) {
+            # Same 60s cap as the Unix side.
+            $o = New-TemporaryFile
+            $e = New-TemporaryFile
+            $args = @{}
+            if ($strace) { $args["ArgumentList"] = $strace }
+            $p = Start-Process -FilePath $b.FullName -PassThru -NoNewWindow @args `
+                 -RedirectStandardOutput $o -RedirectStandardError $e
+            if ($p.WaitForExit(60000)) {
+              if ($p.ExitCode -eq 0) { $status = "ok" }
+              else { $status = "FAILED (exit $($p.ExitCode))"; $fail = 1 }
+            } else {
+              $p.Kill()
+              # Kill returns before the child lets go of the redirect handles.
+              $p.WaitForExit()
+              $status = "TIMED OUT after 60s"
+              $fail = 1
+            }
+            # Collapsed per binary, same as the Unix side.
+            "::group::$($b.Name) - $status"
+            Get-Content $o -ErrorAction SilentlyContinue
+            if ((Get-Item $e -ErrorAction SilentlyContinue).Length -gt 0) {
+              "--- stderr"
+              if ($strace) { Get-Content $e -Tail 200 } else { Get-Content $e }
+            }
+            "::endgroup::"
+            if ($status -ne "ok") { "::error title=$($b.Name)::$status" }
+            $summary += "{0,-24} {1}" -f $b.Name, $status
+            Remove-Item $o, $e -Force -ErrorAction SilentlyContinue
+          }
+          "=== summary"
+          $summary
+          exit $fail

@@ -23,10 +23,22 @@ diff a/library/Cargo.toml b/library/Cargo.toml
  # See comments in `library/rustc-std-workspace-core/README.md` for what's going on here
  rustc-std-workspace-core = { path = 'rustc-std-workspace-core' }
  rustc-std-workspace-alloc = { path = 'rustc-std-workspace-alloc' }
+diff a/library/std/src/os/unix/fs.rs b/library/std/src/os/unix/fs.rs
+--- a/library/std/src/os/unix/fs.rs
++++ b/library/std/src/os/unix/fs.rs
+@@ -515,7 +515,7 @@
+     /// # fn main() {
+     /// let mut options = OpenOptions::new();
+     /// options.write(true);
+-    /// options.custom_flags(libc::O_NOFOLLOW);
++    /// options.custom_flags(crate::sys::pal::cosmo::O_NOFOLLOW());
+     /// let file = options.open("foo.txt");
+     /// # }
+     /// ```
 diff a/library/std/src/sys/fd/unix.rs b/library/std/src/sys/fd/unix.rs
 --- a/library/std/src/sys/fd/unix.rs
 +++ b/library/std/src/sys/fd/unix.rs
-@@ -615,16 +615,7 @@
+@@ -615,23 +615,14 @@
          Ok(())
      }
  
@@ -44,6 +56,228 @@ diff a/library/std/src/sys/fd/unix.rs b/library/std/src/sys/fd/unix.rs
      pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
          unsafe {
              let previous = cvt(libc::fcntl(self.as_raw_fd(), libc::F_GETFL))?;
+             let new = if nonblocking {
+-                previous | libc::O_NONBLOCK
++                previous | crate::sys::pal::cosmo::O_NONBLOCK()
+             } else {
+-                previous & !libc::O_NONBLOCK
++                previous & !crate::sys::pal::cosmo::O_NONBLOCK()
+             };
+             if new != previous {
+                 cvt(libc::fcntl(self.as_raw_fd(), libc::F_SETFL, new))?;
+diff a/library/std/src/sys/fs/mod.rs b/library/std/src/sys/fs/mod.rs
+--- a/library/std/src/sys/fs/mod.rs
++++ b/library/std/src/sys/fs/mod.rs
+@@ -131,7 +131,7 @@
+     #[cfg(not(any(target_os = "espidf", target_os = "horizon")))]
+     {
+         use crate::os::unix::fs::OpenOptionsExt;
+-        options.custom_flags(libc::O_NOFOLLOW);
++        options.custom_flags(crate::sys::pal::cosmo::O_NOFOLLOW());
+     }
+ 
+     options.open(path)?.set_permissions(perm)
+diff a/library/std/src/sys/fs/unix/dir.rs b/library/std/src/sys/fs/unix/dir.rs
+--- a/library/std/src/sys/fs/unix/dir.rs
++++ b/library/std/src/sys/fs/unix/dir.rs
+@@ -62,8 +62,8 @@
+     }
+ 
+     pub fn open_with_c(path: &CStr, opts: &OpenOptions) -> io::Result<Self> {
+-        let flags = libc::O_CLOEXEC
+-            | libc::O_DIRECTORY
++        let flags = crate::sys::pal::cosmo::O_CLOEXEC()
++            | crate::sys::pal::cosmo::O_DIRECTORY()
+             | opts.get_access_mode()?
+             | opts.get_creation_mode()?
+             | (opts.custom_flags as c_int & !libc::O_ACCMODE);
+@@ -72,7 +72,7 @@
+     }
+ 
+     fn open_file_c(&self, path: &CStr, opts: &OpenOptions) -> io::Result<File> {
+-        let flags = libc::O_CLOEXEC
++        let flags = crate::sys::pal::cosmo::O_CLOEXEC()
+             | opts.get_access_mode()?
+             | opts.get_creation_mode()?
+             | (opts.custom_flags as c_int & !libc::O_ACCMODE);
+@@ -87,7 +87,7 @@
+             unlinkat(
+                 self.0.as_raw_fd(),
+                 path.as_ptr(),
+-                if remove_dir { libc::AT_REMOVEDIR } else { 0 },
++                if remove_dir { crate::sys::pal::cosmo::AT_REMOVEDIR() } else { 0 },
+             )
+         })
+         .map(|_| ())
+diff a/library/std/src/sys/fs/unix.rs b/library/std/src/sys/fs/unix.rs
+--- a/library/std/src/sys/fs/unix.rs
++++ b/library/std/src/sys/fs/unix.rs
+@@ -1108,7 +1108,7 @@
+             if let Some(ret) = unsafe { try_statx(
+                 fd,
+                 name,
+-                libc::AT_SYMLINK_NOFOLLOW | libc::AT_STATX_SYNC_AS_STAT,
++                crate::sys::pal::cosmo::AT_SYMLINK_NOFOLLOW() | crate::sys::pal::cosmo::AT_STATX_SYNC_AS_STAT(),
+                 libc::STATX_BASIC_STATS | libc::STATX_BTIME,
+             ) } {
+                 return ret;
+@@ -1116,7 +1116,7 @@
+         }
+ 
+         let mut stat: stat64 = unsafe { mem::zeroed() };
+-        cvt(unsafe { fstatat64(fd, name, &mut stat, libc::AT_SYMLINK_NOFOLLOW) })?;
++        cvt(unsafe { fstatat64(fd, name, &mut stat, crate::sys::pal::cosmo::AT_SYMLINK_NOFOLLOW()) })?;
+         Ok(FileAttr::from_stat64(stat))
+     }
+ 
+@@ -1327,8 +1327,8 @@
+             (true, false, false) => Ok(libc::O_RDONLY),
+             (false, true, false) => Ok(libc::O_WRONLY),
+             (true, true, false) => Ok(libc::O_RDWR),
+-            (false, _, true) => Ok(libc::O_WRONLY | libc::O_APPEND),
+-            (true, _, true) => Ok(libc::O_RDWR | libc::O_APPEND),
++            (false, _, true) => Ok(libc::O_WRONLY | crate::sys::pal::cosmo::O_APPEND()),
++            (true, _, true) => Ok(libc::O_RDWR | crate::sys::pal::cosmo::O_APPEND()),
+             (false, false, false) => {
+                 // If no access mode is set, check if any creation flags are set
+                 // to provide a more descriptive error message
+@@ -1370,10 +1370,10 @@
+ 
+         Ok(match (self.create, self.truncate, self.create_new) {
+             (false, false, false) => 0,
+-            (true, false, false) => libc::O_CREAT,
+-            (false, true, false) => libc::O_TRUNC,
+-            (true, true, false) => libc::O_CREAT | libc::O_TRUNC,
+-            (_, _, true) => libc::O_CREAT | libc::O_EXCL,
++            (true, false, false) => crate::sys::pal::cosmo::O_CREAT(),
++            (false, true, false) => crate::sys::pal::cosmo::O_TRUNC(),
++            (true, true, false) => crate::sys::pal::cosmo::O_CREAT() | crate::sys::pal::cosmo::O_TRUNC(),
++            (_, _, true) => crate::sys::pal::cosmo::O_CREAT() | crate::sys::pal::cosmo::O_EXCL(),
+         })
+     }
+ }
+@@ -1401,7 +1401,7 @@
+     }
+ 
+     pub fn open_c(path: &CStr, opts: &OpenOptions) -> io::Result<File> {
+-        let flags = libc::O_CLOEXEC
++        let flags = crate::sys::pal::cosmo::O_CLOEXEC()
+             | opts.get_access_mode()?
+             | opts.get_creation_mode()?
+             | (opts.custom_flags as c_int & !libc::O_ACCMODE);
+@@ -1420,7 +1420,7 @@
+             if let Some(ret) = unsafe { try_statx(
+                 fd,
+                 c"".as_ptr() as *const c_char,
+-                libc::AT_EMPTY_PATH | libc::AT_STATX_SYNC_AS_STAT,
++                crate::sys::pal::cosmo::AT_EMPTY_PATH() | crate::sys::pal::cosmo::AT_STATX_SYNC_AS_STAT(),
+                 libc::STATX_BASIC_STATS | libc::STATX_BTIME,
+             ) } {
+                 return ret;
+@@ -2089,7 +2089,7 @@
+         _ => {
+             // Where we can, use `linkat` instead of `link`; see the comment above
+             // this one for details on why.
+-            cvt(unsafe { libc::linkat(libc::AT_FDCWD, original.as_ptr(), libc::AT_FDCWD, link.as_ptr(), 0) })?;
++            cvt(unsafe { libc::linkat(crate::sys::pal::cosmo::AT_FDCWD(), original.as_ptr(), crate::sys::pal::cosmo::AT_FDCWD(), link.as_ptr(), 0) })?;
+         }
+     }
+     Ok(())
+@@ -2098,9 +2098,9 @@
+ pub fn stat(p: &CStr) -> io::Result<FileAttr> {
+     cfg_has_statx! {
+         if let Some(ret) = unsafe { try_statx(
+-            libc::AT_FDCWD,
++            crate::sys::pal::cosmo::AT_FDCWD(),
+             p.as_ptr(),
+-            libc::AT_STATX_SYNC_AS_STAT,
++            crate::sys::pal::cosmo::AT_STATX_SYNC_AS_STAT(),
+             libc::STATX_BASIC_STATS | libc::STATX_BTIME,
+         ) } {
+             return ret;
+@@ -2115,9 +2115,9 @@
+ pub fn lstat(p: &CStr) -> io::Result<FileAttr> {
+     cfg_has_statx! {
+         if let Some(ret) = unsafe { try_statx(
+-            libc::AT_FDCWD,
++            crate::sys::pal::cosmo::AT_FDCWD(),
+             p.as_ptr(),
+-            libc::AT_SYMLINK_NOFOLLOW | libc::AT_STATX_SYNC_AS_STAT,
++            crate::sys::pal::cosmo::AT_SYMLINK_NOFOLLOW() | crate::sys::pal::cosmo::AT_STATX_SYNC_AS_STAT(),
+             libc::STATX_BASIC_STATS | libc::STATX_BTIME,
+         ) } {
+             return ret;
+@@ -2182,14 +2182,14 @@
+        }
+        target_os = "android" => {
+             let times = [file_time_to_timespec(times.accessed)?, file_time_to_timespec(times.modified)?];
+-            let flags = if follow_symlinks { 0 } else { libc::AT_SYMLINK_NOFOLLOW };
++            let flags = if follow_symlinks { 0 } else { crate::sys::pal::cosmo::AT_SYMLINK_NOFOLLOW() };
+             // utimensat requires Android API level 19
+             cvt(unsafe {
+                 weak!(
+                     fn utimensat(dirfd: c_int, path: *const libc::c_char, times: *const libc::timespec, flags: c_int) -> c_int;
+                 );
+                 match utimensat.get() {
+-                    Some(utimensat) => utimensat(libc::AT_FDCWD, p.as_ptr(), times.as_ptr(), flags),
++                    Some(utimensat) => utimensat(crate::sys::pal::cosmo::AT_FDCWD(), p.as_ptr(), times.as_ptr(), flags),
+                     None => return Err(io::const_error!(
+                         io::ErrorKind::Unsupported,
+                         "setting file times requires Android API level >= 19",
+@@ -2199,7 +2199,7 @@
+             Ok(())
+        }
+        _ => {
+-            let flags = if follow_symlinks { 0 } else { libc::AT_SYMLINK_NOFOLLOW };
++            let flags = if follow_symlinks { 0 } else { crate::sys::pal::cosmo::AT_SYMLINK_NOFOLLOW() };
+             #[cfg(all(target_os = "linux", target_env = "gnu", target_pointer_width = "32", not(target_arch = "riscv32")))]
+             {
+                 use crate::sys::pal::{time::__timespec64, weak::weak};
+@@ -2213,12 +2213,12 @@
+                     let to_timespec = |time: Option<SystemTime>| time.map(|time| time.t.to_timespec64())
+                         .unwrap_or(__timespec64::new(0, libc::UTIME_OMIT as _));
+                     let times = [to_timespec(times.accessed), to_timespec(times.modified)];
+-                    cvt(unsafe { utimensat64(libc::AT_FDCWD, p.as_ptr(), times.as_ptr(), flags) })?;
++                    cvt(unsafe { utimensat64(crate::sys::pal::cosmo::AT_FDCWD(), p.as_ptr(), times.as_ptr(), flags) })?;
+                     return Ok(());
+                 }
+             }
+             let times = [file_time_to_timespec(times.accessed)?, file_time_to_timespec(times.modified)?];
+-            cvt(unsafe { libc::utimensat(libc::AT_FDCWD, p.as_ptr(), times.as_ptr(), flags) })?;
++            cvt(unsafe { libc::utimensat(crate::sys::pal::cosmo::AT_FDCWD(), p.as_ptr(), times.as_ptr(), flags) })?;
+             Ok(())
+          }
+     }
+@@ -2351,7 +2351,7 @@
+     let (reader, reader_metadata) = open_from(from)?;
+ 
+     let clonefile_result = run_path_with_cstr(to, &|to| {
+-        cvt(unsafe { libc::fclonefileat(reader.as_raw_fd(), libc::AT_FDCWD, to.as_ptr(), 0) })
++        cvt(unsafe { libc::fclonefileat(reader.as_raw_fd(), crate::sys::pal::cosmo::AT_FDCWD(), to.as_ptr(), 0) })
+     });
+     match clonefile_result {
+         Ok(_) => return Ok(reader_metadata.len()),
+@@ -2486,9 +2486,9 @@
+     pub fn openat_nofollow_dironly(parent_fd: Option<RawFd>, p: &CStr) -> io::Result<OwnedFd> {
+         let fd = cvt_r(|| unsafe {
+             openat(
+-                parent_fd.unwrap_or(libc::AT_FDCWD),
++                parent_fd.unwrap_or(crate::sys::pal::cosmo::AT_FDCWD()),
+                 p.as_ptr(),
+-                libc::O_CLOEXEC | libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_DIRECTORY,
++                crate::sys::pal::cosmo::O_CLOEXEC() | libc::O_RDONLY | crate::sys::pal::cosmo::O_NOFOLLOW() | crate::sys::pal::cosmo::O_DIRECTORY(),
+             )
+         })?;
+         Ok(unsafe { OwnedFd::from_raw_fd(fd) })
+@@ -2605,7 +2605,7 @@
+ 
+         // unlink the directory after removing its contents
+         ignore_notfound(cvt(unsafe {
+-            unlinkat(parent_fd.unwrap_or(libc::AT_FDCWD), path.as_ptr(), libc::AT_REMOVEDIR)
++            unlinkat(parent_fd.unwrap_or(crate::sys::pal::cosmo::AT_FDCWD()), path.as_ptr(), crate::sys::pal::cosmo::AT_REMOVEDIR())
+         }))?;
+         Ok(())
+     }
 diff a/library/std/src/sys/io/error/unix.rs b/library/std/src/sys/io/error/unix.rs
 --- a/library/std/src/sys/io/error/unix.rs
 +++ b/library/std/src/sys/io/error/unix.rs
@@ -451,6 +685,116 @@ diff a/library/std/src/sys/net/connection/socket/unix.rs b/library/std/src/sys/n
          self.0.set_nonblocking(nonblocking)
      }
  
+diff a/library/std/src/sys/pal/unix/futex.rs b/library/std/src/sys/pal/unix/futex.rs
+--- a/library/std/src/sys/pal/unix/futex.rs
++++ b/library/std/src/sys/pal/unix/futex.rs
+@@ -36,7 +36,7 @@
+     //
+     // Overflows are rounded up to an infinite timeout (None).
+     let timespec = timeout
+-        .and_then(|d| Timespec::now(libc::CLOCK_MONOTONIC).checked_add_duration(&d))
++        .and_then(|d| Timespec::now(crate::sys::time::Instant::clock_id()).checked_add_duration(&d))
+         .and_then(|t| t.to_timespec());
+ 
+     loop {
+diff a/library/std/src/sys/pal/unix/mod.rs b/library/std/src/sys/pal/unix/mod.rs
+--- a/library/std/src/sys/pal/unix/mod.rs
++++ b/library/std/src/sys/pal/unix/mod.rs
+@@ -2,6 +2,39 @@
+ 
+ use crate::io;
+ 
++// cosmo: constants libc bakes in at compile time but cosmo resolves per host.
++// Getting one wrong is quiet: Linux's O_APPEND is XNU's O_TRUNC, so an append
++// silently truncates instead of failing.
++pub(crate) mod cosmo {
++    macro_rules! runtime {
++        ($($name:ident: $ty:ty),* $(,)?) => {$(
++            pub(crate) fn $name() -> $ty {
++                unsafe extern "C" {
++                    #[link_name = stringify!($name)]
++                    static VALUE: $ty;
++                }
++                unsafe { VALUE }
++            }
++        )*};
++    }
++
++    runtime! {
++        O_CREAT: libc::c_int,
++        O_EXCL: libc::c_int,
++        O_TRUNC: libc::c_int,
++        O_APPEND: libc::c_int,
++        O_CLOEXEC: libc::c_int,
++        O_NOFOLLOW: libc::c_int,
++        O_DIRECTORY: libc::c_int,
++        O_NONBLOCK: libc::c_int,
++        AT_FDCWD: libc::c_int,
++        AT_SYMLINK_NOFOLLOW: libc::c_int,
++        AT_REMOVEDIR: libc::c_int,
++        AT_EMPTY_PATH: libc::c_int,
++        AT_STATX_SYNC_AS_STAT: libc::c_int,
++    }
++}
++
+ pub mod conf;
+ #[cfg(target_os = "fuchsia")]
+ pub mod fuchsia;
+diff a/library/std/src/sys/pal/unix/sync/condvar.rs b/library/std/src/sys/pal/unix/sync/condvar.rs
+--- a/library/std/src/sys/pal/unix/sync/condvar.rs
++++ b/library/std/src/sys/pal/unix/sync/condvar.rs
+@@ -67,7 +67,7 @@
+         #[cfg(target_os = "cygwin")]
+         let dur = Duration::min(dur, Duration::from_secs(1000 * 365 * 86400));
+ 
+-        let timeout = Timespec::now(Self::CLOCK).checked_add_duration(&dur);
++        let timeout = Timespec::now(Self::clock()).checked_add_duration(&dur);
+ 
+         #[cfg(not(any(target_os = "nto", target_os = "qnx")))]
+         let timeout = timeout.and_then(|t| t.to_timespec()).unwrap_or(TIMESPEC_MAX);
+@@ -145,7 +145,9 @@
+ )))]
+ impl Condvar {
+     pub const PRECISE_TIMEOUT: bool = true;
+-    const CLOCK: libc::clockid_t = libc::CLOCK_MONOTONIC;
++    fn clock() -> libc::clockid_t {
++        crate::sys::time::Instant::clock_id()
++    }
+ 
+     /// # Safety
+     /// May only be called once per instance of `Self`.
+@@ -167,7 +169,7 @@
+             let r = libc::pthread_condattr_init(attr.as_mut_ptr());
+             assert_eq!(r, 0);
+             let attr = AttrGuard(&mut attr);
+-            let r = libc::pthread_condattr_setclock(attr.0.as_mut_ptr(), Self::CLOCK);
++            let r = libc::pthread_condattr_setclock(attr.0.as_mut_ptr(), Self::clock());
+             assert_eq!(r, 0);
+             let r = libc::pthread_cond_init(self.raw(), attr.0.as_ptr());
+             assert_eq!(r, 0);
+@@ -200,7 +202,9 @@
+ ))]
+ impl Condvar {
+     pub const PRECISE_TIMEOUT: bool = false;
+-    const CLOCK: libc::clockid_t = libc::CLOCK_REALTIME;
++    fn clock() -> libc::clockid_t {
++        crate::sys::time::SystemTime::clock_id()
++    }
+ 
+     /// # Safety
+     /// May only be called once per instance of `Self`.
+diff a/library/std/src/sys/pipe/unix.rs b/library/std/src/sys/pipe/unix.rs
+--- a/library/std/src/sys/pipe/unix.rs
++++ b/library/std/src/sys/pipe/unix.rs
+@@ -25,7 +25,7 @@
+             target_os = "redox"
+         ) => {
+             unsafe {
+-                cvt(libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC))?;
++                cvt(libc::pipe2(fds.as_mut_ptr(), crate::sys::pal::cosmo::O_CLOEXEC()))?;
+                 Ok((Pipe::from_raw_fd(fds[0]), Pipe::from_raw_fd(fds[1])))
+             }
+         }
 diff a/library/std/src/sys/process/unix/common.rs b/library/std/src/sys/process/unix/common.rs
 --- a/library/std/src/sys/process/unix/common.rs
 +++ b/library/std/src/sys/process/unix/common.rs
@@ -474,6 +818,38 @@ diff a/library/std/src/sys/process/unix/common.rs b/library/std/src/sys/process/
      loop {
          // wait for either pipe to become readable using `poll`
          cvt_r(|| unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) })?;
+@@ -671,15 +677,10 @@
+     fn read(fd: &FileDesc, dst: &mut Vec<u8>) -> Result<bool, io::Error> {
+         match fd.read_to_end(dst) {
+             Ok(_) => Ok(true),
+-            Err(e) => {
+-                if e.raw_os_error() == Some(libc::EWOULDBLOCK)
+-                    || e.raw_os_error() == Some(libc::EAGAIN)
+-                {
+-                    Ok(false)
+-                } else {
+-                    Err(e)
+-                }
+-            }
++            // cosmo: raw errno is the host's (10035 on Windows), so match on the
++            // kind, which already goes through the runtime symbols.
++            Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(false),
++            Err(e) => Err(e),
+         }
+     }
+ }
+diff a/library/std/src/sys/process/unix/unix.rs b/library/std/src/sys/process/unix/unix.rs
+--- a/library/std/src/sys/process/unix/unix.rs
++++ b/library/std/src/sys/process/unix/unix.rs
+@@ -30,7 +30,7 @@
+         fn get_clock_resolution() -> Duration {
+             static MIN_DELAY: LazyLock<Duration, fn() -> Duration> = LazyLock::new(|| {
+                 let mut mindelay = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+-                if unsafe { libc::clock_getres(libc::CLOCK_MONOTONIC, &mut mindelay) } == 0
++                if unsafe { libc::clock_getres(crate::sys::time::Instant::clock_id(), &mut mindelay) } == 0
+                 {
+                     Duration::from_nanos(mindelay.tv_nsec as u64)
+                 } else {
 diff a/library/std/src/sys/random/linux.rs b/library/std/src/sys/random/linux.rs
 --- a/library/std/src/sys/random/linux.rs
 +++ b/library/std/src/sys/random/linux.rs
@@ -537,3 +913,81 @@ diff a/library/std/src/sys/thread/unix.rs b/library/std/src/sys/thread/unix.rs
      }
  }
  
+@@ -564,7 +564,7 @@
+             // of `nanosleep` which used `CLOCK_REALTIME` even though it is unsupported
+             // on WASIp2. Using `clock_nanosleep` directly bypasses the issue.
+             unsafe fn nanosleep(rqtp: *const libc::timespec, rmtp: *mut libc::timespec) -> libc::c_int {
+-                unsafe { libc::clock_nanosleep(crate::sys::time::Instant::CLOCK_ID, 0, rqtp, rmtp) }
++                unsafe { libc::clock_nanosleep(crate::sys::time::Instant::clock_id(), 0, rqtp, rmtp) }
+             }
+         }
+         _ => {
+@@ -676,7 +676,7 @@
+             loop {
+                 let r = unsafe {
+                     clock_nanosleep(
+-                        crate::sys::time::Instant::CLOCK_ID,
++                        crate::sys::time::Instant::clock_id(),
+                         libc::TIMER_ABSTIME,
+                         &ts,
+                         core::ptr::null_mut(),
+@@ -715,7 +715,7 @@
+         // When we get interrupted (res = EINTR) call clock_nanosleep again
+         loop {
+             let res = libc::clock_nanosleep(
+-                crate::sys::time::Instant::CLOCK_ID,
++                crate::sys::time::Instant::clock_id(),
+                 libc::TIMER_ABSTIME,
+                 &ts,
+                 core::ptr::null_mut(), // not required with TIMER_ABSTIME
+diff a/library/std/src/sys/time/unix.rs b/library/std/src/sys/time/unix.rs
+--- a/library/std/src/sys/time/unix.rs
++++ b/library/std/src/sys/time/unix.rs
+@@ -3,6 +3,13 @@
+ use crate::time::Duration;
+ use crate::{fmt, io};
+ 
++unsafe extern "C" {
++    #[link_name = "CLOCK_REALTIME"]
++    static COSMO_CLOCK_REALTIME: libc::clockid_t;
++    #[link_name = "CLOCK_MONOTONIC"]
++    static COSMO_CLOCK_MONOTONIC: libc::clockid_t;
++}
++
+ pub const UNIX_EPOCH: SystemTime = SystemTime { t: Timespec::zero() };
+ 
+ #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+@@ -20,8 +27,12 @@
+         Ok(SystemTime { t: Timespec::new(tv_sec, tv_nsec)? })
+     }
+ 
++    pub(crate) fn clock_id() -> libc::clockid_t {
++        unsafe { COSMO_CLOCK_REALTIME }
++    }
++
+     pub fn now() -> SystemTime {
+-        SystemTime { t: Timespec::now(libc::CLOCK_REALTIME) }
++        SystemTime { t: Timespec::now(Self::clock_id()) }
+     }
+ 
+     pub fn sub_time(&self, other: &SystemTime) -> Result<Duration, Duration> {
+@@ -63,15 +74,13 @@
+     // `CLOCK_UPTIME_RAW` is based on `mach_absolute_time`, which is the
+     // clock that all timeouts and deadlines are measured against inside
+     // the kernel.
+-    #[cfg(target_vendor = "apple")]
+-    pub(crate) const CLOCK_ID: libc::clockid_t = libc::CLOCK_UPTIME_RAW;
+-
+-    #[cfg(not(target_vendor = "apple"))]
+-    pub(crate) const CLOCK_ID: libc::clockid_t = libc::CLOCK_MONOTONIC;
++    pub(crate) fn clock_id() -> libc::clockid_t {
++        unsafe { COSMO_CLOCK_MONOTONIC }
++    }
+ 
+     pub fn now() -> Instant {
+         // https://pubs.opengroup.org/onlinepubs/9799919799/functions/clock_getres.html
+-        Instant { t: Timespec::now(Self::CLOCK_ID) }
++        Instant { t: Timespec::now(Self::clock_id()) }
+     }
+ 
+     pub fn checked_sub_instant(&self, other: &Instant) -> Option<Duration> {

@@ -1,3 +1,36 @@
+diff a/getrandom/src/linux_android_with_fallback.rs b/getrandom/src/linux_android_with_fallback.rs
+--- a/getrandom/src/linux_android_with_fallback.rs
++++ b/getrandom/src/linux_android_with_fallback.rs
+@@ -1,7 +1,7 @@
+ //! Implementation for Linux / Android with `/dev/urandom` fallback
+ use crate::{
+     lazy::LazyBool,
+-    util_libc::{getrandom_syscall, last_os_error, sys_fill_exact},
++    util_libc::{getrandom_syscall, sys_fill_exact},
+     {use_file, Error},
+ };
+ use core::mem::MaybeUninit;
+@@ -17,17 +17,7 @@
+ }
+ 
+ fn is_getrandom_available() -> bool {
+-    if getrandom_syscall(&mut []) < 0 {
+-        match last_os_error().raw_os_error() {
+-            Some(libc::ENOSYS) => false, // No kernel support
+-            // The fallback on EPERM is intentionally not done on Android since this workaround
+-            // seems to be needed only for specific Linux-based products that aren't based
+-            // on Android. See https://github.com/rust-random/getrandom/issues/229.
+-            #[cfg(target_os = "linux")]
+-            Some(libc::EPERM) => false, // Blocked by seccomp
+-            _ => true,
+-        }
+-    } else {
+-        true
+-    }
++    // cosmo: errno is the host's, so matching ENOSYS and EPERM against libc's
++    // Linux values misses. Treat any failure as "use the file instead".
++    getrandom_syscall(&mut []) >= 0
+ }
 diff a/getrandom/src/use_file.rs b/getrandom/src/use_file.rs
 --- a/getrandom/src/use_file.rs
 +++ b/getrandom/src/use_file.rs
@@ -21,3 +54,26 @@ diff a/getrandom/src/use_file.rs b/getrandom/src/use_file.rs
  fn wait_until_rng_ready() -> Result<(), Error> {
      // Poll /dev/random to make sure it is ok to read from /dev/urandom.
      let fd = unsafe { open_readonly("/dev/random\0")? };
+diff a/getrandom/src/util_libc.rs b/getrandom/src/util_libc.rs
+--- a/getrandom/src/util_libc.rs
++++ b/getrandom/src/util_libc.rs
+@@ -151,12 +151,12 @@
+ /// Thin wrapper around the `getrandom()` Linux system call
+ #[cfg(any(target_os = "android", target_os = "linux"))]
+ pub fn getrandom_syscall(buf: &mut [MaybeUninit<u8>]) -> libc::ssize_t {
+-    unsafe {
+-        libc::syscall(
+-            libc::SYS_getrandom,
+-            buf.as_mut_ptr() as *mut libc::c_void,
+-            buf.len(),
+-            0,
+-        ) as libc::ssize_t
++    // cosmo: a Linux syscall number means nothing off Linux, and libc has no
++    // binding for this on linux targets — cosmo's own getrandom() works
++    // everywhere, so call it directly.
++    unsafe extern "C" {
++        fn getrandom(buf: *mut libc::c_void, len: libc::size_t, flags: libc::c_uint)
++            -> libc::ssize_t;
+     }
++    unsafe { getrandom(buf.as_mut_ptr() as *mut libc::c_void, buf.len(), 0) }
+ }
