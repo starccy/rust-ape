@@ -35,7 +35,7 @@ diff a/async-process/src/lib.rs b/async-process/src/lib.rs
      }
  }
  
-@@ -1184,22 +1167,11 @@
+@@ -1184,22 +1167,17 @@
  /// Moves `Fd` out of non-blocking mode.
  #[cfg(unix)]
  fn blocking_fd(fd: rustix::fd::BorrowedFd<'_>) -> io::Result<()> {
@@ -54,10 +54,15 @@ diff a/async-process/src/lib.rs b/async-process/src/lib.rs
 -            if new != previous {
 -                rustix::fs::fcntl_setfl(fd, new)?;
 -            }
--        }
 +    // cosmo: no ioctl FIONBIO (ENOTSUP), so take the fcntl path everywhere.
 +    let previous = rustix::fs::fcntl_getfl(fd)?;
-+    let new = previous & !rustix::fs::OFlags::NONBLOCK;
++    let new = previous & !{
++        unsafe extern "C" {
++            #[link_name = "O_NONBLOCK"]
++            static VALUE: core::ffi::c_int;
+         }
++        rustix::fs::OFlags::from_bits_retain(unsafe { VALUE } as u32)
++    };
 +    if new != previous {
 +        rustix::fs::fcntl_setfl(fd, new)?;
      }

@@ -106,3 +106,19 @@ diff a/polling/src/poll.rs b/polling/src/poll.rs
      }
  }
  
+@@ -699,7 +795,14 @@
+             let (read_pipe, write_pipe) = fallback_pipe(PipeFlags::CLOEXEC)?;
+ 
+             // Put the reading side into non-blocking mode.
+-            fcntl_setfl(&read_pipe, fcntl_getfl(&read_pipe)? | OFlags::NONBLOCK)?;
++            fn cosmo_nonblock() -> OFlags {
++                unsafe extern "C" {
++                    #[link_name = "O_NONBLOCK"]
++                    static VALUE: core::ffi::c_int;
++                }
++                OFlags::from_bits_retain(unsafe { VALUE } as u32)
++            }
++            fcntl_setfl(&read_pipe, fcntl_getfl(&read_pipe)? | cosmo_nonblock())?;
+ 
+             Ok(Self {
+                 read_pipe,

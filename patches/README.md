@@ -20,21 +20,41 @@ version in `rust-toolchain.toml`).
 Comments introduced by a patch start with `cosmo:` and explain why the hunk
 is there; there is no separate design doc.
 
+## Changing one
+
+Edit the vendored copy: `vendor/library` or `vendor/patches/<crate>` and
+regenerate:
+
+```sh
+./patches/regen.sh              # every patch
+./patches/regen.sh async-io     # just one
+```
+
+It fetches pristine upstream (rust-src from your rustup for `library`, the
+`.crate` in `cache/` for the rest, at the version `vendor/.stamps` records),
+diffs it against `vendor/`, and strips timestamps so unrelated runs don't churn
+the files.
+
+Nothing is written until the result round-trips: applying the fresh patch to a
+clean upstream copy has to reproduce `vendor/` byte for byte. If it doesn't, the
+existing patch is left alone and the script exits non-zero. This check catches
+patches that look fine but silently drop a file.
+
+Then rebuild, since the SDK only re-applies patches when a stamp changes:
+
+```sh
+cargo xtask setup
+```
+
 ## Applying by hand
 
-The directory name must be the crate name without the version:
+`cargo xtask setup` does this for you; you only need it to inspect a patch
+without a working SDK. The directory name must be the crate name without the
+version:
 
 ```sh
 curl -fsSLO https://static.crates.io/crates/libc/libc-0.2.189.crate
 tar xf libc-0.2.189.crate && mv libc-0.2.189 libc
 patch -p1 < libc.patch
-```
-
-## Verifying
-
-To confirm `vendor/` has no undeclared changes, redo the above in a scratch
-directory and compare:
-
-```sh
 diff -r libc ../vendor/patches/libc   # expect no output
 ```
