@@ -27,7 +27,7 @@ pub struct Package {
 #[derive(Deserialize)]
 pub struct Target {
     pub name: String,
-    /// "bin", "lib", "test", ... — a target can carry several.
+    /// "bin", "lib", "test"
     pub kind: Vec<String>,
 }
 

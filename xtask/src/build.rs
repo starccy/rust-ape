@@ -63,7 +63,7 @@ pub fn run(args: &BuildArgs) -> Result<()> {
 
     for &(triple, arch) in TARGETS {
         println!("==> building {triple} ({profile})");
-        cargo_build(&root, &project, triple, arch, profile, args)?;
+        cargo_build(&root, &project, triple, arch, args)?;
     }
 
     for bin in &bins {
@@ -75,7 +75,7 @@ pub fn run(args: &BuildArgs) -> Result<()> {
             fs::create_dir_all(parent)?;
         }
         apelink(&root, &project, profile, bin, &output)?;
-        util::run(Command::new("ls").arg("-la").arg(&output))?;
+        println!("==> {} ({} bytes)", output.display(), fs::metadata(&output)?.len());
     }
 
     if let Some(parent) = marker.parent() {
@@ -100,21 +100,20 @@ fn preflight(root: &Path) -> Result<()> {
     }
     if !missing.is_empty() {
         bail!(
-            "SDK is not ready (missing {}) — run `cargo xtask setup` first",
+            "SDK is not ready (missing {}). Run `cargo xtask setup` first",
             missing.join(", ")
         );
     }
     Ok(())
 }
 
-/// If a crate we must patch still resolves to crates.io (e.g. the registry
-/// published a newer version so the patch entry no longer matches), stop
-/// instead of producing a subtly wrong binary.
+// will failed if a patched crate resolved to crates.io instead of vendor/patches.
+// Happens when the registry publishes a new version inside the same compat range.
 fn verify_patches(root: &Path, meta: &Metadata) -> Result<()> {
     let mut bad = Vec::new();
     for &(name, ver) in PATCHED_CRATES {
         for p in &meta.packages {
-            if p.name == name && p.from_registry() {
+            if p.name == name && p.from_registry() && compat_range(&p.version) == compat_range(ver) {
                 bad.push((name, ver, p.version.as_str()));
             }
         }
@@ -137,8 +136,20 @@ fn verify_patches(root: &Path, meta: &Metadata) -> Result<()> {
     bail!(msg);
 }
 
+/// The leading part of a version that cargo treats as one compatible range:
+/// the major, or major.minor while the major is still 0.
+fn compat_range(version: &str) -> &str {
+    let mut end = version.find('.').unwrap_or(version.len());
+    if &version[..end] == "0" {
+        end = version[end + 1..]
+            .find('.')
+            .map_or(version.len(), |i| end + 1 + i);
+    }
+    &version[..end]
+}
+
 /// Which binaries to pack. `cargo build` already builds every bin in the
-/// package, so without --bin we pack all of them — the name doesn't have to
+/// package, so without --bin we pack all of them. The name doesn't have to
 /// match the package's.
 fn bin_targets(meta: &Metadata, only: Option<&str>) -> Result<Vec<String>> {
     // An explicit --bin is taken at face value, which also keeps this working
@@ -175,7 +186,7 @@ fn std_stamp(root: &Path) -> Result<String> {
         let f = root.join("vendor/.stamps").join(c);
         s += fs::read_to_string(&f)
             .with_context(|| {
-                format!("missing {} — run `cargo xtask setup` first", f.display())
+                format!("missing {}: run `cargo xtask setup` first", f.display())
             })?
             .trim();
         s.push('\n');
@@ -186,7 +197,7 @@ fn std_stamp(root: &Path) -> Result<String> {
 fn clean_std(project: &Path, profile: &str) -> Result<()> {
     for &(triple, _) in TARGETS {
         let base = project.join("target").join(triple).join(profile);
-        // libc goes too — it's a separate unit, and a rebuilt std would just
+        // libc goes too, it's a separate unit and a rebuilt std would just
         // relink the stale one.
         remove_prefixed(&base.join(".fingerprint"), &["std-", "panic_abort-", "libc-"])?;
         remove_prefixed(&base.join("deps"), &["liblibc-", "libc-"])?;
@@ -213,8 +224,7 @@ fn remove_prefixed(dir: &Path, prefixes: &[&str]) -> Result<()> {
     Ok(())
 }
 
-/// Env vars set explicitly by the caller take precedence, so a different
-/// cross-compiler can still be forced from outside if needed.
+/// set key when it's not already set
 fn env_default(cmd: &mut Command, key: &str, value: impl AsRef<std::ffi::OsStr>) {
     if std::env::var_os(key).is_none() {
         cmd.env(key, value);
@@ -226,10 +236,8 @@ fn cargo_build(
     project: &Path,
     triple: &str,
     arch: &str,
-    profile: &str,
     args: &BuildArgs,
 ) -> Result<()> {
-    let _ = profile;
     let target_json = root.join("generated").join(format!("{triple}.json"));
     let cosmo_bin = root.join("vendor/cosmocc/bin");
     let t = triple.replace('-', "_");
@@ -252,16 +260,19 @@ fn cargo_build(
     rustflags.push_str("--cfg rustix_use_libc --cfg polling_test_poll_backend");
     cmd.env("RUSTFLAGS", rustflags);
 
-    // C and asm in dependencies go through cosmocc too, so the ABI matches what
-    // they'll run against. -fno-stack-protector: cosmo has no __stack_chk_guard.
+    // C, C++ and asm in dependencies go through cosmocc too, so the ABI matches
+    // what they'll run against.
     env_default(&mut cmd, &format!("CC_{t}"), cosmo_bin.join(format!("{arch}-unknown-cosmo-cc")));
+    env_default(&mut cmd, &format!("CXX_{t}"), cosmo_bin.join(format!("{arch}-unknown-cosmo-c++")));
     env_default(
         &mut cmd,
         &format!("AR_{t}"),
         root.join("generated").join(format!("ar-{arch}.bash")),
     );
-    let user_cflags = std::env::var(format!("CFLAGS_{t}")).unwrap_or_default();
-    cmd.env(format!("CFLAGS_{t}"), format!("-fno-stack-protector {user_cflags}"));
+    for var in ["CFLAGS", "CXXFLAGS"] {
+        let user = std::env::var(format!("{var}_{t}")).unwrap_or_default();
+        cmd.env(format!("{var}_{t}"), format!("-fno-stack-protector {user}"));
+    }
 
     cmd.args([
         "build",
@@ -300,7 +311,7 @@ fn apelink(
     let inputs: Vec<PathBuf> = TARGETS.iter().map(|&(triple, _)| dbg(triple)).collect();
     for p in &inputs {
         if !p.is_file() {
-            bail!("no {} — wrong binary name? pass --bin", p.display());
+            bail!("{} not found. wrong binary name? pass --bin", p.display());
         }
     }
 

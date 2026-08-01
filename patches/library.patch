@@ -148,12 +148,50 @@ diff a/library/std/src/sys/io/error/unix.rs b/library/std/src/sys/io/error/unix.
      unsafe {
          if strerror_r(errno as c_int, p, buf.len()) < 0 {
 -            panic!("strerror_r failure");
-+            // cosmo: strerror_r chokes on the WSA codes Windows passes through,
-+            // and panicking takes the whole error-formatting path down with it.
++            // cosmo: strerror_r fails on the WSA codes Windows passes through,
++            // and panicking here would break the whole error-formatting path.
 +            return format!("os error {errno}");
          }
  
          let p = p as *const _;
+diff a/library/std/src/sys/io/kernel_copy/mod.rs b/library/std/src/sys/io/kernel_copy/mod.rs
+--- a/library/std/src/sys/io/kernel_copy/mod.rs
++++ b/library/std/src/sys/io/kernel_copy/mod.rs
+@@ -1,23 +1,18 @@
+ pub enum CopyState {
+-    #[cfg_attr(not(any(target_os = "linux", target_os = "android")), expect(dead_code))]
++    // cosmo: nothing constructs this with the Linux specialization gone.
++    #[expect(dead_code)]
+     Ended(u64),
+     Fallback(u64),
+ }
+ 
+-cfg_select! {
+-    any(target_os = "linux", target_os = "android") => {
+-        mod linux;
+-        pub use linux::kernel_copy;
+-    }
+-    _ => {
+-        use crate::io::{Result, Read, Write};
++// cosmo: copy_file_range and friends are Linux-only, and the fallback check
++// compares errno against constants that don't match off Linux (EBADF is 6 there).
++use crate::io::{Read, Result, Write};
+ 
+-        pub fn kernel_copy<R: ?Sized, W: ?Sized>(_reader: &mut R, _writer: &mut W) -> Result<CopyState>
+-        where
+-            R: Read,
+-            W: Write,
+-        {
+-            Ok(CopyState::Fallback(0))
+-        }
+-    }
++pub fn kernel_copy<R: ?Sized, W: ?Sized>(_reader: &mut R, _writer: &mut W) -> Result<CopyState>
++where
++    R: Read,
++    W: Write,
++{
++    Ok(CopyState::Fallback(0))
+ }
 diff a/library/std/src/sys/net/connection/socket/mod.rs b/library/std/src/sys/net/connection/socket/mod.rs
 --- a/library/std/src/sys/net/connection/socket/mod.rs
 +++ b/library/std/src/sys/net/connection/socket/mod.rs
@@ -163,8 +201,8 @@ diff a/library/std/src/sys/net/connection/socket/mod.rs b/library/std/src/sys/ne
      ) => {
 -        use libc::MSG_NOSIGNAL;
 +        // cosmo: MSG_NOSIGNAL is a runtime constant, and Windows has no such
-+        // flag at all. Shadow it with a fn of the same name — call sites only
-+        // grow a pair of parens.
++        // flag at all. Shadow it with a fn of the same name; call sites only
++        // need an extra pair of parens.
 +        unsafe extern "C" {
 +            #[link_name = "MSG_NOSIGNAL"]
 +            static COSMO_MSG_NOSIGNAL: c_int;
@@ -307,7 +345,7 @@ diff a/library/std/src/sys/net/connection/socket/mod.rs b/library/std/src/sys/ne
 diff a/library/std/src/sys/net/connection/socket/unix.rs b/library/std/src/sys/net/connection/socket/unix.rs
 --- a/library/std/src/sys/net/connection/socket/unix.rs
 +++ b/library/std/src/sys/net/connection/socket/unix.rs
-@@ -1,5 +1,16 @@
+@@ -1,5 +1,27 @@
  use libc::{MSG_PEEK, c_int, c_void, size_t, sockaddr, socklen_t};
  
 +// cosmo: SOCK_CLOEXEC is a runtime constant, not libc's 0x80000; passing the
@@ -321,10 +359,21 @@ diff a/library/std/src/sys/net/connection/socket/unix.rs b/library/std/src/sys/n
 +    unsafe { COSMO_SOCK_CLOEXEC }
 +}
 +
++// cosmo: POLL* are runtime values too (WSAPoll's on Windows), so poll() has to
++// be handed the host's bits, not libc's Linux ones.
++unsafe extern "C" {
++    #[link_name = "POLLOUT"]
++    static COSMO_POLLOUT: libc::c_short;
++    #[link_name = "POLLHUP"]
++    static COSMO_POLLHUP: libc::c_short;
++    #[link_name = "POLLERR"]
++    static COSMO_POLLERR: libc::c_short;
++}
++
  #[cfg(not(any(target_os = "espidf", target_os = "nuttx")))]
  use crate::ffi::CStr;
  use crate::io::{self, BorrowedBuf, BorrowedCursor, IoSlice, IoSliceMut};
-@@ -82,7 +93,7 @@
+@@ -82,7 +104,7 @@
                  // On platforms that support it we pass the SOCK_CLOEXEC
                  // flag to atomically create the socket and set it as
                  // CLOEXEC. On Linux this was added in 2.6.27.
@@ -333,7 +382,7 @@ diff a/library/std/src/sys/net/connection/socket/unix.rs b/library/std/src/sys/n
                  let socket = Socket(unsafe { FileDesc::from_raw_fd(fd) });
  
                  // DragonFlyBSD, FreeBSD and NetBSD use `SO_NOSIGPIPE` as a `setsockopt`
-@@ -128,7 +139,7 @@
+@@ -128,7 +150,7 @@
                      target_os = "qnx",
                  ) => {
                      // Like above, set cloexec atomically
@@ -342,7 +391,34 @@ diff a/library/std/src/sys/net/connection/socket/unix.rs b/library/std/src/sys/n
                      Ok((Socket(FileDesc::from_raw_fd(fds[0])), Socket(FileDesc::from_raw_fd(fds[1]))))
                  }
                  _ => {
-@@ -258,7 +269,7 @@
+@@ -174,12 +196,14 @@
+ 
+         match r {
+             Ok(_) => return Ok(()),
+-            // there's no ErrorKind for EINPROGRESS :(
+-            Err(ref e) if e.raw_os_error() == Some(libc::EINPROGRESS) => {}
++            // cosmo: raw errno is the host's (10036 on Windows), so match on the
++            // kind, which already goes through the runtime symbols.
++            Err(ref e) if e.kind() == io::ErrorKind::InProgress => {}
+             Err(e) => return Err(e),
+         }
+ 
+-        let mut pollfd = libc::pollfd { fd: self.as_raw_fd(), events: libc::POLLOUT, revents: 0 };
++        let mut pollfd =
++            libc::pollfd { fd: self.as_raw_fd(), events: unsafe { COSMO_POLLOUT }, revents: 0 };
+ 
+         if timeout.as_secs() == 0 && timeout.subsec_nanos() == 0 {
+             return Err(io::Error::ZERO_TIMEOUT);
+@@ -223,7 +247,7 @@
+                     } else {
+                         // linux returns POLLOUT|POLLERR|POLLHUP for refused connections (!), so look
+                         // for POLLHUP or POLLERR rather than read readiness
+-                        if pollfd.revents & (libc::POLLHUP | libc::POLLERR) != 0 {
++                        if pollfd.revents & unsafe { COSMO_POLLHUP | COSMO_POLLERR } != 0 {
+                             let e = self.take_error()?.unwrap_or_else(|| {
+                                 io::const_error!(
+                                     io::ErrorKind::Uncategorized,
+@@ -258,7 +282,7 @@
                  target_os = "cygwin",
              ) => {
                  unsafe {
@@ -351,6 +427,53 @@ diff a/library/std/src/sys/net/connection/socket/unix.rs b/library/std/src/sys/n
                      Ok(Socket(FileDesc::from_raw_fd(fd)))
                  }
              }
+@@ -591,22 +615,8 @@
+         Ok(local_creds_persistent != 0)
+     }
+ 
+-    #[cfg(not(any(target_os = "solaris", target_os = "illumos", target_os = "vita")))]
+-    pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
+-        let mut nonblocking = nonblocking as libc::c_int;
+-        cvt(unsafe { libc::ioctl(self.as_raw_fd(), libc::FIONBIO, &mut nonblocking) }).map(drop)
+-    }
+-
+-    #[cfg(target_os = "vita")]
+-    pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
+-        let option = nonblocking as libc::c_int;
+-        unsafe { setsockopt(self, libc::SOL_SOCKET, libc::SO_NONBLOCK, option) }
+-    }
+-
+-    #[cfg(any(target_os = "solaris", target_os = "illumos"))]
++    // cosmo: same FIONBIO problem as FileDesc, so borrow its fcntl path.
+     pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
+-        // FIONBIO is inadequate for sockets on illumos/Solaris, so use the
+-        // fcntl(F_[GS]ETFL)-based method provided by FileDesc instead.
+         self.0.set_nonblocking(nonblocking)
+     }
+ 
+diff a/library/std/src/sys/process/unix/common.rs b/library/std/src/sys/process/unix/common.rs
+--- a/library/std/src/sys/process/unix/common.rs
++++ b/library/std/src/sys/process/unix/common.rs
+@@ -644,11 +644,17 @@
+     out.set_nonblocking(true)?;
+     err.set_nonblocking(true)?;
+ 
++    // cosmo: POLLIN is a runtime value off Linux, and poll() wants the host's.
++    unsafe extern "C" {
++        #[link_name = "POLLIN"]
++        static COSMO_POLLIN: libc::c_short;
++    }
++
+     let mut fds: [libc::pollfd; 2] = unsafe { mem::zeroed() };
+     fds[0].fd = out.as_raw_fd();
+-    fds[0].events = libc::POLLIN;
++    fds[0].events = unsafe { COSMO_POLLIN };
+     fds[1].fd = err.as_raw_fd();
+-    fds[1].events = libc::POLLIN;
++    fds[1].events = unsafe { COSMO_POLLIN };
+     loop {
+         // wait for either pipe to become readable using `poll`
+         cvt_r(|| unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) })?;
 diff a/library/std/src/sys/random/linux.rs b/library/std/src/sys/random/linux.rs
 --- a/library/std/src/sys/random/linux.rs
 +++ b/library/std/src/sys/random/linux.rs

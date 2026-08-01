@@ -120,6 +120,7 @@ unsafe fn cstr(p: *const c_char) -> Option<String> {
 
 /// Same, for the CPUID registers, which hold leftover control-character junk
 /// when there's nothing to report rather than an empty string.
+#[cfg(target_arch = "x86_64")]
 unsafe fn cstr_printable(p: *const c_char) -> Option<String> {
     let s = unsafe { cstr(p) }?;
     let s = s.trim_matches(|c: char| !c.is_ascii_graphic() && c != ' ');

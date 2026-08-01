@@ -24,9 +24,6 @@ pub fn run(args: &SetupArgs) -> Result<()> {
 /// Renders the targets/ templates into a generated/ that works on this machine:
 /// a linker shim per arch (sets ARCH, execs the wrapper), and a target JSON with
 /// @APE_LINKER@ pointing at it.
-///
-/// Cheap enough that there's no stamp; rewriting on every setup keeps it in
-/// sync with the templates and the current repo location.
 fn materialize() -> Result<()> {
     let root = util::repo_root();
     let generated = root.join("generated");

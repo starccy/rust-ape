@@ -13,6 +13,11 @@ ape = { path = "../ape" }
 smol = "2"
 # Pulls in getrandom.
 rand = "0.8"
+tempfile = "3.27.0"
+sha2 = "0.11.0"
+blake3 = "1.8.5"
+md-5 = "0.11.0"
+ureq = "3.3.0"
 
 [patch.crates-io]
 async-io = { path = "../vendor/patches/async-io" }

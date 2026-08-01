@@ -29,9 +29,73 @@ diff a/async-process/src/lib.rs b/async-process/src/lib.rs
 -        reaper.sys.reap(guard).await
 +        // cosmo: neither reaper backend works (no SIGCHLD on Windows, no
 +        // pidfd/waitid anywhere) and smol spawns this driver unconditionally, so
-+        // park instead of letting a worker init the reaper and take us down.
-+        // No child processes until someone writes a cosmo reaper.
++        // block forever instead of letting a worker init the reaper and crash.
++        // Child processes stay unsupported until someone writes a cosmo reaper.
 +        std::future::pending().await
      }
  }
  
+@@ -1184,22 +1167,11 @@
+ /// Moves `Fd` out of non-blocking mode.
+ #[cfg(unix)]
+ fn blocking_fd(fd: rustix::fd::BorrowedFd<'_>) -> io::Result<()> {
+-    cfg_if::cfg_if! {
+-        // ioctl(FIONBIO) sets the flag atomically, but we use this only on Linux
+-        // for now, as with the standard library, because it seems to behave
+-        // differently depending on the platform.
+-        // https://github.com/rust-lang/rust/commit/efeb42be2837842d1beb47b51bb693c7474aba3d
+-        // https://github.com/libuv/libuv/blob/e9d91fccfc3e5ff772d5da90e1c4a24061198ca0/src/unix/poll.c#L78-L80
+-        // https://github.com/tokio-rs/mio/commit/0db49f6d5caf54b12176821363d154384357e70a
+-        if #[cfg(target_os = "linux")] {
+-            rustix::io::ioctl_fionbio(fd, false)?;
+-        } else {
+-            let previous = rustix::fs::fcntl_getfl(fd)?;
+-            let new = previous & !rustix::fs::OFlags::NONBLOCK;
+-            if new != previous {
+-                rustix::fs::fcntl_setfl(fd, new)?;
+-            }
+-        }
++    // cosmo: no ioctl FIONBIO (ENOTSUP), so take the fcntl path everywhere.
++    let previous = rustix::fs::fcntl_getfl(fd)?;
++    let new = previous & !rustix::fs::OFlags::NONBLOCK;
++    if new != previous {
++        rustix::fs::fcntl_setfl(fd, new)?;
+     }
+     Ok(())
+ }
+diff a/async-process/src/reaper/mod.rs b/async-process/src/reaper/mod.rs
+--- a/async-process/src/reaper/mod.rs
++++ b/async-process/src/reaper/mod.rs
+@@ -175,6 +175,8 @@
+     }
+ 
+     /// Do we have any registered zombie processes?
++    // cosmo: unused since the driver above is disabled.
++    #[allow(dead_code)]
+     pub(crate) fn has_zombies(&'static self) -> bool {
+         cfg_wait! {
+             if let Self::Wait(this) = self {
+diff a/async-process/src/reaper/signal.rs b/async-process/src/reaper/signal.rs
+--- a/async-process/src/reaper/signal.rs
++++ b/async-process/src/reaper/signal.rs
+@@ -111,6 +111,8 @@
+     }
+ 
+     /// Do we have any registered zombie processes?
++    // cosmo: unused since the driver above is disabled.
++    #[allow(dead_code)]
+     pub(crate) fn has_zombies(&'static self) -> bool {
+         !self
+             .zombies
+diff a/async-process/src/reaper/wait.rs b/async-process/src/reaper/wait.rs
+--- a/async-process/src/reaper/wait.rs
++++ b/async-process/src/reaper/wait.rs
+@@ -82,6 +82,8 @@
+     }
+ 
+     /// Do we have any registered zombie processes?
++    // cosmo: unused since the driver above is disabled.
++    #[allow(dead_code)]
+     pub(crate) fn has_zombies(&'static self) -> bool {
+         self.zombies.load(Ordering::SeqCst) > 0
+     }
