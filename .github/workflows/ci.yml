@@ -23,11 +23,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # cosmocc's zip is a little bit large and the patched crates come from crates.io.
       # config.rs pins every one of those versions, so use it as the cache key.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: cache
           key: sdk-${{ runner.os }}-${{ hashFiles('xtask/src/config.rs') }}
@@ -53,7 +53,7 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: examples
           path: examples/target/ape/*.com
@@ -66,7 +66,6 @@ jobs:
     needs: build
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
-    continue-on-error: ${{ matrix.experimental || false }}
     strategy:
       fail-fast: false
       matrix:
@@ -74,10 +73,10 @@ jobs:
           - { label: linux-x64, os: ubuntu-latest }
           - { label: linux-arm64, os: ubuntu-24.04-arm }
           - { label: windows-x64, os: windows-latest }
-          - { label: windows-arm64, os: windows-11-arm, experimental: true }
+          - { label: windows-arm64, os: windows-11-arm }
           - { label: macos-arm64, os: macos-latest }
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: examples
           path: ape
