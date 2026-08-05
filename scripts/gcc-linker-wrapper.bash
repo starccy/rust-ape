@@ -18,6 +18,7 @@ for o in "$@"; do
         "-lunwind") continue;;
         "-Wl,-Bdynamic") continue;;
         "-Wl,-Bstatic") continue;;
+        "-Wl,--strip-all" | "-Wl,-s" | "-Wl,-S" | "-Wl,--strip-debug") continue;;
     esac
     args+=("$o")
 done
