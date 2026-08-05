@@ -167,3 +167,10 @@ pub fn find_dir_suffix(base: &Path, suffix: &str) -> Option<PathBuf> {
     }
     None
 }
+
+pub fn git_init(dir: &Path) -> Result<()> {
+    run(Command::new("git")
+        .arg("init")
+        .arg(dir)
+    )
+}

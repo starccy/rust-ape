@@ -21,6 +21,10 @@ pub fn run(args: &GenerateArgs) -> Result<()> {
     fs::create_dir_all(args.path.join("src"))?;
     let dir = args.path.canonicalize()?;
 
+    util::git_init(&dir)
+        .inspect_err(|e| eprintln!("could not initialize git repo in {}: {e}", dir.display()))
+        .ok();
+
     let name = match &args.name {
         Some(n) => n.clone(),
         None => dir
