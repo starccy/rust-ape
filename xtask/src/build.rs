@@ -20,6 +20,15 @@ pub struct BuildArgs {
     /// Build and pack only this binary
     #[arg(long)]
     pub bin: Option<String>,
+    /// Space or comma separated list of features to activate
+    #[arg(long, short = 'F')]
+    pub features: Vec<String>,
+    /// Activate all available features
+    #[arg(long)]
+    pub all_features: bool,
+    /// Do not activate the `default` feature
+    #[arg(long)]
+    pub no_default_features: bool,
     /// Where to write the result (defaults to <project>/target/ape/<name>.com)
     #[arg(long)]
     pub output: Option<PathBuf>,
@@ -289,6 +298,15 @@ fn cargo_build(
     }
     if let Some(b) = &args.bin {
         cmd.args(["--bin", b]);
+    }
+    for f in &args.features {
+        cmd.args(["--features", f]);
+    }
+    if args.all_features {
+        cmd.arg("--all-features");
+    }
+    if args.no_default_features {
+        cmd.arg("--no-default-features");
     }
     util::run(&mut cmd)
 }

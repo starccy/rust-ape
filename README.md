@@ -5,6 +5,9 @@
 Build Rust programs into Cosmopolitan APE binaries: One file that runs on
 Linux, macOS, Windows and BSD, on both x86-64 and arm64.
 
+> **Status: experimental.** Only the breakage I've run into myself is fixed;
+> everything beyond that is untested territory. Not for production use.
+
 ```console
 $ cargo xtask build --project hello
 ==> apelink -> hello/target/ape/hello.com
@@ -27,10 +30,8 @@ and no per-platform builds.
 This project makes that available from Rust. It installs and drives the
 toolchain with a patched standard library, target specifications, linker wrappers,
 and a small crate for the APIs cosmo offers beyond libc, so that you can write
-ordinary Rust and get one binary out.
-
-Basically it works like an out-of-tree Rust target: all the pieces an official
-target would ship, but maintained outside the compiler.
+ordinary Rust ([**with some limitations**](#limits-and-gotchas), for
+sufficiently large values of "some" 🙃) and get one binary out.
 
 ## Getting started
 
@@ -63,7 +64,7 @@ cargo xtask build --project examples
 ./examples/target/ape/platform.com
 ```
 
-That leaves every binaries in `examples/target/ape/`, each one a scenario you
+That leaves all the binaries in `examples/target/ape/`, each one a scenario you
 can copy to another machine and run. They double as the test suite; see
 [What works](#what-works).
 
@@ -86,7 +87,9 @@ cargo xtask build --project /path/to/project
 
 Both architectures get compiled and `apelink` fuses them into one file under
 `target/ape/`. Every `[[bin]]` in the package is packed; use `--bin` to pick
-one, `--release` for an optimized build.
+one, `--release` for an optimized build. Feature selection works like it does
+in `cargo build`: `--features` (`-F`), `--all-features` and
+`--no-default-features` are passed through as-is.
 
 Plain `cargo build` inside the project will **not** work. The build needs a
 patched std via `-Z build-std`, two `--cfg` flags, and `CC`/`CXX`/`AR` pointing
@@ -95,7 +98,7 @@ at cosmocc. `cargo xtask build` sets all of that up.
 **4. Run it.**
 
 Copy the `.com` file to any supported machine and execute it. On
-Unix you need the `./` prefix (or you might use `sh -c ./name.com`, see [this](https://github.com/jart/cosmopolitan#shells));
+Unix you need the `./` prefix (or you might use `sh -c ./name.com` in some situations, see [this](https://github.com/jart/cosmopolitan#shells));
 on Windows, `.\name.com`.
 
 ## What works
@@ -110,100 +113,93 @@ CI builds them **once on Linux** and runs those same files on five platforms:
 | --- | --- | --- |
 | Linux | ✅ | ✅ |
 | Windows | ✅ | ✅ |
-| macOS | out of scope | ✅ |
+| macOS | untested | ✅ |
+| others | untested | untested |
 
-> Intel Macs would in fact work since cosmo supports them, and the same file already
-> carries x86-64 code. They are left out on purpose: Apple stopped shipping them
-> in 2023 and the platform is dying out, so it doesn't seem worth a CI lane
-> (for the same reason there is no Windows 7 lane).
-
-Dependencies with C, C++ or hand-written assembly work: the examples link
-`ring` (30 native objects) and `blake3`'s SIMD backends, both compiled by
-cosmocc.
+> The untested cells would probably work. However, the
+> [compile-time-constant mismatches](#why-things-break-in-this-particular-way)
+> that break things here are per-platform, so those platforms may fail in ways
+> the tested ones no longer do. I rarely use them and don't plan to test them;
+> reports welcome.
 
 ## Limits and gotchas
+
+### Gotchas you can work around
 
 **Prefer `ape::` over `std::` where they overlap.** `std::env::current_exe()`
 returns the APE loader rather than your program, and on Windows it fails
 outright looking for `/proc/self/exe`. Use `ape::program_executable_name()`.
 
 **Async means smol, not tokio.** Cosmopolitan
-[removed epoll entirely in 2024](https://github.com/jart/cosmopolitan/commit/2ec413b5a9b5d88d363cf5657a8c3ddce4d7feb1)
-— the author's reasoning was that it could not be made to work on XNU and the
-BSDs, and that `poll`/`select` should be done well instead. mio picks epoll by
-`target_os` with no way to override it, so tokio cannot run here. smol's
-`polling` crate has an escape hatch (`--cfg polling_test_poll_backend`) that
-forces the poll backend, which is what this project uses.
+[dropped epoll in 2024](https://github.com/jart/cosmopolitan/commit/2ec413b5a9b5d88d363cf5657a8c3ddce4d7feb1),
+and mio hardwires epoll on Linux targets, so tokio cannot run here. smol works
+because its `polling` crate leaves a compile-time escape hatch
+(`--cfg polling_test_poll_backend`) that switches it to plain `poll`, which
+this project sets.
+
+**C dependencies must be compiled from source.** Vendored C, C++ or
+hand-written assembly built through the `cc` crate works: the examples link
+`ring` (30 native objects) and `blake3`'s SIMD backends, both compiled by
+cosmocc. What does not work: `-sys` crates that expect a prebuilt system
+library (e.g. openssl-sys, which will find none for this target).
+
+### Known broken, with no fix yet
+
+What follows is only what has been hit so far, not a complete inventory.
 
 **No async subprocesses, on any platform.** async-process needs SIGCHLD or
 pidfd/waitid to reap children, and cosmo has neither everywhere, so
 `async-process.patch` disables its driver. Synchronous `std::process::Command`
 works fine, pipes included.
 
-**Anonymous temp files fail on Windows.** `tempfile::tempfile()` not works on
-Windows. The good news is it returns `Err` rather than crashing, see [temp_files.rs](./examples/src/bin/temp_files.rs).
+**Anonymous temp files fail on Windows.** `tempfile::tempfile()` does not work
+on Windows. The good news is it returns `Err` rather than crashing, see [temp_files.rs](./examples/src/bin/temp_files.rs).
 `NamedTempFile` and `tempdir()` are fine.
 
 **Runtime CPU detection is blind off Linux on arm64.** `AT_HWCAP` reads as 0
 there, so crates that dispatch on it fall back to scalar code: correct, slower.
 x86 is unaffected, since CPUID is a hardware instruction.
 
+### Will it port? A cheat sheet
+
+To size up an existing project (or a design you're about to start), scan its
+dependency tree (`cargo tree`) against this table before investing time:
+
+| If it involves | Verdict |
+| --- | --- |
+| tokio, mio, or anything else epoll-only | ❌ no epoll under cosmo, and mio can't be told to use anything else |
+| spawning processes from async (async-process) | ❌ disabled here; sync `std::process::Command` is the only way |
+| `-sys` crates that link a prebuilt system library (openssl-sys, …) | ❌ no such library exists for this target |
+| C/C++/asm vendored in the crate, built via `cc` | ⚠️ works if the code sticks to APIs cosmo has: `ring` and `blake3` do, OpenSSL's `dladdr()` use doesn't |
+| comparing `raw_os_error()` (or any raw OS value) against `libc::` constants | ⚠️ compiles, then silently misbehaves off Linux. see below |
+| smol, async-io, rustls, and pure-Rust crates in general | ✅ works, some via `patches/` |
+
 ### Why things break in this particular way
 
-Almost every problem above has the same root cause, and knowing it helps a lot
-when debugging.
+Almost every problem above has the same root cause: Rust's std pins platform
+constants at compile time for a fixed target (`x86_64-unknown-linux-musl`
+here), while Cosmopolitan resolves them **at runtime** to whatever the host
+uses. For example, `libc::EBADF` compiles to Linux's 9, but on Windows the real value is 6,
+so code comparing `raw_os_error()` against `libc::` constants takes the wrong
+branch on every OS except Linux, and the same goes for flag constants in
+general. Nearly everything under `patches/` exists to fix exactly this.
 
-Rust compiles for a fixed target: it's `x86_64-unknown-linux-musl` here and bakes
-platform constants in at compile time. `libc::EBADF` becomes Linux's 9.
-Cosmopolitan resolves those same names **at runtime**, to whatever the host
-uses, and on Windows `EBADF` is 6. Any code comparing `raw_os_error()` against a
-`libc::` constant therefore takes the wrong branch on every OS except Linux.
-
-It is not only errno: `SOCK_CLOEXEC`, the whole `POLL*` family, `SOL_SOCKET` and
-the `SO_*` options, `MSG_NOSIGNAL` etc. are all runtime values under cosmo, but
-compile-time constants as far as std is concerned. That is what `patches/` is
-for, and each hunk has a `cosmo:` comment explaining why it's needed.
-
-These failures are usually silent. A wrong `POLL*` bit makes `poll()` wait on the
-wrong event, so `connect_timeout` reports success and then reads zero bytes,
-which surfaces much later as a TLS handshake failing with `UnexpectedEof`. If
-something works on Linux but misbehaves elsewhere, check compile-time constants
-first before suspecting the syscall itself.
-
-This list only covers what has been hit so far. Cosmopolitan has a large surface
-area, and so does std; expect to find more.
+The coverage is certainly incomplete. If something works on Linux but hangs or
+errors on another platform, suspect a compile-time constant first.
 
 ## Notes
 
 Some design issues that you should know about:
 
-**Patching std pins the whole project to one dated nightly.** The patch applies
-to `rust-src` from exactly that toolchain, and upgrading Rust means redoing it.
-There is no alternative for now: std freezes those platform constants when it
-is compiled, and a target specification cannot change them.
-
 **Nightly is required.** `-Z build-std` is the only way to build a patched std,
 and it has been unstable for years.
 
-**cargo cannot see that build-std's sources changed.** std and libc are not
-local packages as far as it is concerned, so editing `vendor/library` changes
-nothing until something else forces a rebuild. `xtask` keeps a stamp and clears
-the build-std cache itself.
+**The patches are tied to one exact Rust version.** They apply to the
+`rust-src` of the pinned nightly, so upgrading Rust means redoing every patch.
 
-**This is not a target you can `rustup target add`.** An official target is a
-name you pass to cargo; this one is a directory you have to keep, plus a command
-wrapping cargo. `cargo build` in a generated project does not work and cannot
-be made to work.
-
-**Generated projects are tied to where the SDK sits.** Their `Cargo.toml`
-points at `vendor/patches/` and `ape/` by absolute path, so moving this
-directory breaks every project made before the move. Relative paths would just
-break in a different way, so neither option is great.
-
-**Every project carries all five patch entries** whether it depends on those
-crates or not, because the alternative is asking people to figure out which
-ones they need. It is cheap, but it does mean a scaffolded `Cargo.toml` starts
-with a block of paths that may have nothing to do with the program.
+**Generated projects reference this directory by absolute path.** Moving this
+directory, or taking a generated project to another machine, breaks its build
+until the paths in its `Cargo.toml` are fixed up.
 
 ## Layout
 
