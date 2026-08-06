@@ -47,7 +47,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          cargo xtask build --project examples 2>&1 | tee build.log
+          cargo xtask build examples 2>&1 | tee build.log
           if grep -q 'linking without Apple Silicon support' build.log; then
             echo "::error::apelink dropped Apple Silicon support; macos-latest would fail"
             exit 1
