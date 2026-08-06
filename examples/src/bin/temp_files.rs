@@ -1,11 +1,8 @@
 //! Temporary files, through std and through the `tempfile` crate.
 //!
 //! `std::env::temp_dir()` returns `/tmp` unless TMPDIR says otherwise, because
-//! that's what a Linux target compiles to.
-//!
-//! The good news is cosmo maps that path per host, so on Windows it lands in
-//! `%LOCALAPPDATA%\Temp`. That's why `tempfile` works out of the box (mostly):
-//! the anonymous variant still fails there, see the bottom of this file.
+//! that's what a Linux target compiles to. That path still works on Windows,
+//! where cosmo maps `/tmp` to the real temp directory.
 
 use std::fs;
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -43,30 +40,13 @@ fn main() {
     drop(dir);
     assert!(!path.exists(), "tempdir outlived its drop");
 
-    // The anonymous variant is the one that breaks. tempfile opens with
-    // O_TMPFILE and falls back only on EOPNOTSUPP/EISDIR/ENOENT; cosmo returns
-    // Windows' raw 267 rather than EISDIR, so the fallback never fires.
-    // Assert instead of skipping, so we notice if either side changes.
-    // Of course we could patch tempfile as well, but next to the load-bearing ones in
-    // patches/ that doesn't seem worth it.
-    match tempfile::tempfile() {
-        Ok(mut f) => {
-            f.write_all(b"anonymous").expect("write");
-            f.seek(SeekFrom::Start(0)).expect("seek");
-            let mut back = String::new();
-            f.read_to_string(&mut back).expect("read");
-            assert_eq!(back, "anonymous", "anonymous temp file lost its content");
-            println!("anonymous temp file ok");
-        }
-        Err(e) => {
-            assert!(
-                ape::is_windows(),
-                "anonymous tempfile failed on {:?}, which was only expected on Windows: {e}",
-                ape::current_os()
-            );
-            println!("anonymous temp file: unsupported here ({e})");
-        }
-    }
+    let mut f = tempfile::tempfile().expect("tempfile");
+    f.write_all(b"anonymous").expect("write");
+    f.seek(SeekFrom::Start(0)).expect("seek");
+    let mut back = String::new();
+    f.read_to_string(&mut back).expect("read");
+    assert_eq!(back, "anonymous", "anonymous temp file lost its content");
+    println!("anonymous temp file ok");
 
     println!("\ntemp files ok");
 }

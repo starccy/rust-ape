@@ -3,6 +3,7 @@ mod concat;
 mod config;
 mod fetch;
 mod generate;
+mod genshim;
 mod metadata;
 mod setup;
 mod util;
@@ -25,6 +26,8 @@ enum Cmd {
     Generate(generate::GenerateArgs),
     /// Build both targets and apelink them into one fat APE
     Build(build::BuildArgs),
+    /// Regenerate shim/tables.h and its compile-time cross-check from vendor/
+    GenShim(genshim::GenShimArgs),
 }
 
 fn main() -> Result<()> {
@@ -32,5 +35,6 @@ fn main() -> Result<()> {
         Cmd::Setup(args) => setup::run(&args),
         Cmd::Generate(args) => generate::run(&args),
         Cmd::Build(args) => build::run(&args),
+        Cmd::GenShim(args) => genshim::run(&args),
     }
 }

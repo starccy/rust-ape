@@ -14,14 +14,21 @@ smol = "2"
 # Pulls in getrandom.
 rand = "0.8"
 tempfile = "3.27.0"
+# errno_codes compares raw_os_error against these constants; resolves to the
+# cosmo-adapted copy through [patch.crates-io] like everything else.
+libc = "0.2"
 sha2 = "0.11.0"
 blake3 = "1.8.5"
 md-5 = "0.11.0"
 ureq = "3.3.0"
+# TUI stack. crossterm depends on mio by default. use `use-dev-tty` feature to avoid that.
+ratatui = "0.29.0"
+crossterm = { version = "0.28.1", features = ["use-dev-tty", "events"] }
+# parking_lot parks via raw syscall(SYS_futex) — the __ape_shim_syscall path.
+parking_lot = "0.12"
 
 [patch.crates-io]
 async-io = { path = "../vendor/patches/async-io" }
 async-process = { path = "../vendor/patches/async-process" }
-getrandom = { path = "../vendor/patches/getrandom" }
+errno = { path = "../vendor/patches/errno" }
 libc = { path = "../vendor/patches/libc" }
-polling = { path = "../vendor/patches/polling" }

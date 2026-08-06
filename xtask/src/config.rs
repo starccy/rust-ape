@@ -48,9 +48,8 @@ fn parse_nightly_date(channel: &str) -> Option<&str> {
 pub const PATCHED_CRATES: &[(&str, &str)] = &[
     ("async-io", "2.6.0"),
     ("async-process", "2.5.0"),
-    ("getrandom", "0.2.17"),
+    ("errno", "0.3.14"),
     ("libc", "0.2.189"),
-    ("polling", "3.11.0"),
 ];
 
 /// Pinned to the official release zip. cosmocc itself is unmodified

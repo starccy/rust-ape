@@ -1,3 +1,37 @@
+diff a/libc/build.rs b/libc/build.rs
+--- a/libc/build.rs
++++ b/libc/build.rs
+@@ -227,6 +227,9 @@
+     // Since Rust 1.80, configuration that isn't recognized by default needs to be provided to
+     // avoid warnings.
+     if rustc_minor_ver >= 80 {
++        // cosmo: the SDK passes --cfg rust_ape_shim for target units only, so
++        // the __ape_shim_* redirects never reach host build scripts.
++        println!("cargo:rustc-check-cfg=cfg(rust_ape_shim)");
+         for cfg in ALLOWED_CFGS {
+             println!("cargo:rustc-check-cfg=cfg({cfg})");
+         }
+diff a/libc/src/new/common/posix/pthread.rs b/libc/src/new/common/posix/pthread.rs
+--- a/libc/src/new/common/posix/pthread.rs
++++ b/libc/src/new/common/posix/pthread.rs
+@@ -140,6 +140,8 @@
+     ) -> c_int;
+ 
+     #[cfg(any(target_os = "android", target_os = "emscripten", target_os = "linux",))]
++    // cosmo: clockid_t is Linux-coded on this side; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_pthread_condattr_setclock")]
+     pub fn pthread_condattr_setclock(
+         attr: *mut crate::pthread_condattr_t,
+         clock_id: crate::clockid_t,
+@@ -309,6 +311,8 @@
+         target_os = "l4re",
+         target_os = "linux"
+     ))]
++    // cosmo: SIG_BLOCK & co are Linux-coded; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_pthread_sigmask")]
+     pub fn pthread_sigmask(
+         how: c_int,
+         set: *const crate::sigset_t,
 diff a/libc/src/unix/linux_like/linux/mod.rs b/libc/src/unix/linux_like/linux/mod.rs
 --- a/libc/src/unix/linux_like/linux/mod.rs
 +++ b/libc/src/unix/linux_like/linux/mod.rs
@@ -12,6 +46,41 @@ diff a/libc/src/unix/linux_like/linux/mod.rs b/libc/src/unix/linux_like/linux/mo
  
  // <linux/seccomp.h>
  pub const SECCOMP_MODE_DISABLED: c_uint = 0;
+@@ -3608,6 +3610,8 @@
+         timeout: *const crate::timespec,
+     ) -> c_int;
+     pub fn sigwaitinfo(set: *const sigset_t, info: *mut siginfo_t) -> c_int;
++    // cosmo: SOCK_CLOEXEC/NONBLOCK bits are Linux-coded on this side; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_accept4")]
+     pub fn accept4(fd: c_int, addr: *mut crate::sockaddr, len: *mut socklen_t, flg: c_int)
+         -> c_int;
+     pub fn reboot(how_to: c_int) -> c_int;
+@@ -3640,6 +3644,7 @@
+     pub fn vhangup() -> c_int;
+     pub fn sync();
+     pub fn syncfs(fd: c_int) -> c_int;
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_syscall")]
+     pub fn syscall(num: c_long, ...) -> c_long;
+     pub fn sched_setaffinity(
+         pid: crate::pid_t,
+@@ -3692,6 +3697,8 @@
+         any(gnu_time_bits64, musl_redir_time64),
+         link_name = "__clock_nanosleep_time64"
+     )]
++    // cosmo: clockid_t is Linux-coded on this side; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_clock_nanosleep")]
+     pub fn clock_nanosleep(
+         clk_id: crate::clockid_t,
+         flags: c_int,
+@@ -3707,6 +3714,8 @@
+     ) -> c_int;
+     #[cfg_attr(gnu_file_offset_bits64, link_name = "sendfile64")]
+     pub fn sendfile(out_fd: c_int, in_fd: c_int, offset: *mut off_t, count: size_t) -> ssize_t;
++    // cosmo: SS_DISABLE is a runtime constant there; the shim maps ss_flags.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_sigaltstack")]
+     pub fn sigaltstack(ss: *const stack_t, oss: *mut stack_t) -> c_int;
+     pub fn getdtablesize() -> c_int;
+     pub fn getgrouplist(
 diff a/libc/src/unix/linux_like/linux/musl/b64/aarch64/mod.rs b/libc/src/unix/linux_like/linux/musl/b64/aarch64/mod.rs
 --- a/libc/src/unix/linux_like/linux/musl/b64/aarch64/mod.rs
 +++ b/libc/src/unix/linux_like/linux/musl/b64/aarch64/mod.rs
@@ -49,3 +118,451 @@ diff a/libc/src/unix/linux_like/linux/musl/b64/aarch64/mod.rs b/libc/src/unix/li
      }
  
      pub struct user_regs_struct {
+diff a/libc/src/unix/linux_like/linux/musl/mod.rs b/libc/src/unix/linux_like/linux/musl/mod.rs
+--- a/libc/src/unix/linux_like/linux/musl/mod.rs
++++ b/libc/src/unix/linux_like/linux/musl/mod.rs
+@@ -755,7 +755,11 @@
+ }
+ 
+ extern "C" {
++    // cosmo: RLIMIT_* resource numbers are Linux-coded; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_getrlimit")]
+     pub fn getrlimit(resource: c_int, rlim: *mut crate::rlimit) -> c_int;
++    // cosmo: RLIMIT_* resource numbers are Linux-coded; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_setrlimit")]
+     pub fn setrlimit(resource: c_int, rlim: *const crate::rlimit) -> c_int;
+     pub fn prlimit(
+         pid: crate::pid_t,
+diff a/libc/src/unix/linux_like/linux_l4re_shared.rs b/libc/src/unix/linux_like/linux_l4re_shared.rs
+--- a/libc/src/unix/linux_like/linux_l4re_shared.rs
++++ b/libc/src/unix/linux_like/linux_l4re_shared.rs
+@@ -1654,6 +1654,7 @@
+                 iovcnt: c_int,
+                 offset: crate::off_t,
+             ) -> ssize_t;
++            #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_getnameinfo")]
+             pub fn getnameinfo(
+                 sa: *const crate::sockaddr,
+                 salen: crate::socklen_t,
+@@ -1729,6 +1730,9 @@
+     pub fn shmctl(shmid: c_int, cmd: c_int, buf: *mut crate::shmid_ds) -> c_int;
+ 
+     pub fn mprotect(addr: *mut c_void, len: size_t, prot: c_int) -> c_int;
++    // cosmo: route every consumer of libc's errno through the shim, which
++    // keeps the value in Linux coding; see shim/errno.c in the SDK.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_errno_location")]
+     pub fn __errno_location() -> *mut c_int;
+ 
+     #[cfg_attr(gnu_time_bits64, link_name = "__glob64_time64")]
+@@ -1752,9 +1756,13 @@
+     pub fn seekdir(dirp: *mut crate::DIR, loc: c_long);
+ 
+     pub fn telldir(dirp: *mut crate::DIR) -> c_long;
++    // cosmo: MADV_* values are Linux-coded; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_madvise")]
+     pub fn madvise(addr: *mut c_void, len: size_t, advice: c_int) -> c_int;
+ 
+     pub fn msync(addr: *mut c_void, len: size_t, flags: c_int) -> c_int;
++    // cosmo: MSG_* flags are Linux-coded on this side; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_recvfrom")]
+     pub fn recvfrom(
+         socket: c_int,
+         buf: *mut c_void,
+@@ -1791,6 +1799,8 @@
+     pub fn prctl(option: c_int, ...) -> c_int;
+     #[cfg_attr(gnu_time_bits64, link_name = "__ppoll64")]
+     #[cfg_attr(musl_redir_time64, link_name = "__ppoll_time64")]
++    // cosmo: POLL* events are Linux-coded on this side; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_ppoll")]
+     pub fn ppoll(
+         fds: *mut crate::pollfd,
+         nfds: crate::nfds_t,
+@@ -1824,6 +1834,8 @@
+     pub fn sigwait(set: *const crate::sigset_t, sig: *mut c_int) -> c_int;
+     pub fn getgrgid(gid: crate::gid_t) -> *mut crate::group;
+     pub fn popen(command: *const c_char, mode: *const c_char) -> *mut crate::FILE;
++    // cosmo: AT_* flags are Linux-coded on this side; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_faccessat")]
+     pub fn faccessat(dirfd: c_int, pathname: *const c_char, mode: c_int, flags: c_int) -> c_int;
+     pub fn dl_iterate_phdr(
+         callback: Option<
+diff a/libc/src/unix/linux_like/mod.rs b/libc/src/unix/linux_like/mod.rs
+--- a/libc/src/unix/linux_like/mod.rs
++++ b/libc/src/unix/linux_like/mod.rs
+@@ -1753,6 +1753,7 @@
+ 
+         extern "C" {
+             #[cfg_attr(gnu_time_bits64, link_name = "__ioctl_time64")]
++            #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_ioctl")]
+             pub fn ioctl(fd: c_int, request: Ioctl, ...) -> c_int;
+         }
+     }
+@@ -1897,16 +1898,22 @@
+ 
+     #[cfg_attr(gnu_time_bits64, link_name = "__clock_getres64")]
+     #[cfg_attr(musl_redir_time64, link_name = "__clock_getres_time64")]
++    // cosmo: clockid_t is Linux-coded on this side; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_clock_getres")]
+     pub fn clock_getres(clk_id: crate::clockid_t, tp: *mut crate::timespec) -> c_int;
+     #[cfg_attr(
+         any(gnu_time_bits64, musl_redir_time64),
+         link_name = "__clock_gettime64"
+     )]
++    // cosmo: clockid_t is Linux-coded on this side; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_clock_gettime")]
+     pub fn clock_gettime(clk_id: crate::clockid_t, tp: *mut crate::timespec) -> c_int;
+     #[cfg_attr(
+         any(gnu_time_bits64, musl_redir_time64),
+         link_name = "__clock_settime64"
+     )]
++    // cosmo: clockid_t is Linux-coded on this side; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_clock_settime")]
+     pub fn clock_settime(clk_id: crate::clockid_t, tp: *const crate::timespec) -> c_int;
+     #[cfg(not(target_os = "l4re"))]
+     pub fn clock_getcpuclockid(pid: crate::pid_t, clk_id: *mut crate::clockid_t) -> c_int;
+@@ -1927,6 +1934,8 @@
+     pub fn memalign(align: size_t, size: size_t) -> *mut c_void;
+     pub fn setgroups(ngroups: size_t, ptr: *const crate::gid_t) -> c_int;
+     #[cfg(not(target_os = "l4re"))]
++    // cosmo: flags are Linux-coded on this side; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_pipe2")]
+     pub fn pipe2(fds: *mut c_int, flags: c_int) -> c_int;
+     #[cfg_attr(gnu_file_offset_bits64, link_name = "statfs64")]
+     pub fn statfs(path: *const c_char, buf: *mut statfs) -> c_int;
+@@ -1941,6 +1950,8 @@
+     pub fn futimens(fd: c_int, times: *const crate::timespec) -> c_int;
+     #[cfg_attr(gnu_time_bits64, link_name = "__utimensat64")]
+     #[cfg_attr(musl_redir_time64, link_name = "__utimensat_time64")]
++    // cosmo: AT_* flags and UTIME_* sentinels are Linux-coded; shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_utimensat")]
+     pub fn utimensat(
+         dirfd: c_int,
+         path: *const c_char,
+@@ -2016,18 +2027,26 @@
+     pub fn getifaddrs(ifap: *mut *mut crate::ifaddrs) -> c_int;
+     #[cfg(not(target_os = "l4re"))]
+     pub fn freeifaddrs(ifa: *mut crate::ifaddrs);
++    // cosmo: the sockaddr family field is Linux-coded on this side; the shim rewrites it.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_bind")]
+     pub fn bind(
+         socket: c_int,
+         address: *const crate::sockaddr,
+         address_len: crate::socklen_t,
+     ) -> c_int;
+ 
++    // cosmo: NT ignores O_NONBLOCK on socket writes; the shim emulates it (poll gate).
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_writev")]
+     pub fn writev(fd: c_int, iov: *const crate::iovec, iovcnt: c_int) -> ssize_t;
+     pub fn readv(fd: c_int, iov: *const crate::iovec, iovcnt: c_int) -> ssize_t;
+ 
+     #[cfg_attr(gnu_time_bits64, link_name = "__sendmsg64")]
++    // cosmo: MSG_* flags, msg_name family and cmsg_level are Linux-coded on
++    // this side; the shim translates all three (both directions for recvmsg).
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_sendmsg")]
+     pub fn sendmsg(fd: c_int, msg: *const crate::msghdr, flags: c_int) -> ssize_t;
+     #[cfg_attr(gnu_time_bits64, link_name = "__recvmsg64")]
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_recvmsg")]
+     pub fn recvmsg(fd: c_int, msg: *mut crate::msghdr, flags: c_int) -> ssize_t;
+     pub fn uname(buf: *mut crate::utsname) -> c_int;
+ 
+diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
+--- a/libc/src/unix/mod.rs
++++ b/libc/src/unix/mod.rs
+@@ -806,6 +806,8 @@
+     #[cfg_attr(target_os = "illumos", link_name = "__xnet_socket")]
+     #[cfg_attr(target_os = "solaris", link_name = "__xnet7_socket")]
+     #[cfg_attr(target_os = "espidf", link_name = "lwip_socket")]
++    // cosmo: SOCK_CLOEXEC/NONBLOCK bits are Linux-coded on this side; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_socket")]
+     pub fn socket(domain: c_int, ty: c_int, protocol: c_int) -> c_int;
+     #[cfg(not(all(target_arch = "powerpc", target_vendor = "nintendo")))]
+     #[cfg_attr(
+@@ -817,6 +819,8 @@
+         link_name = "__xnet_connect"
+     )]
+     #[cfg_attr(target_os = "espidf", link_name = "lwip_connect")]
++    // cosmo: the sockaddr family field is Linux-coded on this side; the shim rewrites it.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_connect")]
+     pub fn connect(socket: c_int, address: *const sockaddr, len: socklen_t) -> c_int;
+     #[cfg_attr(
+         all(target_os = "macos", target_arch = "x86"),
+@@ -831,6 +835,8 @@
+     )]
+     #[cfg_attr(target_os = "espidf", link_name = "lwip_accept")]
+     #[cfg_attr(target_os = "aix", link_name = "naccept")]
++    // cosmo: the returned sockaddr family is host-coded; the shim rewrites it back.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_accept")]
+     pub fn accept(socket: c_int, address: *mut sockaddr, address_len: *mut socklen_t) -> c_int;
+     #[cfg(not(all(target_arch = "powerpc", target_vendor = "nintendo")))]
+     #[cfg_attr(
+@@ -839,6 +845,7 @@
+     )]
+     #[cfg_attr(target_os = "espidf", link_name = "lwip_getpeername")]
+     #[cfg_attr(target_os = "aix", link_name = "ngetpeername")]
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_getpeername")]
+     pub fn getpeername(socket: c_int, address: *mut sockaddr, address_len: *mut socklen_t)
+         -> c_int;
+     #[cfg(not(all(target_arch = "powerpc", target_vendor = "nintendo")))]
+@@ -848,10 +855,13 @@
+     )]
+     #[cfg_attr(target_os = "espidf", link_name = "lwip_getsockname")]
+     #[cfg_attr(target_os = "aix", link_name = "ngetsockname")]
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_getsockname")]
+     pub fn getsockname(socket: c_int, address: *mut sockaddr, address_len: *mut socklen_t)
+         -> c_int;
+     #[cfg_attr(target_os = "espidf", link_name = "lwip_setsockopt")]
+     #[cfg_attr(gnu_time_bits64, link_name = "__setsockopt64")]
++    // cosmo: the (level, name) space is Linux-coded on this side; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_setsockopt")]
+     pub fn setsockopt(
+         socket: c_int,
+         level: c_int,
+@@ -867,6 +877,8 @@
+         any(target_os = "illumos", target_os = "solaris"),
+         link_name = "__xnet_socketpair"
+     )]
++    // cosmo: SOCK_CLOEXEC/NONBLOCK bits are Linux-coded on this side; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_socketpair")]
+     pub fn socketpair(
+         domain: c_int,
+         type_: c_int,
+@@ -883,6 +895,8 @@
+         link_name = "__xnet_sendto"
+     )]
+     #[cfg_attr(target_os = "espidf", link_name = "lwip_sendto")]
++    // cosmo: MSG_* flags are Linux-coded on this side; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_sendto")]
+     pub fn sendto(
+         socket: c_int,
+         buf: *const c_void,
+@@ -954,6 +968,8 @@
+         link_name = "open$UNIX2003"
+     )]
+     #[cfg_attr(gnu_file_offset_bits64, link_name = "open64")]
++    // cosmo: flags are Linux-coded on this side; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_open")]
+     pub fn open(path: *const c_char, oflag: c_int, ...) -> c_int;
+     #[cfg_attr(
+         all(target_os = "macos", target_arch = "x86"),
+@@ -970,6 +986,8 @@
+         all(not(gnu_time_bits64), gnu_file_offset_bits64),
+         link_name = "__fcntl_time64"
+     )]
++    // cosmo: cmd and flag arguments are Linux-coded; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_fcntl")]
+     pub fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
+ 
+     #[cfg_attr(
+@@ -1029,6 +1047,8 @@
+         flags: c_int,
+     ) -> c_int;
+     #[cfg_attr(gnu_file_offset_bits64, link_name = "openat64")]
++    // cosmo: flags and the AT_FDCWD sentinel are Linux-coded; shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_openat")]
+     pub fn openat(dirfd: c_int, pathname: *const c_char, flags: c_int, ...) -> c_int;
+     #[cfg_attr(
+         all(target_os = "macos", not(target_arch = "aarch64")),
+@@ -1045,8 +1065,12 @@
+     )]
+     #[cfg(not(target_os = "l4re"))]
+     #[cfg_attr(musl_redir_time64, link_name = "__fstatat_time64")]
++    // cosmo: AT_* flags are Linux-coded; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_fstatat")]
+     pub fn fstatat(dirfd: c_int, pathname: *const c_char, buf: *mut stat, flags: c_int) -> c_int;
+     #[cfg(not(target_os = "l4re"))]
++    // cosmo: AT_* flags are Linux-coded; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_linkat")]
+     pub fn linkat(
+         olddirfd: c_int,
+         oldpath: *const c_char,
+@@ -1066,6 +1090,8 @@
+     #[cfg(not(target_os = "l4re"))]
+     pub fn symlinkat(target: *const c_char, newdirfd: c_int, linkpath: *const c_char) -> c_int;
+     #[cfg(not(target_os = "l4re"))]
++    // cosmo: AT_* flags are Linux-coded; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_unlinkat")]
+     pub fn unlinkat(dirfd: c_int, pathname: *const c_char, flags: c_int) -> c_int;
+ 
+     pub fn access(path: *const c_char, amode: c_int) -> c_int;
+@@ -1185,6 +1211,8 @@
+         all(target_os = "macos", target_arch = "x86"),
+         link_name = "write$UNIX2003"
+     )]
++    // cosmo: NT ignores O_NONBLOCK on socket writes; the shim emulates it (poll gate).
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_write")]
+     pub fn write(fd: c_int, buf: *const c_void, count: size_t) -> ssize_t;
+     #[cfg_attr(
+         all(target_os = "macos", target_arch = "x86"),
+@@ -1208,6 +1236,8 @@
+         all(target_os = "macos", target_arch = "x86"),
+         link_name = "kill$UNIX2003"
+     )]
++    // cosmo: divergent signal numbers are Linux-coded; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_kill")]
+     pub fn kill(pid: pid_t, sig: c_int) -> c_int;
+     #[cfg_attr(
+         all(target_os = "macos", target_arch = "x86"),
+@@ -1225,6 +1255,8 @@
+         link_name = "mmap$UNIX2003"
+     )]
+     #[cfg_attr(gnu_file_offset_bits64, link_name = "mmap64")]
++    // cosmo: MAP_* flags are Linux-coded on this side; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_mmap")]
+     pub fn mmap(
+         addr: *mut c_void,
+         len: size_t,
+@@ -1284,6 +1316,8 @@
+     #[cfg_attr(gnu_file_offset_bits64, link_name = "ftruncate64")]
+     pub fn ftruncate(fd: c_int, length: off_t) -> c_int;
+ 
++    // cosmo: divergent signal numbers are Linux-coded; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_signal")]
+     pub fn signal(signum: c_int, handler: sighandler_t) -> sighandler_t;
+ 
+     #[cfg_attr(target_os = "netbsd", link_name = "__getrusage50")]
+@@ -1429,6 +1463,8 @@
+     )]
+     #[cfg_attr(target_os = "espidf", link_name = "lwip_getsockopt")]
+     #[cfg_attr(gnu_time_bits64, link_name = "__getsockopt64")]
++    // cosmo: the (level, name) space is Linux-coded on this side; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_getsockopt")]
+     pub fn getsockopt(
+         sockfd: c_int,
+         level: c_int,
+@@ -1436,6 +1472,8 @@
+         optval: *mut c_void,
+         optlen: *mut crate::socklen_t,
+     ) -> c_int;
++    // cosmo: divergent signal numbers are Linux-coded; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_raise")]
+     pub fn raise(signum: c_int) -> c_int;
+ 
+     #[cfg_attr(target_os = "netbsd", link_name = "__utimes50")]
+@@ -1454,6 +1492,8 @@
+         link_name = "__xnet_getaddrinfo"
+     )]
+     #[cfg_attr(target_os = "espidf", link_name = "lwip_getaddrinfo")]
++    // cosmo: family values in hints and in the result chain are the shim's to translate.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_getaddrinfo")]
+     pub fn getaddrinfo(
+         node: *const c_char,
+         service: *const c_char,
+@@ -1562,12 +1602,16 @@
+         link_name = "send$UNIX2003"
+     )]
+     #[cfg_attr(target_os = "espidf", link_name = "lwip_send")]
++    // cosmo: MSG_* flags are Linux-coded on this side; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_send")]
+     pub fn send(socket: c_int, buf: *const c_void, len: size_t, flags: c_int) -> ssize_t;
+     #[cfg_attr(
+         all(target_os = "macos", target_arch = "x86"),
+         link_name = "recv$UNIX2003"
+     )]
+     #[cfg_attr(target_os = "espidf", link_name = "lwip_recv")]
++    // cosmo: MSG_* flags are Linux-coded on this side; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_recv")]
+     pub fn recv(socket: c_int, buf: *mut c_void, len: size_t, flags: c_int) -> ssize_t;
+     #[cfg_attr(
+         all(target_os = "macos", target_arch = "x86"),
+@@ -1579,6 +1623,8 @@
+         all(target_os = "macos", target_arch = "x86"),
+         link_name = "poll$UNIX2003"
+     )]
++    // cosmo: POLL* events are Linux-coded on this side; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_poll")]
+     pub fn poll(fds: *mut pollfd, nfds: nfds_t, timeout: c_int) -> c_int;
+     #[cfg_attr(
+         all(target_os = "macos", target_arch = "x86_64"),
+@@ -1618,15 +1664,23 @@
+     #[cfg_attr(target_os = "netbsd", link_name = "__sigemptyset14")]
+     pub fn sigemptyset(set: *mut sigset_t) -> c_int;
+     #[cfg_attr(target_os = "netbsd", link_name = "__sigaddset14")]
++    // cosmo: divergent signal numbers are Linux-coded; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_sigaddset")]
+     pub fn sigaddset(set: *mut sigset_t, signum: c_int) -> c_int;
+     #[cfg_attr(target_os = "netbsd", link_name = "__sigfillset14")]
+     pub fn sigfillset(set: *mut sigset_t) -> c_int;
+     #[cfg_attr(target_os = "netbsd", link_name = "__sigdelset14")]
++    // cosmo: divergent signal numbers are Linux-coded; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_sigdelset")]
+     pub fn sigdelset(set: *mut sigset_t, signum: c_int) -> c_int;
+     #[cfg_attr(target_os = "netbsd", link_name = "__sigismember14")]
++    // cosmo: divergent signal numbers are Linux-coded; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_sigismember")]
+     pub fn sigismember(set: *const sigset_t, signum: c_int) -> c_int;
+ 
+     #[cfg_attr(target_os = "netbsd", link_name = "__sigprocmask14")]
++    // cosmo: SIG_BLOCK & co are Linux-coded; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_sigprocmask")]
+     pub fn sigprocmask(how: c_int, set: *const sigset_t, oldset: *mut sigset_t) -> c_int;
+     #[cfg_attr(target_os = "netbsd", link_name = "__sigpending14")]
+     pub fn sigpending(set: *mut sigset_t) -> c_int;
+@@ -1745,6 +1799,7 @@
+         ),
+         link_name = "cfgetispeed@GLIBC_2.16"
+     )]
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_cfgetispeed")]
+     pub fn cfgetispeed(termios: *const crate::termios) -> crate::speed_t;
+     #[cfg_attr(
+         all(target_os = "linux", target_env = "gnu", target_arch = "arm"),
+@@ -1846,6 +1901,7 @@
+         ),
+         link_name = "cfgetospeed@GLIBC_2.16"
+     )]
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_cfgetospeed")]
+     pub fn cfgetospeed(termios: *const crate::termios) -> crate::speed_t;
+     #[cfg_attr(
+         all(target_os = "linux", target_env = "gnu", target_arch = "arm"),
+@@ -1947,6 +2003,7 @@
+         ),
+         link_name = "cfsetispeed@GLIBC_2.16"
+     )]
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_cfsetispeed")]
+     pub fn cfsetispeed(termios: *mut crate::termios, speed: crate::speed_t) -> c_int;
+     #[cfg_attr(
+         all(target_os = "linux", target_env = "gnu", target_arch = "arm"),
+@@ -2048,6 +2105,7 @@
+         ),
+         link_name = "cfsetospeed@GLIBC_2.16"
+     )]
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_cfsetospeed")]
+     pub fn cfsetospeed(termios: *mut crate::termios, speed: crate::speed_t) -> c_int;
+     #[cfg_attr(
+         all(
+@@ -2067,6 +2125,7 @@
+         all(target_os = "linux", target_env = "gnu", target_arch = "sparc64"),
+         link_name = "tcgetattr@GLIBC_2.2"
+     )]
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_tcgetattr")]
+     pub fn tcgetattr(fd: c_int, termios: *mut crate::termios) -> c_int;
+     #[cfg_attr(
+         all(
+@@ -2086,8 +2145,11 @@
+         all(target_os = "linux", target_env = "gnu", target_arch = "sparc64"),
+         link_name = "tcsetattr@GLIBC_2.2"
+     )]
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_tcsetattr")]
+     pub fn tcsetattr(fd: c_int, optional_actions: c_int, termios: *const crate::termios) -> c_int;
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_tcflow")]
+     pub fn tcflow(fd: c_int, action: c_int) -> c_int;
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_tcflush")]
+     pub fn tcflush(fd: c_int, action: c_int) -> c_int;
+     pub fn tcgetsid(fd: c_int) -> crate::pid_t;
+     pub fn tcsendbreak(fd: c_int, duration: c_int) -> c_int;
+@@ -2306,6 +2368,8 @@
+             pub fn open_memstream(ptr: *mut *mut c_char, sizeloc: *mut size_t) -> *mut FILE;
+             pub fn atexit(cb: extern "C" fn()) -> c_int;
+             #[cfg_attr(target_os = "netbsd", link_name = "__sigaction14")]
++            // cosmo: the signum is Linux-coded (struct passes through); shim translates.
++            #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_sigaction")]
+             pub fn sigaction(signum: c_int, act: *const sigaction, oldact: *mut sigaction)
+                 -> c_int;
+             pub fn readlink(path: *const c_char, buf: *mut c_char, bufsz: size_t) -> ssize_t;
+@@ -2339,6 +2403,7 @@
+         }
+     } else if #[cfg(not(any(target_os = "solaris", target_os = "illumos",)))] {
+         extern "C" {
++            #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_cfmakeraw")]
+             pub fn cfmakeraw(termios: *mut crate::termios);
+         }
+     }

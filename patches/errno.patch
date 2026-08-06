@@ -1,0 +1,63 @@
+diff a/errno/build.rs b/errno/build.rs
+--- a/errno/build.rs
++++ b/errno/build.rs
+@@ -0,0 +1,5 @@
++// cosmo: declares the SDK's cfg so the shim redirect in src/unix.rs doesn't
++// trip unexpected_cfgs; the cfg itself is only ever set for target units.
++fn main() {
++    println!("cargo:rustc-check-cfg=cfg(rust_ape_shim)");
++}
+diff a/errno/Cargo.toml b/errno/Cargo.toml
+--- a/errno/Cargo.toml
++++ b/errno/Cargo.toml
+@@ -18,7 +18,7 @@
+     "Chris Wong <lambda.fairy@gmail.com>",
+     "Dan Gohman <dev@sunfishcode.online>",
+ ]
+-build = false
++build = "build.rs"
+ autolib = false
+ autobins = false
+ autoexamples = false
+diff a/errno/src/unix.rs b/errno/src/unix.rs
+--- a/errno/src/unix.rs
++++ b/errno/src/unix.rs
+@@ -88,13 +88,32 @@
+         link_name = "___errno"
+     )]
+     #[cfg_attr(target_os = "haiku", link_name = "_errnop")]
++    // cosmo: rustix reads errno through this crate, so route it through the
++    // shim that keeps the value in Linux coding; see shim/errno.c. Guarded by
++    // the cfg so host units (build scripts) keep the real symbol.
+     #[cfg_attr(
+-        any(
+-            target_os = "linux",
+-            target_os = "hurd",
+-            target_os = "redox",
+-            target_os = "dragonfly",
+-            target_os = "emscripten",
++        all(
++            rust_ape_shim,
++            any(
++                target_os = "linux",
++                target_os = "hurd",
++                target_os = "redox",
++                target_os = "dragonfly",
++                target_os = "emscripten",
++            )
++        ),
++        link_name = "__ape_shim_errno_location"
++    )]
++    #[cfg_attr(
++        all(
++            not(rust_ape_shim),
++            any(
++                target_os = "linux",
++                target_os = "hurd",
++                target_os = "redox",
++                target_os = "dragonfly",
++                target_os = "emscripten",
++            )
+         ),
+         link_name = "__errno_location"
+     )]

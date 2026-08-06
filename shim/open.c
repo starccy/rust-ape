@@ -1,0 +1,281 @@
+// The open/fcntl half of the Linux-personality shim.
+//
+// The same problem as errno.c, in the opposite direction. The Rust world
+// passes file flags it baked in at compile time from musl's headers, and
+// cosmo wants whatever the host uses. The patched libc crate points open/openat/fcntl/pipe2 and
+// the *at family at the __ape_shim_* entry points below, which translate the
+// Linux coding into cosmo's runtime constants and forward.
+//
+// For bits with no usable host value (cosmo publishes 0 for "not on this
+// platform"), flags that change semantics fail with EOPNOTSUPP so the
+// caller can tell (that's also what tempfile's O_TMPFILE fallback expects),
+// while pure performance hints (O_DIRECT, O_NOATIME, ...) are dropped,
+// matching how kernels treat them. Bits the tables don't know are EINVAL.
+//
+// All Linux values come from tables.h, generated out of the vendored libc
+// crate by `cargo xtask gen-shim` and cross-checked at build time.
+
+#include <errno.h>
+#include <fcntl.h>
+#include <stdarg.h>
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <libc/sysv/consts/at.h>
+
+// Newer cosmocc (recognizable by its Linux-coded _O_TMPFILE macro) dropped
+// the Linux-only AT_EMPTY_PATH outright; older versions declare it extern
+// with no macro alias, so _O_TMPFILE serves as the presence test instead.
+// Zero means "unsupported here", which at_bit turns into EOPNOTSUPP.
+#ifdef _O_TMPFILE
+static const int shim_no_at_empty_path = 0;
+#define SHIM_AT_EMPTY_PATH (&shim_no_at_empty_path)
+#else
+#define SHIM_AT_EMPTY_PATH (&AT_EMPTY_PATH)
+#endif
+#include <libc/sysv/consts/utime.h>
+
+#include "tables.h"
+
+#define LIN_O_ACCMODE 0x03 // O_RDONLY/O_WRONLY/O_RDWR, same on every platform
+
+struct oflag {
+    int linux_bit;
+    const unsigned *host; // cosmo's runtime constant; 0 = not on this host
+    bool droppable;       // hint: drop when unsupported instead of failing
+};
+
+#define X(name, lin, drop) { lin, &name, drop },
+static const struct oflag kOflags[] = { SHIM_OFLAG_TABLE(X) };
+#undef X
+#define NOFLAGS (sizeof(kOflags) / sizeof(kOflags[0]))
+
+// Linux flags -> host flags. Returns 0, or -1 with errno set.
+static int oflags_to_host(int lin, int *out) {
+    int host = lin & LIN_O_ACCMODE;
+    lin &= ~LIN_O_ACCMODE;
+    lin &= ~SHIM_LIN_O_LARGEFILE; // meaningless with 64-bit off_t
+    if ((lin & SHIM_LIN_O_SYNC) == SHIM_LIN_O_SYNC) {
+        if (!O_SYNC) return errno = EOPNOTSUPP, -1;
+        host |= O_SYNC;
+        lin &= ~SHIM_LIN_O_SYNC;
+    }
+    if ((lin & SHIM_LIN_O_TMPFILE) == SHIM_LIN_O_TMPFILE) {
+#ifdef _O_TMPFILE
+        // newer cosmocc: a Linux-coded macro with kernel semantics, so the
+        // directory bit must be added too, exactly like musl's own O_TMPFILE
+        // (cosmo's tmpfd.c passes _O_TMPFILE | O_DIRECTORY itself).
+        host |= _O_TMPFILE | O_DIRECTORY;
+#else
+        // older cosmocc: a standalone runtime constant, 0 when unsupported;
+        // cosmo adds the directory semantics internally.
+        if (!O_TMPFILE) return errno = EOPNOTSUPP, -1;
+        host |= O_TMPFILE;
+#endif
+        lin &= ~SHIM_LIN_O_TMPFILE;
+    }
+    for (size_t i = 0; i < NOFLAGS; i++) {
+        if (!(lin & kOflags[i].linux_bit)) continue;
+        lin &= ~kOflags[i].linux_bit;
+        if (*kOflags[i].host) {
+            host |= *kOflags[i].host;
+        } else if (!kOflags[i].droppable) {
+            return errno = EOPNOTSUPP, -1;
+        }
+    }
+    if (lin) return errno = EINVAL, -1; // bits we don't know about
+    *out = host;
+    return 0;
+}
+
+// Host flags -> Linux flags, for F_GETFL. Best effort; unknown host bits are
+// dropped rather than invented.
+static int oflags_to_linux(int host) {
+    int lin = host & LIN_O_ACCMODE;
+    if (O_SYNC && (host & O_SYNC) == (int)O_SYNC) {
+        lin |= SHIM_LIN_O_SYNC;
+        host &= ~O_SYNC;
+    }
+    for (size_t i = 0; i < NOFLAGS; i++) {
+        unsigned h = *kOflags[i].host;
+        if (h && (host & h) == (int)h) lin |= kOflags[i].linux_bit;
+    }
+    return lin;
+}
+
+static int at_fdcwd(int dirfd) {
+    return dirfd == SHIM_LIN_AT_FDCWD ? AT_FDCWD : dirfd;
+}
+
+// struct flock: the layouts agree byte for byte (layouts.c pins them; the
+// cosmo-only l_sysid sits in musl's tail padding), but l_type carries
+// F_RDLCK/F_WRLCK/F_UNLCK, which are runtime constants on the cosmo side.
+static int ltype_to_host(int16_t lin, int16_t *out) {
+    if (lin == SHIM_LIN_F_RDLCK) return *out = F_RDLCK, 0;
+    if (lin == SHIM_LIN_F_WRLCK) return *out = F_WRLCK, 0;
+    if (lin == SHIM_LIN_F_UNLCK) return *out = F_UNLCK, 0;
+    return errno = EINVAL, -1;
+}
+
+static int16_t ltype_to_linux(int16_t host) {
+    if (host == F_RDLCK) return SHIM_LIN_F_RDLCK;
+    if (host == F_WRLCK) return SHIM_LIN_F_WRLCK;
+    if (host == F_UNLCK) return SHIM_LIN_F_UNLCK;
+    return host; // unknown: pass through, keeps it diagnosable
+}
+
+// F_GETLK writes the struct back (l_type plus the blocker's coordinates);
+// F_SETLK/F_SETLKW leave it untouched per POSIX.
+static int lock_cmd(int fd, int cmd, void *parg, bool writes_back) {
+    struct flock fl = *(struct flock *)parg;
+    if (ltype_to_host(fl.l_type, &fl.l_type) < 0) return -1;
+    int rc = fcntl(fd, cmd, &fl);
+    if (rc != -1 && writes_back) {
+        fl.l_type = ltype_to_linux(fl.l_type);
+        *(struct flock *)parg = fl;
+    }
+    return rc;
+}
+
+// One entry per caller-visible flag; each *at shim states which it accepts.
+static int at_bit(int *lin, int bit, const int *host, int *out) {
+    if (!(*lin & bit)) return 0;
+    *lin &= ~bit;
+    if (*host == 0) return errno = EOPNOTSUPP, -1;
+    *out |= *host;
+    return 0;
+}
+
+int __ape_shim_open(const char *path, int lin, ...) {
+    int host;
+    if (oflags_to_host(lin, &host) < 0) return -1;
+    unsigned mode = 0;
+    if ((lin & SHIM_LIN_O_CREAT) || (lin & SHIM_LIN_O_TMPFILE) == SHIM_LIN_O_TMPFILE) {
+        va_list ap;
+        va_start(ap, lin);
+        mode = va_arg(ap, unsigned);
+        va_end(ap);
+    }
+    return open(path, host, mode);
+}
+
+int __ape_shim_openat(int dirfd, const char *path, int lin, ...) {
+    int host;
+    if (oflags_to_host(lin, &host) < 0) return -1;
+    unsigned mode = 0;
+    if ((lin & SHIM_LIN_O_CREAT) || (lin & SHIM_LIN_O_TMPFILE) == SHIM_LIN_O_TMPFILE) {
+        va_list ap;
+        va_start(ap, lin);
+        mode = va_arg(ap, unsigned);
+        va_end(ap);
+    }
+    return openat(at_fdcwd(dirfd), path, host, mode);
+}
+
+int __ape_shim_pipe2(int fds[2], int lin) {
+    int host;
+    if (oflags_to_host(lin, &host) < 0) return -1;
+    return pipe2(fds, host);
+}
+
+// fcntl: commands 0..4 (F_DUPFD..F_SETFL) are portable by definition and pass
+// through; the rest of musl's numbering gets mapped onto cosmo's runtime
+// values. Lock commands translate l_type through lock_cmd above.
+int __ape_shim_fcntl(int fd, int cmd, ...) {
+    va_list ap;
+    va_start(ap, cmd);
+    void *parg = va_arg(ap, void *); // widest read; reinterpreted per cmd
+    va_end(ap);
+    int iarg = (int)(long)parg;
+
+    switch (cmd) {
+        case 0: // F_DUPFD
+        case 2: // F_SETFD (FD_CLOEXEC is 1 everywhere)
+            return fcntl(fd, cmd, iarg);
+        case 1: // F_GETFD
+            return fcntl(fd, cmd);
+        case 3: { // F_GETFL: translate the returned flags back
+            int host = fcntl(fd, cmd);
+            return host < 0 ? host : oflags_to_linux(host);
+        }
+        case 4: { // F_SETFL: translate the flag argument
+            int host;
+            if (oflags_to_host(iarg & ~LIN_O_ACCMODE, &host) < 0) return -1;
+            return fcntl(fd, cmd, host);
+        }
+        case SHIM_LIN_F_GETLK:
+            return F_GETLK > 0 ? lock_cmd(fd, F_GETLK, parg, true) : (errno = EINVAL, -1);
+        case SHIM_LIN_F_SETLK:
+            return F_SETLK > 0 ? lock_cmd(fd, F_SETLK, parg, false) : (errno = EINVAL, -1);
+        case SHIM_LIN_F_SETLKW:
+            return F_SETLKW > 0 ? lock_cmd(fd, F_SETLKW, parg, false) : (errno = EINVAL, -1);
+#ifdef F_SETOWN // newer cosmocc dropped these outright; default arm EINVALs
+        case SHIM_LIN_F_SETOWN:
+            return F_SETOWN > 0 ? fcntl(fd, F_SETOWN, iarg) : (errno = EINVAL, -1);
+        case SHIM_LIN_F_GETOWN:
+            return F_GETOWN > 0 ? fcntl(fd, F_GETOWN) : (errno = EINVAL, -1);
+#endif
+        case SHIM_LIN_F_DUPFD_CLOEXEC:
+            return F_DUPFD_CLOEXEC > 0 ? fcntl(fd, F_DUPFD_CLOEXEC, iarg)
+                                       : (errno = EINVAL, -1);
+        default:
+            return errno = EINVAL, -1;
+    }
+}
+
+int __ape_shim_unlinkat(int dirfd, const char *path, int lin) {
+    int host = 0;
+    if (at_bit(&lin, SHIM_LIN_AT_REMOVEDIR, &AT_REMOVEDIR, &host) < 0) return -1;
+    if (lin) return errno = EINVAL, -1;
+    return unlinkat(at_fdcwd(dirfd), path, host);
+}
+
+int __ape_shim_fstatat(int dirfd, const char *path, struct stat *st, int lin) {
+    int host = 0;
+    if (at_bit(&lin, SHIM_LIN_AT_SYMLINK_NOFOLLOW, &AT_SYMLINK_NOFOLLOW, &host) < 0 ||
+        at_bit(&lin, SHIM_LIN_AT_EMPTY_PATH, SHIM_AT_EMPTY_PATH, &host) < 0)
+        return -1;
+    lin &= ~SHIM_LIN_AT_NO_AUTOMOUNT; // Linux-only; a no-op everywhere else
+    if (lin) return errno = EINVAL, -1;
+    return fstatat(at_fdcwd(dirfd), path, st, host);
+}
+
+int __ape_shim_linkat(int olddirfd, const char *oldpath, int newdirfd,
+                      const char *newpath, int lin) {
+    int host = 0;
+    if (at_bit(&lin, SHIM_LIN_AT_SYMLINK_FOLLOW, &AT_SYMLINK_FOLLOW, &host) < 0 ||
+        at_bit(&lin, SHIM_LIN_AT_EMPTY_PATH, SHIM_AT_EMPTY_PATH, &host) < 0)
+        return -1;
+    if (lin) return errno = EINVAL, -1;
+    return linkat(at_fdcwd(olddirfd), oldpath, at_fdcwd(newdirfd), newpath, host);
+}
+
+int __ape_shim_faccessat(int dirfd, const char *path, int amode, int lin) {
+    int host = 0;
+    if (at_bit(&lin, SHIM_LIN_AT_EACCESS, &AT_EACCESS, &host) < 0 ||
+        at_bit(&lin, SHIM_LIN_AT_SYMLINK_FOLLOW, &AT_SYMLINK_FOLLOW, &host) < 0)
+        return -1;
+    if (lin) return errno = EINVAL, -1;
+    return faccessat(at_fdcwd(dirfd), path, amode, host); // amode: R_OK & co are universal
+}
+
+int __ape_shim_utimensat(int dirfd, const char *path,
+                         const struct timespec times[2], int lin) {
+    int host = 0;
+    if (at_bit(&lin, SHIM_LIN_AT_SYMLINK_NOFOLLOW, &AT_SYMLINK_NOFOLLOW, &host) < 0)
+        return -1;
+    if (lin) return errno = EINVAL, -1;
+    // tv_nsec can carry UTIME_NOW/UTIME_OMIT, which are platform-coded too.
+    struct timespec copy[2];
+    if (times) {
+        for (int i = 0; i < 2; i++) {
+            copy[i] = times[i];
+            if (copy[i].tv_nsec == SHIM_LIN_UTIME_NOW) copy[i].tv_nsec = UTIME_NOW;
+            if (copy[i].tv_nsec == SHIM_LIN_UTIME_OMIT) copy[i].tv_nsec = UTIME_OMIT;
+        }
+    }
+    return utimensat(at_fdcwd(dirfd), path, times ? copy : NULL, host);
+}

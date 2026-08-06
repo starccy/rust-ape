@@ -1,75 +1,7 @@
 diff a/async-io/src/lib.rs b/async-io/src/lib.rs
 --- a/async-io/src/lib.rs
 +++ b/async-io/src/lib.rs
-@@ -2094,7 +2094,7 @@
-     let socket = rn::socket_with(
-         domain,
-         rn::SocketType::STREAM,
--        rn::SocketFlags::CLOEXEC | rn::SocketFlags::NONBLOCK,
-+        cosmo_socket_flags(),
-         protocol,
-     )?;
- 
-@@ -2167,11 +2167,35 @@
-         #[cfg(unix)]
-         Err(rio::Errno::INPROGRESS) => {}
-         Err(rio::Errno::AGAIN) | Err(rio::Errno::WOULDBLOCK) => {}
-+        // cosmo: Windows leaks raw WSA codes out of connect(), so the arms above
-+        // miss the "in progress" case and we'd report a live connect as failed.
-+        Err(err) if is_connect_in_progress(err.raw_os_error()) => {}
-         Err(err) => return Err(err.into()),
-     }
-     Ok(socket)
- }
- 
-+// cosmo: errno differs per OS under cosmo, hence the runtime symbols; the bare numbers
-+// are Windows leaking through.
-+fn is_connect_in_progress(raw: i32) -> bool {
-+    unsafe extern "C" {
-+        #[link_name = "EINPROGRESS"]
-+        static COSMO_EINPROGRESS: core::ffi::c_int;
-+        #[link_name = "EWOULDBLOCK"]
-+        static COSMO_EWOULDBLOCK: core::ffi::c_int;
-+        #[link_name = "EAGAIN"]
-+        static COSMO_EAGAIN: core::ffi::c_int;
-+    }
-+    let (einprogress, ewouldblock, eagain) =
-+        unsafe { (COSMO_EINPROGRESS, COSMO_EWOULDBLOCK, COSMO_EAGAIN) };
-+    raw == einprogress
-+        || raw == ewouldblock
-+        || raw == eagain
-+        || raw == 10035 // WSAEWOULDBLOCK
-+        || raw == 10036 // WSAEINPROGRESS
-+        || raw == 10037 // WSAEALREADY
-+}
-+
- #[inline]
- fn setup_networking() {
-     #[cfg(windows)]
-@@ -2186,27 +2210,34 @@
-     }
- }
- 
-+fn cosmo_o_nonblock() -> rustix::fs::OFlags {
-+    unsafe extern "C" {
-+        #[link_name = "O_NONBLOCK"]
-+        static VALUE: core::ffi::c_int;
-+    }
-+    rustix::fs::OFlags::from_bits_retain(unsafe { VALUE } as u32)
-+}
-+
-+fn cosmo_socket_flags() -> rn::SocketFlags {
-+    unsafe extern "C" {
-+        #[link_name = "SOCK_NONBLOCK"]
-+        static NONBLOCK: core::ffi::c_int;
-+        #[link_name = "SOCK_CLOEXEC"]
-+        static CLOEXEC: core::ffi::c_int;
-+    }
-+    rn::SocketFlags::from_bits_retain(unsafe { NONBLOCK | CLOEXEC } as u32)
-+}
-+
- #[inline]
- fn set_nonblocking(
+@@ -2191,21 +2191,12 @@
      #[cfg(unix)] fd: BorrowedFd<'_>,
      #[cfg(windows)] fd: BorrowedSocket<'_>,
  ) -> io::Result<()> {
@@ -88,12 +20,12 @@ diff a/async-io/src/lib.rs b/async-io/src/lib.rs
 -            if new != previous {
 -                rustix::fs::fcntl_setfl(fd, new)?;
 -            }
--        }
 +    // cosmo: no ioctl FIONBIO (ENOTSUP), so take the fcntl path everywhere.
-+    let previous = rustix::fs::fcntl_getfl(fd)?;
-+    let new = previous | cosmo_o_nonblock();
-+    if new != previous {
-+        rustix::fs::fcntl_setfl(fd, new)?;
++    {
++        let previous = rustix::fs::fcntl_getfl(fd)?;
++        let new = previous | rustix::fs::OFlags::NONBLOCK;
++        if new != previous {
++            rustix::fs::fcntl_setfl(fd, new)?;
+         }
      }
  
-     Ok(())

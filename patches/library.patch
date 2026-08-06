@@ -23,22 +23,10 @@ diff a/library/Cargo.toml b/library/Cargo.toml
  # See comments in `library/rustc-std-workspace-core/README.md` for what's going on here
  rustc-std-workspace-core = { path = 'rustc-std-workspace-core' }
  rustc-std-workspace-alloc = { path = 'rustc-std-workspace-alloc' }
-diff a/library/std/src/os/unix/fs.rs b/library/std/src/os/unix/fs.rs
---- a/library/std/src/os/unix/fs.rs
-+++ b/library/std/src/os/unix/fs.rs
-@@ -515,7 +515,7 @@
-     /// # fn main() {
-     /// let mut options = OpenOptions::new();
-     /// options.write(true);
--    /// options.custom_flags(libc::O_NOFOLLOW);
-+    /// options.custom_flags(crate::sys::pal::cosmo::O_NOFOLLOW());
-     /// let file = options.open("foo.txt");
-     /// # }
-     /// ```
 diff a/library/std/src/sys/fd/unix.rs b/library/std/src/sys/fd/unix.rs
 --- a/library/std/src/sys/fd/unix.rs
 +++ b/library/std/src/sys/fd/unix.rs
-@@ -615,23 +615,14 @@
+@@ -615,16 +615,7 @@
          Ok(())
      }
  
@@ -56,328 +44,42 @@ diff a/library/std/src/sys/fd/unix.rs b/library/std/src/sys/fd/unix.rs
      pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
          unsafe {
              let previous = cvt(libc::fcntl(self.as_raw_fd(), libc::F_GETFL))?;
-             let new = if nonblocking {
--                previous | libc::O_NONBLOCK
-+                previous | crate::sys::pal::cosmo::O_NONBLOCK()
-             } else {
--                previous & !libc::O_NONBLOCK
-+                previous & !crate::sys::pal::cosmo::O_NONBLOCK()
-             };
-             if new != previous {
-                 cvt(libc::fcntl(self.as_raw_fd(), libc::F_SETFL, new))?;
-diff a/library/std/src/sys/fs/mod.rs b/library/std/src/sys/fs/mod.rs
---- a/library/std/src/sys/fs/mod.rs
-+++ b/library/std/src/sys/fs/mod.rs
-@@ -131,7 +131,7 @@
-     #[cfg(not(any(target_os = "espidf", target_os = "horizon")))]
-     {
-         use crate::os::unix::fs::OpenOptionsExt;
--        options.custom_flags(libc::O_NOFOLLOW);
-+        options.custom_flags(crate::sys::pal::cosmo::O_NOFOLLOW());
-     }
- 
-     options.open(path)?.set_permissions(perm)
-diff a/library/std/src/sys/fs/unix/dir.rs b/library/std/src/sys/fs/unix/dir.rs
---- a/library/std/src/sys/fs/unix/dir.rs
-+++ b/library/std/src/sys/fs/unix/dir.rs
-@@ -62,8 +62,8 @@
-     }
- 
-     pub fn open_with_c(path: &CStr, opts: &OpenOptions) -> io::Result<Self> {
--        let flags = libc::O_CLOEXEC
--            | libc::O_DIRECTORY
-+        let flags = crate::sys::pal::cosmo::O_CLOEXEC()
-+            | crate::sys::pal::cosmo::O_DIRECTORY()
-             | opts.get_access_mode()?
-             | opts.get_creation_mode()?
-             | (opts.custom_flags as c_int & !libc::O_ACCMODE);
-@@ -72,7 +72,7 @@
-     }
- 
-     fn open_file_c(&self, path: &CStr, opts: &OpenOptions) -> io::Result<File> {
--        let flags = libc::O_CLOEXEC
-+        let flags = crate::sys::pal::cosmo::O_CLOEXEC()
-             | opts.get_access_mode()?
-             | opts.get_creation_mode()?
-             | (opts.custom_flags as c_int & !libc::O_ACCMODE);
-@@ -87,7 +87,7 @@
-             unlinkat(
-                 self.0.as_raw_fd(),
-                 path.as_ptr(),
--                if remove_dir { libc::AT_REMOVEDIR } else { 0 },
-+                if remove_dir { crate::sys::pal::cosmo::AT_REMOVEDIR() } else { 0 },
-             )
-         })
-         .map(|_| ())
-diff a/library/std/src/sys/fs/unix.rs b/library/std/src/sys/fs/unix.rs
---- a/library/std/src/sys/fs/unix.rs
-+++ b/library/std/src/sys/fs/unix.rs
-@@ -1108,7 +1108,7 @@
-             if let Some(ret) = unsafe { try_statx(
-                 fd,
-                 name,
--                libc::AT_SYMLINK_NOFOLLOW | libc::AT_STATX_SYNC_AS_STAT,
-+                crate::sys::pal::cosmo::AT_SYMLINK_NOFOLLOW() | crate::sys::pal::cosmo::AT_STATX_SYNC_AS_STAT(),
-                 libc::STATX_BASIC_STATS | libc::STATX_BTIME,
-             ) } {
-                 return ret;
-@@ -1116,7 +1116,7 @@
-         }
- 
-         let mut stat: stat64 = unsafe { mem::zeroed() };
--        cvt(unsafe { fstatat64(fd, name, &mut stat, libc::AT_SYMLINK_NOFOLLOW) })?;
-+        cvt(unsafe { fstatat64(fd, name, &mut stat, crate::sys::pal::cosmo::AT_SYMLINK_NOFOLLOW()) })?;
-         Ok(FileAttr::from_stat64(stat))
-     }
- 
-@@ -1327,8 +1327,8 @@
-             (true, false, false) => Ok(libc::O_RDONLY),
-             (false, true, false) => Ok(libc::O_WRONLY),
-             (true, true, false) => Ok(libc::O_RDWR),
--            (false, _, true) => Ok(libc::O_WRONLY | libc::O_APPEND),
--            (true, _, true) => Ok(libc::O_RDWR | libc::O_APPEND),
-+            (false, _, true) => Ok(libc::O_WRONLY | crate::sys::pal::cosmo::O_APPEND()),
-+            (true, _, true) => Ok(libc::O_RDWR | crate::sys::pal::cosmo::O_APPEND()),
-             (false, false, false) => {
-                 // If no access mode is set, check if any creation flags are set
-                 // to provide a more descriptive error message
-@@ -1370,10 +1370,10 @@
- 
-         Ok(match (self.create, self.truncate, self.create_new) {
-             (false, false, false) => 0,
--            (true, false, false) => libc::O_CREAT,
--            (false, true, false) => libc::O_TRUNC,
--            (true, true, false) => libc::O_CREAT | libc::O_TRUNC,
--            (_, _, true) => libc::O_CREAT | libc::O_EXCL,
-+            (true, false, false) => crate::sys::pal::cosmo::O_CREAT(),
-+            (false, true, false) => crate::sys::pal::cosmo::O_TRUNC(),
-+            (true, true, false) => crate::sys::pal::cosmo::O_CREAT() | crate::sys::pal::cosmo::O_TRUNC(),
-+            (_, _, true) => crate::sys::pal::cosmo::O_CREAT() | crate::sys::pal::cosmo::O_EXCL(),
-         })
-     }
- }
-@@ -1401,7 +1401,7 @@
-     }
- 
-     pub fn open_c(path: &CStr, opts: &OpenOptions) -> io::Result<File> {
--        let flags = libc::O_CLOEXEC
-+        let flags = crate::sys::pal::cosmo::O_CLOEXEC()
-             | opts.get_access_mode()?
-             | opts.get_creation_mode()?
-             | (opts.custom_flags as c_int & !libc::O_ACCMODE);
-@@ -1420,7 +1420,7 @@
-             if let Some(ret) = unsafe { try_statx(
-                 fd,
-                 c"".as_ptr() as *const c_char,
--                libc::AT_EMPTY_PATH | libc::AT_STATX_SYNC_AS_STAT,
-+                crate::sys::pal::cosmo::AT_EMPTY_PATH() | crate::sys::pal::cosmo::AT_STATX_SYNC_AS_STAT(),
-                 libc::STATX_BASIC_STATS | libc::STATX_BTIME,
-             ) } {
-                 return ret;
-@@ -2089,7 +2089,7 @@
-         _ => {
-             // Where we can, use `linkat` instead of `link`; see the comment above
-             // this one for details on why.
--            cvt(unsafe { libc::linkat(libc::AT_FDCWD, original.as_ptr(), libc::AT_FDCWD, link.as_ptr(), 0) })?;
-+            cvt(unsafe { libc::linkat(crate::sys::pal::cosmo::AT_FDCWD(), original.as_ptr(), crate::sys::pal::cosmo::AT_FDCWD(), link.as_ptr(), 0) })?;
-         }
-     }
-     Ok(())
-@@ -2098,9 +2098,9 @@
- pub fn stat(p: &CStr) -> io::Result<FileAttr> {
-     cfg_has_statx! {
-         if let Some(ret) = unsafe { try_statx(
--            libc::AT_FDCWD,
-+            crate::sys::pal::cosmo::AT_FDCWD(),
-             p.as_ptr(),
--            libc::AT_STATX_SYNC_AS_STAT,
-+            crate::sys::pal::cosmo::AT_STATX_SYNC_AS_STAT(),
-             libc::STATX_BASIC_STATS | libc::STATX_BTIME,
-         ) } {
-             return ret;
-@@ -2115,9 +2115,9 @@
- pub fn lstat(p: &CStr) -> io::Result<FileAttr> {
-     cfg_has_statx! {
-         if let Some(ret) = unsafe { try_statx(
--            libc::AT_FDCWD,
-+            crate::sys::pal::cosmo::AT_FDCWD(),
-             p.as_ptr(),
--            libc::AT_SYMLINK_NOFOLLOW | libc::AT_STATX_SYNC_AS_STAT,
-+            crate::sys::pal::cosmo::AT_SYMLINK_NOFOLLOW() | crate::sys::pal::cosmo::AT_STATX_SYNC_AS_STAT(),
-             libc::STATX_BASIC_STATS | libc::STATX_BTIME,
-         ) } {
-             return ret;
-@@ -2182,14 +2182,14 @@
-        }
-        target_os = "android" => {
-             let times = [file_time_to_timespec(times.accessed)?, file_time_to_timespec(times.modified)?];
--            let flags = if follow_symlinks { 0 } else { libc::AT_SYMLINK_NOFOLLOW };
-+            let flags = if follow_symlinks { 0 } else { crate::sys::pal::cosmo::AT_SYMLINK_NOFOLLOW() };
-             // utimensat requires Android API level 19
-             cvt(unsafe {
-                 weak!(
-                     fn utimensat(dirfd: c_int, path: *const libc::c_char, times: *const libc::timespec, flags: c_int) -> c_int;
-                 );
-                 match utimensat.get() {
--                    Some(utimensat) => utimensat(libc::AT_FDCWD, p.as_ptr(), times.as_ptr(), flags),
-+                    Some(utimensat) => utimensat(crate::sys::pal::cosmo::AT_FDCWD(), p.as_ptr(), times.as_ptr(), flags),
-                     None => return Err(io::const_error!(
-                         io::ErrorKind::Unsupported,
-                         "setting file times requires Android API level >= 19",
-@@ -2199,7 +2199,7 @@
-             Ok(())
-        }
-        _ => {
--            let flags = if follow_symlinks { 0 } else { libc::AT_SYMLINK_NOFOLLOW };
-+            let flags = if follow_symlinks { 0 } else { crate::sys::pal::cosmo::AT_SYMLINK_NOFOLLOW() };
-             #[cfg(all(target_os = "linux", target_env = "gnu", target_pointer_width = "32", not(target_arch = "riscv32")))]
-             {
-                 use crate::sys::pal::{time::__timespec64, weak::weak};
-@@ -2213,12 +2213,12 @@
-                     let to_timespec = |time: Option<SystemTime>| time.map(|time| time.t.to_timespec64())
-                         .unwrap_or(__timespec64::new(0, libc::UTIME_OMIT as _));
-                     let times = [to_timespec(times.accessed), to_timespec(times.modified)];
--                    cvt(unsafe { utimensat64(libc::AT_FDCWD, p.as_ptr(), times.as_ptr(), flags) })?;
-+                    cvt(unsafe { utimensat64(crate::sys::pal::cosmo::AT_FDCWD(), p.as_ptr(), times.as_ptr(), flags) })?;
-                     return Ok(());
-                 }
-             }
-             let times = [file_time_to_timespec(times.accessed)?, file_time_to_timespec(times.modified)?];
--            cvt(unsafe { libc::utimensat(libc::AT_FDCWD, p.as_ptr(), times.as_ptr(), flags) })?;
-+            cvt(unsafe { libc::utimensat(crate::sys::pal::cosmo::AT_FDCWD(), p.as_ptr(), times.as_ptr(), flags) })?;
-             Ok(())
-          }
-     }
-@@ -2351,7 +2351,7 @@
-     let (reader, reader_metadata) = open_from(from)?;
- 
-     let clonefile_result = run_path_with_cstr(to, &|to| {
--        cvt(unsafe { libc::fclonefileat(reader.as_raw_fd(), libc::AT_FDCWD, to.as_ptr(), 0) })
-+        cvt(unsafe { libc::fclonefileat(reader.as_raw_fd(), crate::sys::pal::cosmo::AT_FDCWD(), to.as_ptr(), 0) })
-     });
-     match clonefile_result {
-         Ok(_) => return Ok(reader_metadata.len()),
-@@ -2486,9 +2486,9 @@
-     pub fn openat_nofollow_dironly(parent_fd: Option<RawFd>, p: &CStr) -> io::Result<OwnedFd> {
-         let fd = cvt_r(|| unsafe {
-             openat(
--                parent_fd.unwrap_or(libc::AT_FDCWD),
-+                parent_fd.unwrap_or(crate::sys::pal::cosmo::AT_FDCWD()),
-                 p.as_ptr(),
--                libc::O_CLOEXEC | libc::O_RDONLY | libc::O_NOFOLLOW | libc::O_DIRECTORY,
-+                crate::sys::pal::cosmo::O_CLOEXEC() | libc::O_RDONLY | crate::sys::pal::cosmo::O_NOFOLLOW() | crate::sys::pal::cosmo::O_DIRECTORY(),
-             )
-         })?;
-         Ok(unsafe { OwnedFd::from_raw_fd(fd) })
-@@ -2605,7 +2605,7 @@
- 
-         // unlink the directory after removing its contents
-         ignore_notfound(cvt(unsafe {
--            unlinkat(parent_fd.unwrap_or(libc::AT_FDCWD), path.as_ptr(), libc::AT_REMOVEDIR)
-+            unlinkat(parent_fd.unwrap_or(crate::sys::pal::cosmo::AT_FDCWD()), path.as_ptr(), crate::sys::pal::cosmo::AT_REMOVEDIR())
-         }))?;
-         Ok(())
-     }
 diff a/library/std/src/sys/io/error/unix.rs b/library/std/src/sys/io/error/unix.rs
 --- a/library/std/src/sys/io/error/unix.rs
 +++ b/library/std/src/sys/io/error/unix.rs
-@@ -136,8 +136,95 @@
-     errno == libc::EINTR
+@@ -19,7 +19,9 @@
+             target_os = "hurd",
+             target_os = "teeos",
+         ),
+-        link_name = "__errno_location"
++        // cosmo: the shim keeps the Rust world in Linux errno coding; see
++        // shim/errno.c in the SDK.
++        link_name = "__ape_shim_errno_location"
+     )]
+     #[cfg_attr(
+         any(
+@@ -40,7 +42,8 @@
+     #[cfg_attr(target_os = "haiku", link_name = "_errnop")]
+     #[cfg_attr(target_os = "aix", link_name = "_Errno")]
+     // SAFETY: this will always return the same pointer on a given thread.
+-    #[unsafe(ffi_const)]
++    // cosmo: no ffi_const — the shim's accessor refreshes the translated
++    // copy as a side effect, so calls must not be merged.
+     pub safe fn errno_location() -> *mut c_int;
  }
  
-+// cosmo: errno is whatever the host uses (WSA codes on Windows), so the match
-+// below sends everything to Uncategorized — and an unrecognized EWOULDBLOCK
-+// turns non-blocking IO into a hard error. Try the runtime symbols first.
-+fn cosmo_decode_error_kind(errno: i32) -> Option<io::ErrorKind> {
-+    use io::ErrorKind::*;
-+    unsafe extern "C" {
-+        #[link_name = "EAGAIN"]
-+        static EAGAIN: c_int;
-+        #[link_name = "EWOULDBLOCK"]
-+        static EWOULDBLOCK: c_int;
-+        #[link_name = "EINPROGRESS"]
-+        static EINPROGRESS: c_int;
-+        #[link_name = "ECONNREFUSED"]
-+        static ECONNREFUSED: c_int;
-+        #[link_name = "ECONNRESET"]
-+        static ECONNRESET: c_int;
-+        #[link_name = "ECONNABORTED"]
-+        static ECONNABORTED: c_int;
-+        #[link_name = "ETIMEDOUT"]
-+        static ETIMEDOUT: c_int;
-+        #[link_name = "ENETUNREACH"]
-+        static ENETUNREACH: c_int;
-+        #[link_name = "ENETDOWN"]
-+        static ENETDOWN: c_int;
-+        #[link_name = "EHOSTUNREACH"]
-+        static EHOSTUNREACH: c_int;
-+        #[link_name = "ENOTCONN"]
-+        static ENOTCONN: c_int;
-+        #[link_name = "EADDRINUSE"]
-+        static EADDRINUSE: c_int;
-+        #[link_name = "EADDRNOTAVAIL"]
-+        static EADDRNOTAVAIL: c_int;
-+        #[link_name = "EPIPE"]
-+        static EPIPE: c_int;
-+        #[link_name = "EINTR"]
-+        static EINTR: c_int;
-+        #[link_name = "EINVAL"]
-+        static EINVAL: c_int;
-+        #[link_name = "EACCES"]
-+        static EACCES: c_int;
-+        #[link_name = "EPERM"]
-+        static EPERM: c_int;
-+        #[link_name = "ENOENT"]
-+        static ENOENT: c_int;
-+        #[link_name = "EEXIST"]
-+        static EEXIST: c_int;
-+        #[link_name = "ENOSYS"]
-+        static ENOSYS: c_int;
-+    }
-+    let e = errno as c_int;
-+    // EWOULDBLOCK and EAGAIN may well be the same value here.
-+    let table: [(c_int, io::ErrorKind); 21] = unsafe {
-+        [
-+            (EAGAIN, WouldBlock),
-+            (EWOULDBLOCK, WouldBlock),
-+            (EINPROGRESS, InProgress),
-+            (ECONNREFUSED, ConnectionRefused),
-+            (ECONNRESET, ConnectionReset),
-+            (ECONNABORTED, ConnectionAborted),
-+            (ETIMEDOUT, TimedOut),
-+            (ENETUNREACH, NetworkUnreachable),
-+            (ENETDOWN, NetworkDown),
-+            (EHOSTUNREACH, HostUnreachable),
-+            (ENOTCONN, NotConnected),
-+            (EADDRINUSE, AddrInUse),
-+            (EADDRNOTAVAIL, AddrNotAvailable),
-+            (EPIPE, BrokenPipe),
-+            (EINTR, Interrupted),
-+            (EINVAL, InvalidInput),
-+            (EACCES, PermissionDenied),
-+            (EPERM, PermissionDenied),
-+            (ENOENT, NotFound),
-+            (EEXIST, AlreadyExists),
-+            (ENOSYS, Unsupported),
-+        ]
-+    };
-+    for &(val, kind) in table.iter() {
-+        if e == val {
-+            return Some(kind);
-+        }
-+    }
-+    None
-+}
-+
- pub fn decode_error_kind(errno: i32) -> io::ErrorKind {
-     use io::ErrorKind::*;
-+    if let Some(kind) = cosmo_decode_error_kind(errno) {
-+        return kind;
-+    }
-     match errno as libc::c_int {
-         libc::E2BIG => ArgumentListTooLong,
-         libc::EADDRINUSE => AddrInUse,
-@@ -216,7 +303,9 @@
+@@ -206,7 +209,9 @@
+                 ),
+                 not(target_env = "ohos")
+             ),
+-            link_name = "__xpg_strerror_r"
++            // cosmo: errno is Linux-coded on this side of the shim, and
++            // cosmo's strerror_r wants the host's; the shim translates.
++            link_name = "__ape_shim_strerror_r"
+         )]
+         fn strerror_r(errnum: c_int, buf: *mut c_char, buflen: libc::size_t) -> c_int;
+     }
+@@ -216,7 +221,9 @@
      let p = buf.as_mut_ptr();
      unsafe {
          if strerror_r(errno as c_int, p, buf.len()) < 0 {
@@ -391,7 +93,7 @@ diff a/library/std/src/sys/io/error/unix.rs b/library/std/src/sys/io/error/unix.
 diff a/library/std/src/sys/io/kernel_copy/mod.rs b/library/std/src/sys/io/kernel_copy/mod.rs
 --- a/library/std/src/sys/io/kernel_copy/mod.rs
 +++ b/library/std/src/sys/io/kernel_copy/mod.rs
-@@ -1,23 +1,18 @@
+@@ -1,23 +1,19 @@
  pub enum CopyState {
 -    #[cfg_attr(not(any(target_os = "linux", target_os = "android")), expect(dead_code))]
 +    // cosmo: nothing constructs this with the Linux specialization gone.
@@ -407,8 +109,9 @@ diff a/library/std/src/sys/io/kernel_copy/mod.rs b/library/std/src/sys/io/kernel
 -    }
 -    _ => {
 -        use crate::io::{Result, Read, Write};
-+// cosmo: copy_file_range and friends are Linux-only, and the fallback check
-+// compares errno against constants that don't match off Linux (EBADF is 6 there).
++// cosmo: copy_file_range and friends only pay off on a Linux host; the plain
++// fallback is right everywhere. (Retirement candidate: with the errno shim the
++// upstream probe would decode its ENOSYS correctly now.)
 +use crate::io::{Read, Result, Write};
  
 -        pub fn kernel_copy<R: ?Sized, W: ?Sized>(_reader: &mut R, _writer: &mut W) -> Result<CopyState>
@@ -426,247 +129,16 @@ diff a/library/std/src/sys/io/kernel_copy/mod.rs b/library/std/src/sys/io/kernel
 +{
 +    Ok(CopyState::Fallback(0))
  }
-diff a/library/std/src/sys/net/connection/socket/mod.rs b/library/std/src/sys/net/connection/socket/mod.rs
---- a/library/std/src/sys/net/connection/socket/mod.rs
-+++ b/library/std/src/sys/net/connection/socket/mod.rs
-@@ -70,10 +70,23 @@
-         target_os = "nto", target_os = "qnx",
-         target_os = "cygwin",
-     ) => {
--        use libc::MSG_NOSIGNAL;
-+        // cosmo: MSG_NOSIGNAL is a runtime constant, and Windows has no such
-+        // flag at all. Shadow it with a fn of the same name; call sites only
-+        // need an extra pair of parens.
-+        unsafe extern "C" {
-+            #[link_name = "MSG_NOSIGNAL"]
-+            static COSMO_MSG_NOSIGNAL: c_int;
-+        }
-+        #[allow(non_snake_case)]
-+        fn MSG_NOSIGNAL() -> c_int {
-+            unsafe { COSMO_MSG_NOSIGNAL }
-+        }
-     }
-     _ => {
--        const MSG_NOSIGNAL: c_int = 0x0;
-+        #[allow(non_snake_case)]
-+        fn MSG_NOSIGNAL() -> c_int {
-+            0x0
-+        }
-     }
- }
- 
-@@ -217,12 +230,85 @@
- ///
- /// # Safety
- /// `T` must be the type associated with the given socket option.
-+// cosmo: SOL_SOCKET/SO_*/TCP_*/IP_*/IPV6_* are runtime values (WSA's on
-+// Windows), so translate at the get/setsockopt boundary. IPPROTO_* are real
-+// protocol numbers and stay as they are.
-+fn cosmo_sockopt(level: c_int, name: c_int) -> (c_int, c_int) {
-+    unsafe extern "C" {
-+        #[link_name = "SOL_SOCKET"]
-+        static COSMO_SOL_SOCKET: c_int;
-+        #[link_name = "SO_ERROR"]
-+        static COSMO_SO_ERROR: c_int;
-+        #[link_name = "SO_REUSEADDR"]
-+        static COSMO_SO_REUSEADDR: c_int;
-+        #[link_name = "SO_BROADCAST"]
-+        static COSMO_SO_BROADCAST: c_int;
-+        #[link_name = "SO_RCVTIMEO"]
-+        static COSMO_SO_RCVTIMEO: c_int;
-+        #[link_name = "SO_SNDTIMEO"]
-+        static COSMO_SO_SNDTIMEO: c_int;
-+        #[link_name = "SO_LINGER"]
-+        static COSMO_SO_LINGER: c_int;
-+        #[link_name = "SO_KEEPALIVE"]
-+        static COSMO_SO_KEEPALIVE: c_int;
-+        #[link_name = "TCP_NODELAY"]
-+        static COSMO_TCP_NODELAY: c_int;
-+        #[link_name = "IP_TTL"]
-+        static COSMO_IP_TTL: c_int;
-+        #[link_name = "IP_MULTICAST_TTL"]
-+        static COSMO_IP_MULTICAST_TTL: c_int;
-+        #[link_name = "IP_MULTICAST_LOOP"]
-+        static COSMO_IP_MULTICAST_LOOP: c_int;
-+        #[link_name = "IP_ADD_MEMBERSHIP"]
-+        static COSMO_IP_ADD_MEMBERSHIP: c_int;
-+        #[link_name = "IP_DROP_MEMBERSHIP"]
-+        static COSMO_IP_DROP_MEMBERSHIP: c_int;
-+        #[link_name = "IPV6_V6ONLY"]
-+        static COSMO_IPV6_V6ONLY: c_int;
-+        #[link_name = "IPV6_MULTICAST_LOOP"]
-+        static COSMO_IPV6_MULTICAST_LOOP: c_int;
-+        #[link_name = "IPV6_JOIN_GROUP"]
-+        static COSMO_IPV6_JOIN_GROUP: c_int;
-+        #[link_name = "IPV6_LEAVE_GROUP"]
-+        static COSMO_IPV6_LEAVE_GROUP: c_int;
-+    }
-+    // (Linux level, Linux name, cosmo level, cosmo name)
-+    let table: [(c_int, c_int, c_int, c_int); 17] = unsafe {
-+        [
-+            (c::SOL_SOCKET, c::SO_ERROR, COSMO_SOL_SOCKET, COSMO_SO_ERROR),
-+            (c::SOL_SOCKET, c::SO_REUSEADDR, COSMO_SOL_SOCKET, COSMO_SO_REUSEADDR),
-+            (c::SOL_SOCKET, c::SO_BROADCAST, COSMO_SOL_SOCKET, COSMO_SO_BROADCAST),
-+            (c::SOL_SOCKET, c::SO_RCVTIMEO, COSMO_SOL_SOCKET, COSMO_SO_RCVTIMEO),
-+            (c::SOL_SOCKET, c::SO_SNDTIMEO, COSMO_SOL_SOCKET, COSMO_SO_SNDTIMEO),
-+            (c::SOL_SOCKET, c::SO_LINGER, COSMO_SOL_SOCKET, COSMO_SO_LINGER),
-+            (c::SOL_SOCKET, c::SO_KEEPALIVE, COSMO_SOL_SOCKET, COSMO_SO_KEEPALIVE),
-+            (c::IPPROTO_TCP, c::TCP_NODELAY, c::IPPROTO_TCP, COSMO_TCP_NODELAY),
-+            (c::IPPROTO_IP, c::IP_TTL, c::IPPROTO_IP, COSMO_IP_TTL),
-+            (c::IPPROTO_IP, c::IP_MULTICAST_TTL, c::IPPROTO_IP, COSMO_IP_MULTICAST_TTL),
-+            (c::IPPROTO_IP, c::IP_MULTICAST_LOOP, c::IPPROTO_IP, COSMO_IP_MULTICAST_LOOP),
-+            (c::IPPROTO_IP, c::IP_ADD_MEMBERSHIP, c::IPPROTO_IP, COSMO_IP_ADD_MEMBERSHIP),
-+            (c::IPPROTO_IP, c::IP_DROP_MEMBERSHIP, c::IPPROTO_IP, COSMO_IP_DROP_MEMBERSHIP),
-+            (c::IPPROTO_IPV6, c::IPV6_V6ONLY, c::IPPROTO_IPV6, COSMO_IPV6_V6ONLY),
-+            (c::IPPROTO_IPV6, c::IPV6_MULTICAST_LOOP, c::IPPROTO_IPV6, COSMO_IPV6_MULTICAST_LOOP),
-+            (c::IPPROTO_IPV6, c::IPV6_ADD_MEMBERSHIP, c::IPPROTO_IPV6, COSMO_IPV6_JOIN_GROUP),
-+            (c::IPPROTO_IPV6, c::IPV6_DROP_MEMBERSHIP, c::IPPROTO_IPV6, COSMO_IPV6_LEAVE_GROUP),
-+        ]
-+    };
-+    for &(lin_l, lin_n, cos_l, cos_n) in table.iter() {
-+        if level == lin_l && name == lin_n {
-+            return (cos_l, cos_n);
-+        }
-+    }
-+    (level, name)
-+}
-+
- pub unsafe fn setsockopt<T>(
-     sock: &Socket,
-     level: c_int,
-     option_name: c_int,
-     option_value: T,
- ) -> io::Result<()> {
-+    let (level, option_name) = cosmo_sockopt(level, option_name);
-     let option_len = size_of::<T>() as c::socklen_t;
-     // SAFETY:
-     // * `sock` is opened for the duration of this call, as `sock` owns the socket.
-@@ -251,6 +337,7 @@
-     level: c_int,
-     option_name: c_int,
- ) -> io::Result<T> {
-+    let (level, option_name) = cosmo_sockopt(level, option_name);
-     let mut option_value = MaybeUninit::<T>::zeroed();
-     let mut option_len = size_of::<T>() as c::socklen_t;
- 
-@@ -432,7 +519,7 @@
-     pub fn write(&self, buf: &[u8]) -> io::Result<usize> {
-         let len = cmp::min(buf.len(), <wrlen_t>::MAX as usize) as wrlen_t;
-         let ret = cvt(unsafe {
--            c::send(self.inner.as_raw(), buf.as_ptr() as *const c_void, len, MSG_NOSIGNAL)
-+            c::send(self.inner.as_raw(), buf.as_ptr() as *const c_void, len, MSG_NOSIGNAL())
-         })?;
-         Ok(ret as usize)
-     }
-@@ -714,7 +801,7 @@
-                 self.inner.as_raw(),
-                 buf.as_ptr() as *const c_void,
-                 len,
--                MSG_NOSIGNAL,
-+                MSG_NOSIGNAL(),
-                 dst.as_ptr(),
-                 dstlen,
-             )
-@@ -862,7 +949,7 @@
-     pub fn send(&self, buf: &[u8]) -> io::Result<usize> {
-         let len = cmp::min(buf.len(), <wrlen_t>::MAX as usize) as wrlen_t;
-         let ret = cvt(unsafe {
--            c::send(self.inner.as_raw(), buf.as_ptr() as *const c_void, len, MSG_NOSIGNAL)
-+            c::send(self.inner.as_raw(), buf.as_ptr() as *const c_void, len, MSG_NOSIGNAL())
-         })?;
-         Ok(ret as usize)
-     }
 diff a/library/std/src/sys/net/connection/socket/unix.rs b/library/std/src/sys/net/connection/socket/unix.rs
 --- a/library/std/src/sys/net/connection/socket/unix.rs
 +++ b/library/std/src/sys/net/connection/socket/unix.rs
-@@ -1,5 +1,27 @@
- use libc::{MSG_PEEK, c_int, c_void, size_t, sockaddr, socklen_t};
- 
-+// cosmo: SOCK_CLOEXEC is a runtime constant, not libc's 0x80000; passing the
-+// musl value to socket() on Windows fails with EINVAL.
-+unsafe extern "C" {
-+    #[link_name = "SOCK_CLOEXEC"]
-+    static COSMO_SOCK_CLOEXEC: c_int;
-+}
-+
-+fn sock_cloexec() -> c_int {
-+    unsafe { COSMO_SOCK_CLOEXEC }
-+}
-+
-+// cosmo: POLL* are runtime values too (WSAPoll's on Windows), so poll() has to
-+// be handed the host's bits, not libc's Linux ones.
-+unsafe extern "C" {
-+    #[link_name = "POLLOUT"]
-+    static COSMO_POLLOUT: libc::c_short;
-+    #[link_name = "POLLHUP"]
-+    static COSMO_POLLHUP: libc::c_short;
-+    #[link_name = "POLLERR"]
-+    static COSMO_POLLERR: libc::c_short;
-+}
-+
- #[cfg(not(any(target_os = "espidf", target_os = "nuttx")))]
- use crate::ffi::CStr;
- use crate::io::{self, BorrowedBuf, BorrowedCursor, IoSlice, IoSliceMut};
-@@ -82,7 +104,7 @@
-                 // On platforms that support it we pass the SOCK_CLOEXEC
-                 // flag to atomically create the socket and set it as
-                 // CLOEXEC. On Linux this was added in 2.6.27.
--                let fd = cvt(unsafe { libc::socket(family, ty | libc::SOCK_CLOEXEC, 0) })?;
-+                let fd = cvt(unsafe { libc::socket(family, ty | sock_cloexec(), 0) })?;
-                 let socket = Socket(unsafe { FileDesc::from_raw_fd(fd) });
- 
-                 // DragonFlyBSD, FreeBSD and NetBSD use `SO_NOSIGPIPE` as a `setsockopt`
-@@ -128,7 +150,7 @@
-                     target_os = "qnx",
-                 ) => {
-                     // Like above, set cloexec atomically
--                    cvt(libc::socketpair(fam, ty | libc::SOCK_CLOEXEC, 0, fds.as_mut_ptr()))?;
-+                    cvt(libc::socketpair(fam, ty | sock_cloexec(), 0, fds.as_mut_ptr()))?;
-                     Ok((Socket(FileDesc::from_raw_fd(fds[0])), Socket(FileDesc::from_raw_fd(fds[1]))))
-                 }
-                 _ => {
-@@ -174,12 +196,14 @@
- 
-         match r {
-             Ok(_) => return Ok(()),
--            // there's no ErrorKind for EINPROGRESS :(
--            Err(ref e) if e.raw_os_error() == Some(libc::EINPROGRESS) => {}
-+            // cosmo: raw errno is the host's (10036 on Windows), so match on the
-+            // kind, which already goes through the runtime symbols.
-+            Err(ref e) if e.kind() == io::ErrorKind::InProgress => {}
-             Err(e) => return Err(e),
-         }
- 
--        let mut pollfd = libc::pollfd { fd: self.as_raw_fd(), events: libc::POLLOUT, revents: 0 };
-+        let mut pollfd =
-+            libc::pollfd { fd: self.as_raw_fd(), events: unsafe { COSMO_POLLOUT }, revents: 0 };
- 
-         if timeout.as_secs() == 0 && timeout.subsec_nanos() == 0 {
-             return Err(io::Error::ZERO_TIMEOUT);
-@@ -223,7 +247,7 @@
-                     } else {
-                         // linux returns POLLOUT|POLLERR|POLLHUP for refused connections (!), so look
-                         // for POLLHUP or POLLERR rather than read readiness
--                        if pollfd.revents & (libc::POLLHUP | libc::POLLERR) != 0 {
-+                        if pollfd.revents & unsafe { COSMO_POLLHUP | COSMO_POLLERR } != 0 {
-                             let e = self.take_error()?.unwrap_or_else(|| {
-                                 io::const_error!(
-                                     io::ErrorKind::Uncategorized,
-@@ -258,7 +282,7 @@
-                 target_os = "cygwin",
-             ) => {
-                 unsafe {
--                    let fd = cvt_r(|| libc::accept4(self.as_raw_fd(), storage, len, libc::SOCK_CLOEXEC))?;
-+                    let fd = cvt_r(|| libc::accept4(self.as_raw_fd(), storage, len, sock_cloexec()))?;
-                     Ok(Socket(FileDesc::from_raw_fd(fd)))
-                 }
-             }
-@@ -591,22 +615,8 @@
+@@ -591,22 +591,8 @@
          Ok(local_creds_persistent != 0)
      }
  
 -    #[cfg(not(any(target_os = "solaris", target_os = "illumos", target_os = "vita")))]
--    pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
++    // cosmo: same FIONBIO problem as FileDesc, so borrow its fcntl path.
+     pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
 -        let mut nonblocking = nonblocking as libc::c_int;
 -        cvt(unsafe { libc::ioctl(self.as_raw_fd(), libc::FIONBIO, &mut nonblocking) }).map(drop)
 -    }
@@ -678,182 +150,16 @@ diff a/library/std/src/sys/net/connection/socket/unix.rs b/library/std/src/sys/n
 -    }
 -
 -    #[cfg(any(target_os = "solaris", target_os = "illumos"))]
-+    // cosmo: same FIONBIO problem as FileDesc, so borrow its fcntl path.
-     pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
+-    pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
 -        // FIONBIO is inadequate for sockets on illumos/Solaris, so use the
 -        // fcntl(F_[GS]ETFL)-based method provided by FileDesc instead.
          self.0.set_nonblocking(nonblocking)
      }
  
-diff a/library/std/src/sys/pal/unix/futex.rs b/library/std/src/sys/pal/unix/futex.rs
---- a/library/std/src/sys/pal/unix/futex.rs
-+++ b/library/std/src/sys/pal/unix/futex.rs
-@@ -36,7 +36,7 @@
-     //
-     // Overflows are rounded up to an infinite timeout (None).
-     let timespec = timeout
--        .and_then(|d| Timespec::now(libc::CLOCK_MONOTONIC).checked_add_duration(&d))
-+        .and_then(|d| Timespec::now(crate::sys::time::Instant::clock_id()).checked_add_duration(&d))
-         .and_then(|t| t.to_timespec());
- 
-     loop {
-diff a/library/std/src/sys/pal/unix/mod.rs b/library/std/src/sys/pal/unix/mod.rs
---- a/library/std/src/sys/pal/unix/mod.rs
-+++ b/library/std/src/sys/pal/unix/mod.rs
-@@ -2,6 +2,39 @@
- 
- use crate::io;
- 
-+// cosmo: constants libc bakes in at compile time but cosmo resolves per host.
-+// Getting one wrong is quiet: Linux's O_APPEND is XNU's O_TRUNC, so an append
-+// silently truncates instead of failing.
-+pub(crate) mod cosmo {
-+    macro_rules! runtime {
-+        ($($name:ident: $ty:ty),* $(,)?) => {$(
-+            pub(crate) fn $name() -> $ty {
-+                unsafe extern "C" {
-+                    #[link_name = stringify!($name)]
-+                    static VALUE: $ty;
-+                }
-+                unsafe { VALUE }
-+            }
-+        )*};
-+    }
-+
-+    runtime! {
-+        O_CREAT: libc::c_int,
-+        O_EXCL: libc::c_int,
-+        O_TRUNC: libc::c_int,
-+        O_APPEND: libc::c_int,
-+        O_CLOEXEC: libc::c_int,
-+        O_NOFOLLOW: libc::c_int,
-+        O_DIRECTORY: libc::c_int,
-+        O_NONBLOCK: libc::c_int,
-+        AT_FDCWD: libc::c_int,
-+        AT_SYMLINK_NOFOLLOW: libc::c_int,
-+        AT_REMOVEDIR: libc::c_int,
-+        AT_EMPTY_PATH: libc::c_int,
-+        AT_STATX_SYNC_AS_STAT: libc::c_int,
-+    }
-+}
-+
- pub mod conf;
- #[cfg(target_os = "fuchsia")]
- pub mod fuchsia;
-diff a/library/std/src/sys/pal/unix/sync/condvar.rs b/library/std/src/sys/pal/unix/sync/condvar.rs
---- a/library/std/src/sys/pal/unix/sync/condvar.rs
-+++ b/library/std/src/sys/pal/unix/sync/condvar.rs
-@@ -67,7 +67,7 @@
-         #[cfg(target_os = "cygwin")]
-         let dur = Duration::min(dur, Duration::from_secs(1000 * 365 * 86400));
- 
--        let timeout = Timespec::now(Self::CLOCK).checked_add_duration(&dur);
-+        let timeout = Timespec::now(Self::clock()).checked_add_duration(&dur);
- 
-         #[cfg(not(any(target_os = "nto", target_os = "qnx")))]
-         let timeout = timeout.and_then(|t| t.to_timespec()).unwrap_or(TIMESPEC_MAX);
-@@ -145,7 +145,9 @@
- )))]
- impl Condvar {
-     pub const PRECISE_TIMEOUT: bool = true;
--    const CLOCK: libc::clockid_t = libc::CLOCK_MONOTONIC;
-+    fn clock() -> libc::clockid_t {
-+        crate::sys::time::Instant::clock_id()
-+    }
- 
-     /// # Safety
-     /// May only be called once per instance of `Self`.
-@@ -167,7 +169,7 @@
-             let r = libc::pthread_condattr_init(attr.as_mut_ptr());
-             assert_eq!(r, 0);
-             let attr = AttrGuard(&mut attr);
--            let r = libc::pthread_condattr_setclock(attr.0.as_mut_ptr(), Self::CLOCK);
-+            let r = libc::pthread_condattr_setclock(attr.0.as_mut_ptr(), Self::clock());
-             assert_eq!(r, 0);
-             let r = libc::pthread_cond_init(self.raw(), attr.0.as_ptr());
-             assert_eq!(r, 0);
-@@ -200,7 +202,9 @@
- ))]
- impl Condvar {
-     pub const PRECISE_TIMEOUT: bool = false;
--    const CLOCK: libc::clockid_t = libc::CLOCK_REALTIME;
-+    fn clock() -> libc::clockid_t {
-+        crate::sys::time::SystemTime::clock_id()
-+    }
- 
-     /// # Safety
-     /// May only be called once per instance of `Self`.
-diff a/library/std/src/sys/pipe/unix.rs b/library/std/src/sys/pipe/unix.rs
---- a/library/std/src/sys/pipe/unix.rs
-+++ b/library/std/src/sys/pipe/unix.rs
-@@ -25,7 +25,7 @@
-             target_os = "redox"
-         ) => {
-             unsafe {
--                cvt(libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC))?;
-+                cvt(libc::pipe2(fds.as_mut_ptr(), crate::sys::pal::cosmo::O_CLOEXEC()))?;
-                 Ok((Pipe::from_raw_fd(fds[0]), Pipe::from_raw_fd(fds[1])))
-             }
-         }
-diff a/library/std/src/sys/process/unix/common.rs b/library/std/src/sys/process/unix/common.rs
---- a/library/std/src/sys/process/unix/common.rs
-+++ b/library/std/src/sys/process/unix/common.rs
-@@ -644,11 +644,17 @@
-     out.set_nonblocking(true)?;
-     err.set_nonblocking(true)?;
- 
-+    // cosmo: POLLIN is a runtime value off Linux, and poll() wants the host's.
-+    unsafe extern "C" {
-+        #[link_name = "POLLIN"]
-+        static COSMO_POLLIN: libc::c_short;
-+    }
-+
-     let mut fds: [libc::pollfd; 2] = unsafe { mem::zeroed() };
-     fds[0].fd = out.as_raw_fd();
--    fds[0].events = libc::POLLIN;
-+    fds[0].events = unsafe { COSMO_POLLIN };
-     fds[1].fd = err.as_raw_fd();
--    fds[1].events = libc::POLLIN;
-+    fds[1].events = unsafe { COSMO_POLLIN };
-     loop {
-         // wait for either pipe to become readable using `poll`
-         cvt_r(|| unsafe { libc::poll(fds.as_mut_ptr(), 2, -1) })?;
-@@ -671,15 +677,10 @@
-     fn read(fd: &FileDesc, dst: &mut Vec<u8>) -> Result<bool, io::Error> {
-         match fd.read_to_end(dst) {
-             Ok(_) => Ok(true),
--            Err(e) => {
--                if e.raw_os_error() == Some(libc::EWOULDBLOCK)
--                    || e.raw_os_error() == Some(libc::EAGAIN)
--                {
--                    Ok(false)
--                } else {
--                    Err(e)
--                }
--            }
-+            // cosmo: raw errno is the host's (10035 on Windows), so match on the
-+            // kind, which already goes through the runtime symbols.
-+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(false),
-+            Err(e) => Err(e),
-         }
-     }
- }
-diff a/library/std/src/sys/process/unix/unix.rs b/library/std/src/sys/process/unix/unix.rs
---- a/library/std/src/sys/process/unix/unix.rs
-+++ b/library/std/src/sys/process/unix/unix.rs
-@@ -30,7 +30,7 @@
-         fn get_clock_resolution() -> Duration {
-             static MIN_DELAY: LazyLock<Duration, fn() -> Duration> = LazyLock::new(|| {
-                 let mut mindelay = libc::timespec { tv_sec: 0, tv_nsec: 0 };
--                if unsafe { libc::clock_getres(libc::CLOCK_MONOTONIC, &mut mindelay) } == 0
-+                if unsafe { libc::clock_getres(crate::sys::time::Instant::clock_id(), &mut mindelay) } == 0
-                 {
-                     Duration::from_nanos(mindelay.tv_nsec as u64)
-                 } else {
 diff a/library/std/src/sys/random/linux.rs b/library/std/src/sys/random/linux.rs
 --- a/library/std/src/sys/random/linux.rs
 +++ b/library/std/src/sys/random/linux.rs
-@@ -123,36 +123,22 @@
+@@ -123,36 +123,24 @@
                          GETRANDOM_AVAILABLE.store(false, Relaxed);
                          break;
                      }
@@ -878,9 +184,11 @@ diff a/library/std/src/sys/random/linux.rs b/library/std/src/sys/random/linux.rs
 -                    1 => {
 -                        assert_eq!(fd.revents, libc::POLLIN);
 -                        URANDOM_READY.store(true, Release);
-+                    // cosmo: errno is the host's own value, so the arms
-+                    // above may all miss. Getting here just means no
-+                    // usable getrandom — fall back, don't panic.
++                    // cosmo: defensive. The syscall shim routes getrandom
++                    // to cosmo's own cross-platform one and the errno shim
++                    // keeps the arms above matching, so this should be
++                    // unreachable — but fall back rather than panic if a
++                    // host proves otherwise.
 +                    _ => {
 +                        GETRANDOM_AVAILABLE.store(false, Relaxed);
                          break;
@@ -913,81 +221,3 @@ diff a/library/std/src/sys/thread/unix.rs b/library/std/src/sys/thread/unix.rs
      }
  }
  
-@@ -564,7 +564,7 @@
-             // of `nanosleep` which used `CLOCK_REALTIME` even though it is unsupported
-             // on WASIp2. Using `clock_nanosleep` directly bypasses the issue.
-             unsafe fn nanosleep(rqtp: *const libc::timespec, rmtp: *mut libc::timespec) -> libc::c_int {
--                unsafe { libc::clock_nanosleep(crate::sys::time::Instant::CLOCK_ID, 0, rqtp, rmtp) }
-+                unsafe { libc::clock_nanosleep(crate::sys::time::Instant::clock_id(), 0, rqtp, rmtp) }
-             }
-         }
-         _ => {
-@@ -676,7 +676,7 @@
-             loop {
-                 let r = unsafe {
-                     clock_nanosleep(
--                        crate::sys::time::Instant::CLOCK_ID,
-+                        crate::sys::time::Instant::clock_id(),
-                         libc::TIMER_ABSTIME,
-                         &ts,
-                         core::ptr::null_mut(),
-@@ -715,7 +715,7 @@
-         // When we get interrupted (res = EINTR) call clock_nanosleep again
-         loop {
-             let res = libc::clock_nanosleep(
--                crate::sys::time::Instant::CLOCK_ID,
-+                crate::sys::time::Instant::clock_id(),
-                 libc::TIMER_ABSTIME,
-                 &ts,
-                 core::ptr::null_mut(), // not required with TIMER_ABSTIME
-diff a/library/std/src/sys/time/unix.rs b/library/std/src/sys/time/unix.rs
---- a/library/std/src/sys/time/unix.rs
-+++ b/library/std/src/sys/time/unix.rs
-@@ -3,6 +3,13 @@
- use crate::time::Duration;
- use crate::{fmt, io};
- 
-+unsafe extern "C" {
-+    #[link_name = "CLOCK_REALTIME"]
-+    static COSMO_CLOCK_REALTIME: libc::clockid_t;
-+    #[link_name = "CLOCK_MONOTONIC"]
-+    static COSMO_CLOCK_MONOTONIC: libc::clockid_t;
-+}
-+
- pub const UNIX_EPOCH: SystemTime = SystemTime { t: Timespec::zero() };
- 
- #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-@@ -20,8 +27,12 @@
-         Ok(SystemTime { t: Timespec::new(tv_sec, tv_nsec)? })
-     }
- 
-+    pub(crate) fn clock_id() -> libc::clockid_t {
-+        unsafe { COSMO_CLOCK_REALTIME }
-+    }
-+
-     pub fn now() -> SystemTime {
--        SystemTime { t: Timespec::now(libc::CLOCK_REALTIME) }
-+        SystemTime { t: Timespec::now(Self::clock_id()) }
-     }
- 
-     pub fn sub_time(&self, other: &SystemTime) -> Result<Duration, Duration> {
-@@ -63,15 +74,13 @@
-     // `CLOCK_UPTIME_RAW` is based on `mach_absolute_time`, which is the
-     // clock that all timeouts and deadlines are measured against inside
-     // the kernel.
--    #[cfg(target_vendor = "apple")]
--    pub(crate) const CLOCK_ID: libc::clockid_t = libc::CLOCK_UPTIME_RAW;
--
--    #[cfg(not(target_vendor = "apple"))]
--    pub(crate) const CLOCK_ID: libc::clockid_t = libc::CLOCK_MONOTONIC;
-+    pub(crate) fn clock_id() -> libc::clockid_t {
-+        unsafe { COSMO_CLOCK_MONOTONIC }
-+    }
- 
-     pub fn now() -> Instant {
-         // https://pubs.opengroup.org/onlinepubs/9799919799/functions/clock_getres.html
--        Instant { t: Timespec::now(Self::CLOCK_ID) }
-+        Instant { t: Timespec::now(Self::clock_id()) }
-     }
- 
-     pub fn checked_sub_instant(&self, other: &Instant) -> Option<Duration> {

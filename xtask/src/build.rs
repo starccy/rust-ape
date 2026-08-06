@@ -298,7 +298,10 @@ fn cargo_build(
     if !rustflags.is_empty() {
         rustflags.push(' ');
     }
-    rustflags.push_str("--cfg rustix_use_libc --cfg polling_test_poll_backend");
+    // rust_ape_shim: arms the __ape_shim_* redirects in the patched crates.
+    // With --target set, RUSTFLAGS reaches target units only, so host build
+    // scripts keep linking the real libc symbols.
+    rustflags.push_str("--cfg rustix_use_libc --cfg polling_test_poll_backend --cfg rust_ape_shim");
     cmd.env("RUSTFLAGS", rustflags);
 
     // C, C++ and asm in dependencies go through cosmocc too, so the ABI matches
