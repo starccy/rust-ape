@@ -10,6 +10,9 @@ use std::process::Command;
 #[derive(Deserialize)]
 pub struct Metadata {
     pub packages: Vec<Package>,
+    /// Package ids of the workspace's own members, as opposed to the full
+    /// dependency graph in `packages`.
+    pub workspace_members: Vec<String>,
     pub resolve: Resolve,
 }
 

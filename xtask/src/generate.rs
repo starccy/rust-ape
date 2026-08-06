@@ -88,7 +88,7 @@ ape = {{ path = "{ape}" }}
 
     println!("created {}", dir.display());
     println!(
-        "build it with: (cd {} && cargo xtask build --project {})",
+        "build it with: (cd {} && cargo xtask build {})",
         root.display(),
         dir.display()
     );

@@ -9,14 +9,17 @@ use std::process::Command;
 
 #[derive(Args)]
 pub struct BuildArgs {
-    /// The project to build.
-    #[arg(long)]
+    /// The project directory to build
+    #[arg(value_name = "PROJECT_DIR")]
     pub project: PathBuf,
     #[arg(long)]
     pub release: bool,
     /// Force a std/libc rebuild (useful after hand-editing vendor/library)
     #[arg(long)]
     pub clean_std: bool,
+    /// Build only this package of the project's workspace
+    #[arg(long, short = 'p')]
+    pub package: Option<String>,
     /// Build and pack only this binary
     #[arg(long)]
     pub bin: Option<String>,
@@ -45,7 +48,7 @@ pub fn run(args: &BuildArgs) -> Result<()> {
     let meta = metadata::load(&project)?;
     verify_patches(&root, &meta)?;
 
-    let bins = bin_targets(&meta, args.bin.as_deref())?;
+    let bins = bin_targets(&meta, args.bin.as_deref(), args.package.as_deref())?;
     if args.output.is_some() && bins.len() > 1 {
         bail!(
             "--output names one file but {} binaries are being built ({}); pass --bin to pick one",
@@ -116,8 +119,8 @@ fn preflight(root: &Path) -> Result<()> {
     Ok(())
 }
 
-// will failed if a patched crate resolved to crates.io instead of vendor/patches.
-// Happens when the registry publishes a new version inside the same compat range.
+// Fails if a patched crate resolved to crates.io instead of vendor/patches,
+// which happens when the registry gets a newer version in the same compat range.
 fn verify_patches(root: &Path, meta: &Metadata) -> Result<()> {
     let mut bad = Vec::new();
     for &(name, ver) in PATCHED_CRATES {
@@ -157,25 +160,31 @@ fn compat_range(version: &str) -> &str {
     &version[..end]
 }
 
-/// Which binaries to pack. `cargo build` already builds every bin in the
-/// package, so without --bin we pack all of them. The name doesn't have to
-/// match the package's.
-fn bin_targets(meta: &Metadata, only: Option<&str>) -> Result<Vec<String>> {
+fn bin_targets(meta: &Metadata, only: Option<&str>, package: Option<&str>) -> Result<Vec<String>> {
     // An explicit --bin is taken at face value, which also keeps this working
     // in a virtual workspace where there's no root package to ask.
     if let Some(name) = only {
         return Ok(vec![name.to_owned()]);
     }
-    let root_id = meta
-        .resolve
-        .root
-        .as_deref()
-        .context("could not tell which package is the root (virtual workspace?); pass --bin")?;
-    let pkg = meta
-        .packages
-        .iter()
-        .find(|p| p.id == root_id)
-        .context("the root package is missing from packages")?;
+    let pkg = match package {
+        // -p limits the search to the workspace's own members, so a
+        // dependency that happens to share the name can't be picked up.
+        Some(name) => meta
+            .packages
+            .iter()
+            .filter(|p| meta.workspace_members.contains(&p.id))
+            .find(|p| p.name == name)
+            .with_context(|| format!("no package named {name} in this workspace"))?,
+        None => {
+            let root_id = meta.resolve.root.as_deref().context(
+                "could not tell which package is the root (virtual workspace?); pass -p or --bin",
+            )?;
+            meta.packages
+                .iter()
+                .find(|p| p.id == root_id)
+                .context("the root package is missing from packages")?
+        }
+    };
     let bins: Vec<String> = pkg
         .targets
         .iter()
@@ -183,7 +192,7 @@ fn bin_targets(meta: &Metadata, only: Option<&str>) -> Result<Vec<String>> {
         .map(|t| t.name.clone())
         .collect();
     if bins.is_empty() {
-        bail!("this project has no binaries to build");
+        bail!("{} has no binaries to build", pkg.name);
     }
     Ok(bins)
 }
@@ -206,8 +215,7 @@ fn std_stamp(root: &Path) -> Result<String> {
 fn clean_std(project: &Path, profile: &str) -> Result<()> {
     for &(triple, _) in TARGETS {
         let base = project.join("target").join(triple).join(profile);
-        // libc goes too, it's a separate unit and a rebuilt std would just
-        // relink the stale one.
+        
         remove_prefixed(&base.join(".fingerprint"), &["std-", "panic_abort-", "libc-"])?;
         remove_prefixed(&base.join("deps"), &["liblibc-", "libc-"])?;
     }
@@ -280,7 +288,12 @@ fn cargo_build(
     );
     for var in ["CFLAGS", "CXXFLAGS"] {
         let user = std::env::var(format!("{var}_{t}")).unwrap_or_default();
-        cmd.env(format!("{var}_{t}"), format!("-fno-stack-protector {user}"));
+        // guard=global keeps things working when a -sys crate forces
+        // -fstack-protector back on
+        cmd.env(
+            format!("{var}_{t}"),
+            format!("-fno-stack-protector -mstack-protector-guard=global {user}"),
+        );
     }
 
     cmd.args([
@@ -295,6 +308,9 @@ fn cargo_build(
     cmd.arg("--target").arg(&target_json);
     if args.release {
         cmd.arg("--release");
+    }
+    if let Some(p) = &args.package {
+        cmd.args(["--package", p]);
     }
     if let Some(b) = &args.bin {
         cmd.args(["--bin", b]);
