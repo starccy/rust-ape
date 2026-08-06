@@ -9,7 +9,7 @@
   "default-uwtable": false,
   "dynamic-linking": false,
   "env": "musl",
-  "features": "+reserve-x28",
+  "features": "+reserve-x18,+reserve-x28",
   "has-rpath": false,
   "has-thread-local": false,
   "linker-flavor": "gcc",
