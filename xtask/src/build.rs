@@ -23,6 +23,9 @@ pub struct BuildArgs {
     /// Build and pack only this binary
     #[arg(long)]
     pub bin: Option<String>,
+    /// Build and pack only this example
+    #[arg(long)]
+    pub example: Option<String>,
     /// Space or comma separated list of features to activate
     #[arg(long, short = 'F')]
     pub features: Vec<String>,
@@ -48,12 +51,12 @@ pub fn run(args: &BuildArgs) -> Result<()> {
     let meta = metadata::load(&project)?;
     verify_patches(&root, &meta)?;
 
-    let bins = bin_targets(&meta, args.bin.as_deref(), args.package.as_deref())?;
-    if args.output.is_some() && bins.len() > 1 {
+    let targets = pack_targets(&meta, args)?;
+    if args.output.is_some() && targets.len() > 1 {
         bail!(
             "--output names one file but {} binaries are being built ({}); pass --bin to pick one",
-            bins.len(),
-            bins.join(", ")
+            targets.len(),
+            targets.iter().map(|t| t.name.as_str()).collect::<Vec<_>>().join(", ")
         );
     }
     let profile = if args.release { "release" } else { "debug" };
@@ -78,15 +81,23 @@ pub fn run(args: &BuildArgs) -> Result<()> {
         cargo_build(&root, &project, triple, arch, args)?;
     }
 
-    for bin in &bins {
+    for target in &targets {
         let output = match &args.output {
             Some(o) => o.clone(),
-            None => project.join("target/ape").join(format!("{bin}.com")),
+            // let example binaries land in target/ape/examples/ so
+            // they don't collide with the main bin
+            None => {
+                let mut dir = project.join("target/ape");
+                if target.example {
+                    dir = dir.join("examples");
+                }
+                dir.join(format!("{}.com", target.name))
+            }
         };
         if let Some(parent) = output.parent() {
             fs::create_dir_all(parent)?;
         }
-        apelink(&root, &project, profile, bin, &output)?;
+        apelink(&root, &project, profile, target, &output)?;
         println!("==> {} ({} bytes)", output.display(), fs::metadata(&output)?.len());
     }
 
@@ -160,13 +171,25 @@ fn compat_range(version: &str) -> &str {
     &version[..end]
 }
 
-fn bin_targets(meta: &Metadata, only: Option<&str>, package: Option<&str>) -> Result<Vec<String>> {
-    // An explicit --bin is taken at face value, which also keeps this working
-    // in a virtual workspace where there's no root package to ask.
-    if let Some(name) = only {
-        return Ok(vec![name.to_owned()]);
+/// One executable to apelink: a bin, or an example (whose `.com.dbg` lands
+/// in the profile dir's examples/ subdirectory).
+struct PackTarget {
+    name: String,
+    example: bool,
+}
+
+fn pack_targets(meta: &Metadata, args: &BuildArgs) -> Result<Vec<PackTarget>> {
+    let mut picked = Vec::new();
+    if let Some(name) = &args.example {
+        picked.push(PackTarget { name: name.clone(), example: true });
     }
-    let pkg = match package {
+    if let Some(name) = &args.bin {
+        picked.push(PackTarget { name: name.clone(), example: false });
+    }
+    if !picked.is_empty() {
+        return Ok(picked);
+    }
+    let pkg = match args.package.as_deref() {
         // -p limits the search to the workspace's own members, so a
         // dependency that happens to share the name can't be picked up.
         Some(name) => meta
@@ -185,11 +208,12 @@ fn bin_targets(meta: &Metadata, only: Option<&str>, package: Option<&str>) -> Re
                 .context("the root package is missing from packages")?
         }
     };
-    let bins: Vec<String> = pkg
+    // if none was picked, build all the bins in the package by default
+    let bins: Vec<PackTarget> = pkg
         .targets
         .iter()
         .filter(|t| t.kind.iter().any(|k| k == "bin"))
-        .map(|t| t.name.clone())
+        .map(|t| PackTarget { name: t.name.clone(), example: false })
         .collect();
     if bins.is_empty() {
         bail!("{} has no binaries to build", pkg.name);
@@ -315,6 +339,9 @@ fn cargo_build(
     if let Some(b) = &args.bin {
         cmd.args(["--bin", b]);
     }
+    if let Some(e) = &args.example {
+        cmd.args(["--example", e]);
+    }
     for f in &args.features {
         cmd.args(["--features", f]);
     }
@@ -331,16 +358,16 @@ fn apelink(
     root: &Path,
     project: &Path,
     profile: &str,
-    artifact: &str,
+    target: &PackTarget,
     output: &Path,
 ) -> Result<()> {
     let bin = root.join("vendor/cosmocc/bin");
     let dbg = |triple: &str| {
-        project
-            .join("target")
-            .join(triple)
-            .join(profile)
-            .join(format!("{artifact}.com.dbg"))
+        let mut dir = project.join("target").join(triple).join(profile);
+        if target.example {
+            dir = dir.join("examples");
+        }
+        dir.join(format!("{}.com.dbg", target.name))
     };
     let inputs: Vec<PathBuf> = TARGETS.iter().map(|&(triple, _)| dbg(triple)).collect();
     for p in &inputs {
