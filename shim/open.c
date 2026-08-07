@@ -287,3 +287,11 @@ int __ape_shim_utimensat(int dirfd, const char *path,
     }
     return utimensat(at_fdcwd(dirfd), path, times ? copy : NULL, host);
 }
+
+// mkfifo(): cosmo ships mknod() but not the POSIX wrapper over it. Nothing
+// needs translating -- both sides spell S_IFIFO 0010000 and the permission
+// bits agree -- so this is the same one-liner musl uses. Hosts without FIFOs
+// (Windows) fail inside cosmo's mknod, which is where that belongs.
+int __ape_shim_mkfifo(const char *path, unsigned mode) {
+    return mknod(path, S_IFIFO | mode, 0);
+}

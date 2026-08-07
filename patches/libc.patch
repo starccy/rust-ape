@@ -578,7 +578,16 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn sigprocmask(how: c_int, set: *const sigset_t, oldset: *mut sigset_t) -> c_int;
      #[cfg_attr(target_os = "netbsd", link_name = "__sigpending14")]
      pub fn sigpending(set: *mut sigset_t) -> c_int;
-@@ -1745,6 +1799,7 @@
+@@ -1634,6 +1688,8 @@
+     #[cfg_attr(target_os = "solaris", link_name = "__sysconf_xpg7")]
+     pub fn sysconf(name: c_int) -> c_long;
+ 
++    // cosmo: has mknod() but not this wrapper over it; the shim supplies it.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_mkfifo")]
+     pub fn mkfifo(path: *const c_char, mode: mode_t) -> c_int;
+ 
+     #[cfg_attr(gnu_file_offset_bits64, link_name = "fseeko64")]
+@@ -1745,6 +1801,7 @@
          ),
          link_name = "cfgetispeed@GLIBC_2.16"
      )]
@@ -586,7 +595,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn cfgetispeed(termios: *const crate::termios) -> crate::speed_t;
      #[cfg_attr(
          all(target_os = "linux", target_env = "gnu", target_arch = "arm"),
-@@ -1846,6 +1901,7 @@
+@@ -1846,6 +1903,7 @@
          ),
          link_name = "cfgetospeed@GLIBC_2.16"
      )]
@@ -594,7 +603,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn cfgetospeed(termios: *const crate::termios) -> crate::speed_t;
      #[cfg_attr(
          all(target_os = "linux", target_env = "gnu", target_arch = "arm"),
-@@ -1947,6 +2003,7 @@
+@@ -1947,6 +2005,7 @@
          ),
          link_name = "cfsetispeed@GLIBC_2.16"
      )]
@@ -602,7 +611,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn cfsetispeed(termios: *mut crate::termios, speed: crate::speed_t) -> c_int;
      #[cfg_attr(
          all(target_os = "linux", target_env = "gnu", target_arch = "arm"),
-@@ -2048,6 +2105,7 @@
+@@ -2048,6 +2107,7 @@
          ),
          link_name = "cfsetospeed@GLIBC_2.16"
      )]
@@ -610,7 +619,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn cfsetospeed(termios: *mut crate::termios, speed: crate::speed_t) -> c_int;
      #[cfg_attr(
          all(
-@@ -2067,6 +2125,7 @@
+@@ -2067,6 +2127,7 @@
          all(target_os = "linux", target_env = "gnu", target_arch = "sparc64"),
          link_name = "tcgetattr@GLIBC_2.2"
      )]
@@ -618,7 +627,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn tcgetattr(fd: c_int, termios: *mut crate::termios) -> c_int;
      #[cfg_attr(
          all(
-@@ -2086,8 +2145,11 @@
+@@ -2086,8 +2147,11 @@
          all(target_os = "linux", target_env = "gnu", target_arch = "sparc64"),
          link_name = "tcsetattr@GLIBC_2.2"
      )]
@@ -630,7 +639,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn tcflush(fd: c_int, action: c_int) -> c_int;
      pub fn tcgetsid(fd: c_int) -> crate::pid_t;
      pub fn tcsendbreak(fd: c_int, duration: c_int) -> c_int;
-@@ -2306,6 +2368,8 @@
+@@ -2306,6 +2370,8 @@
              pub fn open_memstream(ptr: *mut *mut c_char, sizeloc: *mut size_t) -> *mut FILE;
              pub fn atexit(cb: extern "C" fn()) -> c_int;
              #[cfg_attr(target_os = "netbsd", link_name = "__sigaction14")]
@@ -639,7 +648,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
              pub fn sigaction(signum: c_int, act: *const sigaction, oldact: *mut sigaction)
                  -> c_int;
              pub fn readlink(path: *const c_char, buf: *mut c_char, bufsz: size_t) -> ssize_t;
-@@ -2339,6 +2403,7 @@
+@@ -2339,6 +2405,7 @@
          }
      } else if #[cfg(not(any(target_os = "solaris", target_os = "illumos",)))] {
          extern "C" {

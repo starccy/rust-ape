@@ -9,12 +9,18 @@ use std::process::Command;
 
 /// Extra `-D`s handed to every C dependency.
 ///
-/// Self-referential macros for cosmo constants that are `extern const int`
-/// rather than macros, so that a library's `#ifndef X` probe answers
-/// "defined" at any include order instead of installing a `#define X 0`
-/// fallback that breaks cosmo's declaration (libgit2's src/util/posix.h).
-/// Uses still reach the runtime variable: GCC expands the macro once.
-const CONST_PREDEFS: &[&str] = &["-DSOCK_CLOEXEC=SOCK_CLOEXEC"];
+/// `_GNU_SOURCE` puts cosmo's headers in the Linux shape a library built for
+/// linux-musl expects, gating declarations like `madvise` (mimalloc needs
+/// this one). cosmo uses the macro for visibility only, never to switch a
+/// function's signature the way glibc does for `strerror_r`.
+///
+/// The rest are self-referential macros for cosmo constants that are
+/// `extern const int` rather than macros, so that a library's `#ifndef X`
+/// probe answers "defined" at any include order instead of installing a
+/// `#define X 0` fallback that breaks cosmo's declaration (libgit2's
+/// src/util/posix.h). Uses still reach the runtime variable: GCC expands the
+/// macro once.
+const C_PREDEFS: &[&str] = &["-D_GNU_SOURCE", "-DSOCK_CLOEXEC=SOCK_CLOEXEC"];
 
 #[derive(Args)]
 pub struct BuildArgs {
@@ -332,9 +338,14 @@ fn cargo_build(
     cmd.env("__CARGO_TESTS_ONLY_SRC_ROOT", root.join("vendor/library"));
 
     // rustix_use_libc: keep rustix off its raw-syscall backend, which cosmo
-    // can't translate away from Linux. polling_test_poll_backend: poll(), since
-    // there's no epoll. Passed as env because RUSTFLAGS there outranks anything
-    // in a project's .cargo/config.toml, so nobody can drop these two by
+    // can't translate away from Linux. polling_test_poll_backend and
+    // mio_unsupported_force_poll_poll: poll(), since there's no epoll — the
+    // former covers async-io/smol, the latter tokio's mio, which would
+    // otherwise want epoll_ctl and friends (and edge-triggered at that).
+    // mio_unsupported_force_waker_pipe goes with it: mio's default waker on
+    // Linux is an eventfd, which cosmo doesn't have either.
+    // Passed as env because RUSTFLAGS there outranks anything
+    // in a project's .cargo/config.toml, so nobody can drop these by
     // accident.
     let mut rustflags = std::env::var("RUSTFLAGS").unwrap_or_default();
     if !rustflags.is_empty() {
@@ -343,7 +354,11 @@ fn cargo_build(
     // rust_ape_shim: arms the __ape_shim_* redirects in the patched crates.
     // With --target set, RUSTFLAGS reaches target units only, so host build
     // scripts keep linking the real libc symbols.
-    rustflags.push_str("--cfg rustix_use_libc --cfg polling_test_poll_backend --cfg rust_ape_shim");
+    rustflags.push_str(
+        "--cfg rustix_use_libc --cfg polling_test_poll_backend \
+         --cfg mio_unsupported_force_poll_poll \
+         --cfg mio_unsupported_force_waker_pipe --cfg rust_ape_shim",
+    );
     cmd.env("RUSTFLAGS", rustflags);
 
     // C, C++ and asm in dependencies go through cosmocc too, so the ABI matches
@@ -363,7 +378,7 @@ fn cargo_build(
             format!("{var}_{t}"),
             format!(
                 "-fno-stack-protector -mstack-protector-guard=global {} {user}",
-                CONST_PREDEFS.join(" ")
+                C_PREDEFS.join(" ")
             ),
         );
     }
