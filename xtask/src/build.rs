@@ -76,6 +76,8 @@ pub fn run(args: &BuildArgs) -> Result<()> {
         clean_std(&project, profile)?;
     }
 
+    purge_stale_shim_links(&root, &project, profile)?;
+
     for &(triple, arch) in TARGETS {
         println!("==> building {triple} ({profile})");
         cargo_build(&root, &project, triple, arch, args)?;
@@ -234,6 +236,37 @@ fn std_stamp(root: &Path) -> Result<String> {
         s.push('\n');
     }
     Ok(s.trim().to_string())
+}
+
+fn purge_stale_shim_links(root: &Path, project: &Path, profile: &str) -> Result<()> {
+    let mut newest = None;
+    for entry in fs::read_dir(root.join("shim"))? {
+        let m = entry?.metadata()?.modified()?;
+        if newest.is_none_or(|n| m > n) {
+            newest = Some(m);
+        }
+    }
+    let Some(newest) = newest else { return Ok(()) };
+    for &(triple, _) in TARGETS {
+        purge_older_linked(&project.join("target").join(triple).join(profile), newest)?;
+    }
+    Ok(())
+}
+
+fn purge_older_linked(dir: &Path, newer_than: std::time::SystemTime) -> Result<()> {
+    let Ok(rd) = fs::read_dir(dir) else { return Ok(()) };
+    for entry in rd {
+        let entry = entry?;
+        let path = entry.path();
+        if entry.file_type()?.is_dir() {
+            purge_older_linked(&path, newer_than)?;
+        } else if path.to_string_lossy().ends_with(".com.dbg")
+            && entry.metadata()?.modified()? <= newer_than
+        {
+            fs::remove_file(&path)?;
+        }
+    }
+    Ok(())
 }
 
 fn clean_std(project: &Path, profile: &str) -> Result<()> {

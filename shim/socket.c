@@ -348,6 +348,19 @@ long __ape_shim_sendmsg(int fd, const struct msghdr *msg, int flags) {
 }
 
 long __ape_shim_recvmsg(int fd, struct msghdr *msg, int flags) {
+    // On the BSDs cosmo's recvmsg runs the caller's msg_name OUTPUT buffer
+    // through sockaddr2bsd as if it were input, and a family it doesn't
+    // recognize (a zeroed buffer, or musl's AF_INET6 left by a previous
+    // call) is answered EPFNOSUPPORT before any syscall (recvfrom converts
+    // through a local copy instead and doesn't have this). Linux semantics
+    // never read the buffer, so seed it with the socket's own host-coded
+    // family, which is what any received address will be anyway.
+    if (IsBsd() && msg && msg->msg_name && msg->msg_namelen >= 2) {
+        struct sockaddr_storage ss;
+        unsigned sl = sizeof(ss);
+        if (getsockname(fd, (struct sockaddr *)&ss, &sl) == 0 && sl >= 2)
+            *(unsigned short *)msg->msg_name = ss.ss_family;
+    }
     long r = recvmsg(fd, msg, msg_to_host(flags));
     if (r >= 0 && msg) {
         if (msg->msg_name && msg->msg_namelen >= 2) {

@@ -24,6 +24,8 @@
 #include <stdint.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#define _COSMO_SOURCE // for libc/dce.h's IsLinux()/IsWindows()
+#include <libc/dce.h>
 #include <libc/sysv/consts/at.h>
 
 // Newer cosmocc (recognizable by its Linux-coded _O_TMPFILE macro) dropped
@@ -64,15 +66,21 @@ static int oflags_to_host(int lin, int *out) {
         lin &= ~SHIM_LIN_O_SYNC;
     }
     if ((lin & SHIM_LIN_O_TMPFILE) == SHIM_LIN_O_TMPFILE) {
+        // Only the Linux kernel takes O_TMPFILE's raw bits and only cosmo's
+        // NT layer emulates them. Elsewhere the host answers EINVAL — which
+        // tempfile's fallback list doesn't recognize — and the "0 when
+        // unsupported" assumption doesn't hold either (XNU publishes ~0, so
+        // or-ing it in turns the whole flags word into -1). EOPNOTSUPP is
+        // what sends callers down their named-file path.
+        if (!IsLinux() && !IsWindows()) return errno = EOPNOTSUPP, -1;
 #ifdef _O_TMPFILE
         // newer cosmocc: a Linux-coded macro with kernel semantics, so the
         // directory bit must be added too, exactly like musl's own O_TMPFILE
         // (cosmo's tmpfd.c passes _O_TMPFILE | O_DIRECTORY itself).
         host |= _O_TMPFILE | O_DIRECTORY;
 #else
-        // older cosmocc: a standalone runtime constant, 0 when unsupported;
-        // cosmo adds the directory semantics internally.
-        if (!O_TMPFILE) return errno = EOPNOTSUPP, -1;
+        // older cosmocc: a standalone runtime constant; cosmo adds the
+        // directory semantics internally.
         host |= O_TMPFILE;
 #endif
         lin &= ~SHIM_LIN_O_TMPFILE;
