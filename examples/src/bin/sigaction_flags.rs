@@ -46,9 +46,38 @@ fn overflow_the_stack() {
     overflow_the_stack();
 }
 
+/// Where the stack pointer lands inside the guard page decides whether the
+/// overflow is reportable at all on Windows: the kernel writes the exception
+/// record BELOW the faulting sp before dispatching it, and cosmo maps a
+/// thread stack as exactly guard+stack, so a low sp put that write past the
+/// end of the mapping and killed the process with nothing printed. Every
+/// frame here is a whole page, so the offset is whatever the thread pushed
+/// before recursing and stays put for the whole descent — these pads walk it
+/// across the page so both halves get covered.
+fn overflow_with_pad(pad: usize) {
+    macro_rules! pad_then_overflow {
+        ($n:expr) => {{
+            let p = [0u8; $n];
+            std::hint::black_box(&p);
+            overflow_the_stack();
+            std::hint::black_box(&p);
+        }};
+    }
+    match pad {
+        0 => overflow_the_stack(),
+        1 => pad_then_overflow!(1024),
+        2 => pad_then_overflow!(2048),
+        3 => pad_then_overflow!(3072),
+        _ => pad_then_overflow!(3900),
+    }
+}
+
+const PADS: usize = 5;
+
 fn main() {
-    if std::env::var_os("SIGACTION_FLAGS_OVERFLOW").is_some() {
-        std::thread::spawn(overflow_the_stack).join().unwrap();
+    if let Some(pad) = std::env::var_os("SIGACTION_FLAGS_OVERFLOW") {
+        let pad: usize = pad.to_string_lossy().parse().expect("pad index");
+        std::thread::spawn(move || overflow_with_pad(pad)).join().unwrap();
         unreachable!();
     }
 
@@ -110,18 +139,28 @@ fn main() {
     // argv[0], not current_exe(): under the APE loader /proc/self/exe points
     // at the loader, and spawning that alone just prints its usage screen.
     let self_path = std::env::args().next().expect("argv[0]");
-    let out = std::process::Command::new(self_path)
-        .env("SIGACTION_FLAGS_OVERFLOW", "1")
-        .output()
-        .expect("spawn self");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(!out.status.success(), "overflow child exited cleanly?!");
-    assert!(
-        stderr.contains("overflowed its stack"),
-        "no overflow message; std's detector is still blind (child {:?}, stderr: {stderr:?})",
-        out.status
-    );
-    println!("stack overflow detected by std: SA_ONSTACK/SA_SIGINFO/si_addr all intact");
+    // --strace: eaten by cosmo before argv, so the child behaves identically
+    // but narrates its syscalls to stderr. The message check below is a
+    // contains(), so the extra lines are free — and when the detector goes
+    // blind on some host, the tail of the trace IS the crash-site forensics
+    // (this failure only reproduces on CI, never locally).
+    for pad in 0..PADS {
+        let out = std::process::Command::new(&self_path)
+            .arg("--strace")
+            .env("SIGACTION_FLAGS_OVERFLOW", pad.to_string())
+            .output()
+            .expect("spawn self");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!out.status.success(), "overflow child {pad} exited cleanly?!");
+        let tail = &stderr[stderr.len().saturating_sub(3000)..];
+        assert!(
+            stderr.contains("overflowed its stack"),
+            "pad {pad}: no overflow message; std's detector is blind at this \
+             stack-pointer offset (child {:?}, stderr tail: {tail:?})",
+            out.status
+        );
+    }
+    println!("stack overflow detected by std at {PADS} sp offsets: SA_ONSTACK/SA_SIGINFO/si_addr all intact");
 
     println!("\nsigaction flags ok");
 }

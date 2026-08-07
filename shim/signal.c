@@ -35,11 +35,13 @@
 #include <signal.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
 #include <sys/auxv.h>
+#include <sys/mman.h>
 #define _COSMO_SOURCE // for libc/dce.h's IsWindows()
 #include <libc/dce.h>
-#include <libc/nt/dll.h>
 #include <libc/sysv/consts/sig.h>
 #include <libc/sysv/consts/sa.h>
 #include <libc/sysv/consts/ss.h>
@@ -229,36 +231,92 @@ static int ss_flags_to_linux(int host) {
     return (int)lin;
 }
 
-// On NT, cosmo dispatches crash signals on the faulting thread's own stack
-// and only switches to the alternate stack partway through its exception
-// handler — so for a stack OVERFLOW, everything up to that switch must fit
-// in what NT leaves of an exhausted stack, a single guaranteed page by
-// default. Whether that's enough is luck (quiet Win11: yes; Server 2022:
-// ~half the time; under arm64's x64 emulation: never), and when it isn't,
-// the process dies silently with no signal delivered.
-// SetThreadStackGuarantee is the NT API for exactly this — reserve stack
-// headroom for overflow-exception dispatch. It's per thread and must run
-// before the overflow, which is precisely when threads arm their alternate
-// stack here. Only the x86_64 half can ever run on NT, and calling out to
-// kernel32 needs the ms_abi convention.
-static void nt_stack_overflow_headroom(void) {
-#ifdef __x86_64__
-    typedef int __attribute__((__ms_abi__)) (*guarantee_f)(unsigned *);
-    static guarantee_f fn;
-    static int probed; // benign race: concurrent probes store the same value
-    if (!probed) {
-        fn = (guarantee_f)GetProcAddress(GetModuleHandle("kernel32.dll"),
-                                         "SetThreadStackGuarantee");
-        probed = 1;
+// NT dispatches a fault by writing the exception record BELOW the faulting
+// stack pointer, and a stack overflow faults with sp somewhere inside the
+// guard page. cosmo maps a thread stack as exactly guardsize+stacksize with
+// the guard at the very bottom, so when sp sits low in that page the write
+// lands past the end of the mapping: the dispatch itself fails and NT kills
+// the process before any handler — cosmo's or std's — runs. Nothing is
+// printed, and the exit status is the raw NT status (an access violation, or
+// the guard-page one). Whether an overflow is reportable at all therefore
+// comes down to where sp happened to land, which is why this read as a ~50%
+// flake on Server 2022 and a certainty under arm64's x86_64 emulation, whose
+// dispatch needs more room than a native one.
+//
+// NT's own stacks keep guaranteed pages for exactly this; a stack cosmo
+// mapped itself has none, so give it the equivalent: plain writable memory
+// directly below the guard. One allocation granule is also the smallest that
+// can go there — a shorter span leaves the address unaligned and NT refuses
+// the placement outright.
+#define NT_GRANULE 65536 // NT's allocation granularity
+
+struct nt_slack {
+    void *addr;
+    size_t size;
+};
+
+static pthread_key_t nt_slack_key;
+static pthread_once_t nt_slack_once = PTHREAD_ONCE_INIT;
+
+static void nt_slack_free(void *p) {
+    struct nt_slack *s = p;
+    munmap(s->addr, s->size);
+    free(s);
+}
+
+static void nt_slack_key_init(void) {
+    pthread_key_create(&nt_slack_key, nt_slack_free);
+}
+
+static void nt_stack_slack(void) {
+    pthread_once(&nt_slack_once, nt_slack_key_init);
+    if (pthread_getspecific(nt_slack_key))
+        return; // this thread already has its slack
+    pthread_attr_t attr;
+    if (pthread_getattr_np(pthread_self(), &attr))
+        return;
+    void *stack;
+    size_t size, guard;
+    int described = !pthread_attr_getstack(&attr, &stack, &size) &&
+                    !pthread_attr_getguardsize(&attr, &guard);
+    pthread_attr_destroy(&attr);
+    if (!described)
+        return;
+    // Start at the granule boundary below the mapping and run up to it: NT
+    // places a reservation on a granule boundary but sizes it by pages, so
+    // this is the largest span that can be had adjacent to the guard. A
+    // thread stack sits on a boundary already and gets the full granule; the
+    // main thread's, which cosmo laid out differently, gets whatever page or
+    // two remains under it.
+    uintptr_t bottom = (uintptr_t)stack - guard;
+    uintptr_t start = (bottom - 1) & ~(uintptr_t)(NT_GRANULE - 1);
+    size_t span = bottom - start;
+    void *got = mmap((void *)start, span, PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+    if (got == MAP_FAILED)
+        return; // something is already there: the stack is as good as it gets
+    if (got != (void *)start) {
+        munmap(got, span);
+        return;
     }
-    if (fn) {
-        unsigned size = 16384;
-        fn(&size);
-    }
-#endif
+    struct nt_slack *s = malloc(sizeof *s);
+    if (!s)
+        return; // keep the mapping anyway, it is already doing its job
+    s->addr = got;
+    s->size = span;
+    // Freed by the key's destructor at thread exit; the slack is a mapping of
+    // its own, so unmapping it is safe from the thread that used it.
+    pthread_setspecific(nt_slack_key, s);
 }
 
 int __ape_shim_sigaltstack(const struct lin_stack *ss, struct lin_stack *old) {
+    // Claimed on the way in, not out: std asks what the current alternate
+    // stack is before it maps one, and cosmo's allocator hands out descending
+    // addresses — so the slot under the thread stack is exactly where std's
+    // own alternate stack would land moments later. Taking it first leaves
+    // that allocation to fall in below, where it does no harm.
+    if (IsWindows())
+        nt_stack_slack();
     stack_t hss, hold;
     stack_t *pss = NULL;
     if (ss) {
@@ -273,8 +331,6 @@ int __ape_shim_sigaltstack(const struct lin_stack *ss, struct lin_stack *old) {
         old->ss_flags = ss_flags_to_linux(hold.ss_flags);
         old->ss_size = hold.ss_size;
     }
-    if (r == 0 && ss && !(ss->ss_flags & SHIM_LIN_SS_DISABLE) && IsWindows())
-        nt_stack_overflow_headroom();
     return r;
 }
 
