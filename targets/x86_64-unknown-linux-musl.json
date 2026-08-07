@@ -30,7 +30,7 @@
     ]
   },
   "stack-probes": {
-    "kind": "none"
+    "kind": "inline"
   },
   "static-position-independent-executables": false,
   "supports-fentry": true,

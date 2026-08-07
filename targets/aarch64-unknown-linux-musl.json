@@ -29,7 +29,7 @@
     ]
   },
   "stack-probes": {
-    "kind": "none"
+    "kind": "inline"
   },
   "static-position-independent-executables": false,
   "target-family": [
