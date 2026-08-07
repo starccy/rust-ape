@@ -118,7 +118,8 @@ fn main() {
     assert!(!out.status.success(), "overflow child exited cleanly?!");
     assert!(
         stderr.contains("overflowed its stack"),
-        "no overflow message; std's detector is still blind (stderr: {stderr:?})"
+        "no overflow message; std's detector is still blind (child {:?}, stderr: {stderr:?})",
+        out.status
     );
     println!("stack overflow detected by std: SA_ONSTACK/SA_SIGINFO/si_addr all intact");
 

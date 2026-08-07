@@ -37,6 +37,9 @@
 #include <stdint.h>
 #include <string.h>
 #include <sys/auxv.h>
+#define _COSMO_SOURCE // for libc/dce.h's IsWindows()
+#include <libc/dce.h>
+#include <libc/nt/dll.h>
 #include <libc/sysv/consts/sig.h>
 #include <libc/sysv/consts/sa.h>
 #include <libc/sysv/consts/ss.h>
@@ -226,6 +229,35 @@ static int ss_flags_to_linux(int host) {
     return (int)lin;
 }
 
+// On NT, cosmo dispatches crash signals on the faulting thread's own stack
+// and only switches to the alternate stack partway through its exception
+// handler — so for a stack OVERFLOW, everything up to that switch must fit
+// in what NT leaves of an exhausted stack, a single guaranteed page by
+// default. Whether that's enough is luck (quiet Win11: yes; Server 2022:
+// ~half the time; under arm64's x64 emulation: never), and when it isn't,
+// the process dies silently with no signal delivered.
+// SetThreadStackGuarantee is the NT API for exactly this — reserve stack
+// headroom for overflow-exception dispatch. It's per thread and must run
+// before the overflow, which is precisely when threads arm their alternate
+// stack here. Only the x86_64 half can ever run on NT, and calling out to
+// kernel32 needs the ms_abi convention.
+static void nt_stack_overflow_headroom(void) {
+#ifdef __x86_64__
+    typedef int __attribute__((__ms_abi__)) (*guarantee_f)(unsigned *);
+    static guarantee_f fn;
+    static int probed; // benign race: concurrent probes store the same value
+    if (!probed) {
+        fn = (guarantee_f)GetProcAddress(GetModuleHandle("kernel32.dll"),
+                                         "SetThreadStackGuarantee");
+        probed = 1;
+    }
+    if (fn) {
+        unsigned size = 16384;
+        fn(&size);
+    }
+#endif
+}
+
 int __ape_shim_sigaltstack(const struct lin_stack *ss, struct lin_stack *old) {
     stack_t hss, hold;
     stack_t *pss = NULL;
@@ -241,6 +273,8 @@ int __ape_shim_sigaltstack(const struct lin_stack *ss, struct lin_stack *old) {
         old->ss_flags = ss_flags_to_linux(hold.ss_flags);
         old->ss_size = hold.ss_size;
     }
+    if (r == 0 && ss && !(ss->ss_flags & SHIM_LIN_SS_DISABLE) && IsWindows())
+        nt_stack_overflow_headroom();
     return r;
 }
 
