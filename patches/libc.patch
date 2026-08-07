@@ -133,6 +133,17 @@ diff a/libc/src/unix/linux_like/linux/musl/mod.rs b/libc/src/unix/linux_like/lin
      pub fn setrlimit(resource: c_int, rlim: *const crate::rlimit) -> c_int;
      pub fn prlimit(
          pid: crate::pid_t,
+@@ -792,6 +796,10 @@
+         offset: off_t,
+         flags: c_int,
+     ) -> ssize_t;
++    // cosmo: AT_* keys are Linux-coded here but runtime constants on the
++    // cosmo side; the shim maps them (and floors AT_MINSIGSTKSZ so std's
++    // sigaltstack passes the XNU kernel's minimum).
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_getauxval")]
+     pub fn getauxval(type_: c_ulong) -> c_ulong;
+     pub fn renameat2(
+         olddirfd: c_int,
 diff a/libc/src/unix/linux_like/linux_l4re_shared.rs b/libc/src/unix/linux_like/linux_l4re_shared.rs
 --- a/libc/src/unix/linux_like/linux_l4re_shared.rs
 +++ b/libc/src/unix/linux_like/linux_l4re_shared.rs

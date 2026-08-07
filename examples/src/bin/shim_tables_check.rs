@@ -675,6 +675,12 @@
 #[cfg(target_arch = "aarch64")] const _: () = assert!(libc::SS_ONSTACK as i64 == 1);
 #[cfg(target_arch = "x86_64")] const _: () = assert!(libc::SS_DISABLE as i64 == 2);
 #[cfg(target_arch = "aarch64")] const _: () = assert!(libc::SS_DISABLE as i64 == 2);
+#[cfg(target_arch = "x86_64")] const _: () = assert!(libc::AT_MINSIGSTKSZ as i64 == 51);
+#[cfg(target_arch = "aarch64")] const _: () = assert!(libc::AT_MINSIGSTKSZ as i64 == 51);
+#[cfg(target_arch = "x86_64")] const _: () = assert!(libc::AT_HWCAP as i64 == 16);
+#[cfg(target_arch = "aarch64")] const _: () = assert!(libc::AT_HWCAP as i64 == 16);
+#[cfg(target_arch = "x86_64")] const _: () = assert!(libc::AT_HWCAP2 as i64 == 26);
+#[cfg(target_arch = "aarch64")] const _: () = assert!(libc::AT_HWCAP2 as i64 == 26);
 #[cfg(target_arch = "x86_64")] const _: () = assert!(libc::AF_UNSPEC as i64 == 0);
 #[cfg(target_arch = "aarch64")] const _: () = assert!(libc::AF_UNSPEC as i64 == 0);
 #[cfg(target_arch = "x86_64")] const _: () = assert!(libc::AF_UNIX as i64 == 1);

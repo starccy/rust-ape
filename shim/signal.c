@@ -36,9 +36,11 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/auxv.h>
 #include <libc/sysv/consts/sig.h>
 #include <libc/sysv/consts/sa.h>
 #include <libc/sysv/consts/ss.h>
+#include <libc/sysv/consts/auxv.h>
 
 #include "tables.h"
 
@@ -294,4 +296,25 @@ int __ape_shim_sigdelset(sigset_t *set, int sig) {
 
 int __ape_shim_sigismember(const sigset_t *set, int sig) {
     return sigismember(set, sig_to_host(sig));
+}
+
+// ---------------------------------------------------------------------------
+// getauxval: the caller passes Linux-coded AT_* keys, but cosmo's are runtime
+// constants (the auxv is synthesized with host numbering on non-Linux
+// hosts), so keys map through SHIM_AUXV_TABLE. It lives here because of
+// AT_MINSIGSTKSZ: std sizes its sigaltstack as max(musl SIGSTKSZ,
+// getauxval(AT_MINSIGSTKSZ)), musl's SIGSTKSZ (8k/12k) is below what the XNU
+// kernel accepts, and hosts without the auxv entry answer 0 — so that key
+// gets a floor of MINSIGSTKSZ (32768, cosmo's highest-minimum-across-hosts).
+// Unmapped keys pass through raw: on Linux the numbering already matches,
+// elsewhere they were never going to resolve anyway.
+unsigned long __ape_shim_getauxval(unsigned long lin) {
+    unsigned long key = lin;
+#define X(name, linval) if (lin == (unsigned long)(linval)) key = name;
+    SHIM_AUXV_TABLE(X)
+#undef X
+    unsigned long v = getauxval(key);
+    if (lin == SHIM_LIN_AT_MINSIGSTKSZ && v < (unsigned long)MINSIGSTKSZ)
+        v = MINSIGSTKSZ;
+    return v;
 }

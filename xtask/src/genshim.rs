@@ -318,6 +318,14 @@ const SSES: &[(&str, bool)] = &[
     ("SS_ONSTACK", R), ("SS_DISABLE", R),
 ];
 
+/// getauxval() keys. cosmo synthesizes the auxv on non-Linux hosts and its
+/// AT_* keys are runtime constants, so a Linux-coded key has to be mapped
+/// before the lookup. AT_MINSIGSTKSZ is the one std actually reads (it sizes
+/// sigaltstack with it); the HWCAP pair rides along for feature detection.
+const AUXVS: &[(&str, bool)] = &[
+    ("AT_MINSIGSTKSZ", R), ("AT_HWCAP", R), ("AT_HWCAP2", R),
+];
+
 /// Address families. UNSPEC/UNIX/INET are universal (cosmo #defines them);
 /// AF_INET6 is the runtime one, and it also lives inside sockaddr_in6's
 /// family field, which the socket shim rewrites in both directions.
@@ -369,6 +377,7 @@ fn domains() -> Vec<Domain> {
         Domain { macro_name: "SHIM_SIG_TABLE", cosmo_header: "sysv/consts/sig.h", names: SIGS, with_droppable_column: false, ctype: "int" },
         Domain { macro_name: "SHIM_SA_TABLE", cosmo_header: "sysv/consts/sa.h", names: SAS, with_droppable_column: false, ctype: "uint64_t" },
         Domain { macro_name: "SHIM_SS_TABLE", cosmo_header: "sysv/consts/ss.h", names: SSES, with_droppable_column: false, ctype: "int" },
+        Domain { macro_name: "SHIM_AUXV_TABLE", cosmo_header: "sysv/consts/auxv.h", names: AUXVS, with_droppable_column: false, ctype: "unsigned long" },
         Domain { macro_name: "SHIM_AF_TABLE", cosmo_header: "sysv/consts/af.h", names: AFS, with_droppable_column: false, ctype: "int" },
         Domain { macro_name: "SHIM_TIFLAG_TABLE", cosmo_header: "sysv/consts/termios.h", names: TIFLAGS, with_droppable_column: false, ctype: "uint32_t" },
         Domain { macro_name: "SHIM_TOFLAG_TABLE", cosmo_header: "sysv/consts/termios.h", names: TOFLAGS, with_droppable_column: false, ctype: "uint32_t" },
@@ -404,6 +413,7 @@ fn classify_cosmo(root: &Path, names: &[(&str, &str)]) -> Result<HashMap<String,
          #else\n#include <libc/calls/struct/rlimit.h>\n#endif\n\
          #include <libc/sysv/consts/sig.h>\n\
          #include <libc/sysv/consts/sa.h>\n#include <libc/sysv/consts/ss.h>\n\
+         #include <libc/sysv/consts/auxv.h>\n\
          #include <libc/sysv/consts/af.h>\n\
          #include <libc/sysv/consts/termios.h>\n\
          #include <libc/sysv/consts/baud.internal.h>\n\
@@ -508,7 +518,9 @@ fn eval(expr: &str, consts: &HashMap<String, String>, depth: u32) -> Result<i64>
 fn cosmo_declares(header_text: &str, name: &str) -> bool {
     header_text.lines().any(|l| {
         let t = l.trim();
-        (t.starts_with("extern const") && t.split_whitespace().nth(3).map(|w| w.trim_end_matches(';')) == Some(name))
+        // last word, not a fixed position: the type may be multi-word
+        // ("extern const unsigned long AT_MINSIGSTKSZ;")
+        (t.starts_with("extern const") && t.split_whitespace().last().map(|w| w.trim_end_matches(';')) == Some(name))
             || t.starts_with(&format!("#define {name} "))
             || t.starts_with(&format!("#define {name}\t"))
     })

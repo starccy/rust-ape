@@ -735,6 +735,16 @@ static const int SHIM_FIX_SS_ONSTACK = 1; /* cosmo fixes this per-platform-invar
   X(SS_DISABLE, SHIM_LIN_SS_DISABLE) \
   /* end SHIM_SS_TABLE */
 
+/* SHIM_AUXV_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/auxv.h */
+#define SHIM_LIN_AT_MINSIGSTKSZ 51
+#define SHIM_LIN_AT_HWCAP 16
+#define SHIM_LIN_AT_HWCAP2 26
+#define SHIM_AUXV_TABLE(X) \
+  X(AT_MINSIGSTKSZ, SHIM_LIN_AT_MINSIGSTKSZ) \
+  X(AT_HWCAP, SHIM_LIN_AT_HWCAP) \
+  X(AT_HWCAP2, SHIM_LIN_AT_HWCAP2) \
+  /* end SHIM_AUXV_TABLE */
+
 /* SHIM_AF_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/af.h */
 #define SHIM_LIN_AF_UNSPEC 0
 static const int SHIM_FIX_AF_UNSPEC = 0; /* cosmo fixes this per-platform-invariant */
