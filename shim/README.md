@@ -51,7 +51,9 @@ version:
 | `clock.c` | `CLOCK_*` ids, plus `pthread_condattr_setclock` |
 | `futex.c` | reroutes std's `SYS_futex` calls onto cosmo's cross-platform futex, which is what makes Mutex/Condvar actually sleep instead of spin |
 | `io.c` | a poll gate on `write`/`writev` for nonblocking fds, working around cosmo's NT send path ignoring O_NONBLOCK |
-| `rlimit.c` | the `RLIMIT_*` resource numbers |
+| `rlimit.c` | the `RLIMIT_*` resource numbers, plus a `prlimit` cosmo doesn't have |
+| `xattr.c` | the extended-attribute family, as a raw syscall on Linux and `ENOTSUP` elsewhere |
+| `syscall.h` | raw Linux syscalls, for the few APIs cosmo numbers but doesn't wrap |
 | `termios.c` | terminal control, with `struct termios` repacked, flag bits, `c_cc` indices and baud codes translated, and tty ioctls rerouted |
 | `layouts.c` | no code, only compile-time asserts for the structs passed through unrepacked |
 | `stack_chk.c` | a weak `__stack_chk_guard` so -sys crates that force `-fstack-protector` back on still link on aarch64 |

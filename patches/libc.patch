@@ -46,7 +46,73 @@ diff a/libc/src/unix/linux_like/linux/mod.rs b/libc/src/unix/linux_like/linux/mo
  
  // <linux/seccomp.h>
  pub const SECCOMP_MODE_DISABLED: c_uint = 0;
-@@ -3608,6 +3610,8 @@
+@@ -3529,24 +3531,31 @@
+     #[cfg_attr(gnu_file_offset_bits64, link_name = "posix_fallocate64")]
+     pub fn posix_fallocate(fd: c_int, offset: off_t, len: off_t) -> c_int;
+     pub fn readahead(fd: c_int, offset: off64_t, count: size_t) -> ssize_t;
++    // cosmo: no xattr wrappers at all, only the __NR_* numbers. The shim
++    // issues the raw syscall on Linux and answers ENOTSUP elsewhere, since
++    // no other host has this API in this shape.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_getxattr")]
+     pub fn getxattr(
+         path: *const c_char,
+         name: *const c_char,
+         value: *mut c_void,
+         size: size_t,
+     ) -> ssize_t;
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_lgetxattr")]
+     pub fn lgetxattr(
+         path: *const c_char,
+         name: *const c_char,
+         value: *mut c_void,
+         size: size_t,
+     ) -> ssize_t;
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_fgetxattr")]
+     pub fn fgetxattr(
+         filedes: c_int,
+         name: *const c_char,
+         value: *mut c_void,
+         size: size_t,
+     ) -> ssize_t;
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_setxattr")]
+     pub fn setxattr(
+         path: *const c_char,
+         name: *const c_char,
+@@ -3554,6 +3563,7 @@
+         size: size_t,
+         flags: c_int,
+     ) -> c_int;
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_lsetxattr")]
+     pub fn lsetxattr(
+         path: *const c_char,
+         name: *const c_char,
+@@ -3561,6 +3571,7 @@
+         size: size_t,
+         flags: c_int,
+     ) -> c_int;
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_fsetxattr")]
+     pub fn fsetxattr(
+         filedes: c_int,
+         name: *const c_char,
+@@ -3568,11 +3579,17 @@
+         size: size_t,
+         flags: c_int,
+     ) -> c_int;
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_listxattr")]
+     pub fn listxattr(path: *const c_char, list: *mut c_char, size: size_t) -> ssize_t;
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_llistxattr")]
+     pub fn llistxattr(path: *const c_char, list: *mut c_char, size: size_t) -> ssize_t;
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_flistxattr")]
+     pub fn flistxattr(filedes: c_int, list: *mut c_char, size: size_t) -> ssize_t;
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_removexattr")]
+     pub fn removexattr(path: *const c_char, name: *const c_char) -> c_int;
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_lremovexattr")]
+     pub fn lremovexattr(path: *const c_char, name: *const c_char) -> c_int;
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_fremovexattr")]
+     pub fn fremovexattr(filedes: c_int, name: *const c_char) -> c_int;
+     pub fn signalfd(fd: c_int, mask: *const crate::sigset_t, flags: c_int) -> c_int;
+     pub fn timerfd_create(clockid: crate::clockid_t, flags: c_int) -> c_int;
+@@ -3608,6 +3625,8 @@
          timeout: *const crate::timespec,
      ) -> c_int;
      pub fn sigwaitinfo(set: *const sigset_t, info: *mut siginfo_t) -> c_int;
@@ -55,7 +121,7 @@ diff a/libc/src/unix/linux_like/linux/mod.rs b/libc/src/unix/linux_like/linux/mo
      pub fn accept4(fd: c_int, addr: *mut crate::sockaddr, len: *mut socklen_t, flg: c_int)
          -> c_int;
      pub fn reboot(how_to: c_int) -> c_int;
-@@ -3640,6 +3644,7 @@
+@@ -3640,6 +3659,7 @@
      pub fn vhangup() -> c_int;
      pub fn sync();
      pub fn syncfs(fd: c_int) -> c_int;
@@ -63,7 +129,7 @@ diff a/libc/src/unix/linux_like/linux/mod.rs b/libc/src/unix/linux_like/linux/mo
      pub fn syscall(num: c_long, ...) -> c_long;
      pub fn sched_setaffinity(
          pid: crate::pid_t,
-@@ -3692,6 +3697,8 @@
+@@ -3692,6 +3712,8 @@
          any(gnu_time_bits64, musl_redir_time64),
          link_name = "__clock_nanosleep_time64"
      )]
@@ -72,7 +138,7 @@ diff a/libc/src/unix/linux_like/linux/mod.rs b/libc/src/unix/linux_like/linux/mo
      pub fn clock_nanosleep(
          clk_id: crate::clockid_t,
          flags: c_int,
-@@ -3707,6 +3714,8 @@
+@@ -3707,6 +3729,8 @@
      ) -> c_int;
      #[cfg_attr(gnu_file_offset_bits64, link_name = "sendfile64")]
      pub fn sendfile(out_fd: c_int, in_fd: c_int, offset: *mut off_t, count: size_t) -> ssize_t;
@@ -121,7 +187,7 @@ diff a/libc/src/unix/linux_like/linux/musl/b64/aarch64/mod.rs b/libc/src/unix/li
 diff a/libc/src/unix/linux_like/linux/musl/mod.rs b/libc/src/unix/linux_like/linux/musl/mod.rs
 --- a/libc/src/unix/linux_like/linux/musl/mod.rs
 +++ b/libc/src/unix/linux_like/linux/musl/mod.rs
-@@ -755,7 +755,11 @@
+@@ -755,8 +755,15 @@
  }
  
  extern "C" {
@@ -131,9 +197,13 @@ diff a/libc/src/unix/linux_like/linux/musl/mod.rs b/libc/src/unix/linux_like/lin
 +    // cosmo: RLIMIT_* resource numbers are Linux-coded; the shim translates.
 +    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_setrlimit")]
      pub fn setrlimit(resource: c_int, rlim: *const crate::rlimit) -> c_int;
++    // cosmo: no prlimit(); the shim serves the pid-means-me case through
++    // get/setrlimit and answers ENOSYS for another process.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_prlimit")]
      pub fn prlimit(
          pid: crate::pid_t,
-@@ -792,6 +796,10 @@
+         resource: c_int,
+@@ -792,6 +799,10 @@
          offset: off_t,
          flags: c_int,
      ) -> ssize_t;

@@ -7,6 +7,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// Extra `-D`s handed to every C dependency.
+///
+/// Self-referential macros for cosmo constants that are `extern const int`
+/// rather than macros, so that a library's `#ifndef X` probe answers
+/// "defined" at any include order instead of installing a `#define X 0`
+/// fallback that breaks cosmo's declaration (libgit2's src/util/posix.h).
+/// Uses still reach the runtime variable: GCC expands the macro once.
+const CONST_PREDEFS: &[&str] = &["-DSOCK_CLOEXEC=SOCK_CLOEXEC"];
+
 #[derive(Args)]
 pub struct BuildArgs {
     /// The project directory to build
@@ -352,7 +361,10 @@ fn cargo_build(
         // -fstack-protector back on
         cmd.env(
             format!("{var}_{t}"),
-            format!("-fno-stack-protector -mstack-protector-guard=global {user}"),
+            format!(
+                "-fno-stack-protector -mstack-protector-guard=global {} {user}",
+                CONST_PREDEFS.join(" ")
+            ),
         );
     }
 
