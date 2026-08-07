@@ -156,6 +156,29 @@ diff a/library/std/src/sys/net/connection/socket/unix.rs b/library/std/src/sys/n
          self.0.set_nonblocking(nonblocking)
      }
  
+diff a/library/std/src/sys/process/unix/unix.rs b/library/std/src/sys/process/unix/unix.rs
+--- a/library/std/src/sys/process/unix/unix.rs
++++ b/library/std/src/sys/process/unix/unix.rs
+@@ -641,8 +641,17 @@
+         /// Cygwin doesn't support weak symbol, so just link it.
+         #[cfg(any(all(target_os = "linux", target_env = "musl"), target_os = "cygwin"))]
+         fn get_posix_spawn_addchdir() -> Option<PosixSpawnAddChdirFn> {
+-            // Our minimum required musl supports this function, so we can just use it.
+-            Some(libc::posix_spawn_file_actions_addchdir_np)
++            // cosmo: the addchdir action is broken on Windows whenever the
++            // directory sits behind a reparse point -- a symlink to a UNC
++            // share makes posix_spawn fail with ERROR_DIRECTORY(267), even
++            // though plain chdir() to the very same path succeeds and the
++            // native CreateProcess accepts it as lpCurrentDirectory. Report
++            // the action as unavailable so the caller falls back to the
++            // fork/exec path, which chdir()s in the child and works. That is
++            // the same escape hatch the apple branch above takes for its own
++            // posix_spawn bug; the cost is only that spawns carrying a
++            // current_dir lose the posix_spawn fast path.
++            None
+         }
+ 
+         let addchdir = match self.get_cwd() {
 diff a/library/std/src/sys/random/linux.rs b/library/std/src/sys/random/linux.rs
 --- a/library/std/src/sys/random/linux.rs
 +++ b/library/std/src/sys/random/linux.rs
