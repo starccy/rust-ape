@@ -277,14 +277,17 @@ long __ape_shim_recvfrom(int fd, void *buf, unsigned long n, int flags,
 }
 
 // ---------------------------------------------------------------------------
-// sendmsg/recvmsg. struct msghdr and cmsghdr are byte-compatible with musl's
-// on LE (cosmo declares them "Linux+NT ABI"; musl's int+pad pairs line up
-// with cosmo's u64/u32+pad) — so, like sockaddr, this is value rewriting:
-// the MSG_* flags argument, the msg_name family, recvmsg's msg_flags output,
-// and the cmsg_level field inside the control payload (SOL_SOCKET is a
-// runtime constant, same trap as SO_ERROR's payload). cmsg_type: SCM_RIGHTS
-// is 1 on both sides; IPPROTO_IP/IPV6 types go through the sockopt tables;
-// anything else passes raw.
+// sendmsg/recvmsg. struct msghdr is byte-compatible with musl's on LE
+// (cosmo declares it "Linux+NT ABI"; musl's int+pad pairs line up with
+// cosmo's u64/u32+pad), so the values inside it are what get rewritten: the
+// MSG_* flags argument, the msg_name family, recvmsg's msg_flags output,
+// and the control payload's cmsg_level (SOL_SOCKET is a runtime constant,
+// same trap as SO_ERROR's payload). cmsg_type: SCM_RIGHTS is 1 on both
+// sides; IPPROTO_IP/IPV6 types go through the sockopt tables; anything else
+// passes raw. The cmsghdr LAYOUT, however, is only linux-shaped on hosts
+// whose kernel takes it (Linux, cosmo's NT layer): cosmo forwards
+// msg_control untouched, so on the BSDs — whose cmsghdr is 12 bytes with
+// its own alignment — the shim additionally converts the layout both ways.
 
 static int msg_to_linux(int host) {
     int lin = host & LIN_MSG_FIXED;
@@ -304,7 +307,9 @@ static int lookup_to_linux(const struct opt *t, size_t n, int host) {
 #define LOOKUP_REV(t, host) lookup_to_linux(t, sizeof(t) / sizeof(t[0]), host)
 
 // Walk a control buffer (musl and cosmo agree on the linux cmsghdr shape:
-// u32 len, pad, i32 level, i32 type) rewriting level/type in place.
+// u32 len, pad, i32 level, i32 type) rewriting level/type in place. Only
+// correct for hosts whose kernel takes the linux layout (Linux, and cosmo's
+// NT emulation); the BSDs get the layout-converting pair below instead.
 static void cmsgs_rewrite(void *control, unsigned long controllen, int to_host) {
     unsigned char *p = control, *end = p + controllen;
     while (p + 16 <= end) {
@@ -327,6 +332,70 @@ static void cmsgs_rewrite(void *control, unsigned long controllen, int to_host) 
     }
 }
 
+// The BSDs don't share the linux cmsghdr layout — theirs is {u32 cmsg_len;
+// i32 level; i32 type} (12-byte header; XNU aligns entries to 4, the others
+// to 8, vs linux's 16-byte header and 8) — and cosmo's sendmsg/recvmsg pass
+// msg_control through UNtranslated on every host. So on the BSDs the shim
+// converts the layout itself, translating level/type on the way through.
+
+static unsigned long cmsg_align_host(unsigned long n) {
+    unsigned long a = IsXnu() ? 4 : 8;
+    return (n + a - 1) & ~(a - 1);
+}
+
+// Linux control buffer -> BSD layout. Returns the BSD controllen, or -1 if
+// the converted stream wouldn't fit in dstcap.
+static long cmsgs_to_bsd(const unsigned char *src, unsigned long srclen,
+                         unsigned char *dst, unsigned long dstcap) {
+    unsigned long si = 0, di = 0;
+    while (si + 16 <= srclen) {
+        unsigned long len = *(const unsigned long *)(src + si); // incl. 16B hdr
+        if (len < 16 || len > srclen - si) break;
+        unsigned long payload = len - 16;
+        unsigned long blen = 12 + payload;
+        if (cmsg_align_host(blen) > dstcap - di) return -1;
+        int lvl = *(const int *)(src + si + 8);
+        int typ = *(const int *)(src + si + 12);
+        if (lvl == SHIM_LIN_SOL_SOCKET) lvl = SOL_SOCKET;
+        else if (lvl == SHIM_LIN_IPPROTO_IP) typ = LOOKUP(kIp, typ);
+        else if (lvl == SHIM_LIN_IPPROTO_IPV6) typ = LOOKUP(kIpv6, typ);
+        *(unsigned *)(dst + di) = blen;
+        *(int *)(dst + di + 4) = lvl;
+        *(int *)(dst + di + 8) = typ;
+        memcpy(dst + di + 12, src + si + 16, payload);
+        di += cmsg_align_host(blen);
+        si += (len + 7) & ~7ul;
+    }
+    return (long)di;
+}
+
+// BSD control buffer -> linux layout in the caller's buffer. The linux form
+// is larger per entry, so an overfull result is truncated at an entry
+// boundary, which is the same shape MSG_CTRUNC leaves behind.
+static unsigned long cmsgs_to_linux_layout(const unsigned char *src, unsigned long srclen,
+                                           unsigned char *dst, unsigned long dstcap) {
+    unsigned long si = 0, di = 0;
+    while (si + 12 <= srclen) {
+        unsigned blen = *(const unsigned *)(src + si);
+        if (blen < 12 || blen > srclen - si) break;
+        unsigned long payload = blen - 12;
+        unsigned long llen = 16 + payload;
+        if (((llen + 7) & ~7ul) > dstcap - di) break;
+        int lvl = *(const int *)(src + si + 4);
+        int typ = *(const int *)(src + si + 8);
+        if (lvl == SOL_SOCKET) lvl = SHIM_LIN_SOL_SOCKET;
+        else if (lvl == SHIM_LIN_IPPROTO_IP) typ = LOOKUP_REV(kIp, typ);
+        else if (lvl == SHIM_LIN_IPPROTO_IPV6) typ = LOOKUP_REV(kIpv6, typ);
+        *(unsigned long *)(dst + di) = llen;
+        *(int *)(dst + di + 8) = lvl;
+        *(int *)(dst + di + 12) = typ;
+        memmove(dst + di + 16, src + si + 12, payload);
+        di += (llen + 7) & ~7ul;
+        si += cmsg_align_host(blen);
+    }
+    return di;
+}
+
 long __ape_shim_sendmsg(int fd, const struct msghdr *msg, int flags) {
     if (__ape_shim_nt_wants_eagain(fd)) return -1;
     if (!msg) return sendmsg(fd, msg, msg_to_host(flags));
@@ -340,9 +409,18 @@ long __ape_shim_sendmsg(int fd, const struct msghdr *msg, int flags) {
     // 0xffff, and cmsgs beyond this size are exotic).
     unsigned char ctl_tmp[1024];
     if (m.msg_control && m.msg_controllen <= sizeof(ctl_tmp)) {
-        memcpy(ctl_tmp, m.msg_control, m.msg_controllen);
-        cmsgs_rewrite(ctl_tmp, m.msg_controllen, 1);
-        m.msg_control = ctl_tmp;
+        if (IsBsd()) {
+            long n = cmsgs_to_bsd(m.msg_control, m.msg_controllen,
+                                  ctl_tmp, sizeof(ctl_tmp));
+            if (n >= 0) {
+                m.msg_control = n ? ctl_tmp : NULL;
+                m.msg_controllen = n;
+            }
+        } else {
+            memcpy(ctl_tmp, m.msg_control, m.msg_controllen);
+            cmsgs_rewrite(ctl_tmp, m.msg_controllen, 1);
+            m.msg_control = ctl_tmp;
+        }
     }
     return sendmsg(fd, &m, msg_to_host(flags));
 }
@@ -361,14 +439,29 @@ long __ape_shim_recvmsg(int fd, struct msghdr *msg, int flags) {
         if (getsockname(fd, (struct sockaddr *)&ss, &sl) == 0 && sl >= 2)
             *(unsigned short *)msg->msg_name = ss.ss_family;
     }
+    // msg_controllen is capacity going in, actual length coming out; the
+    // BSD->linux expansion below writes back into the caller's buffer and
+    // needs the original capacity.
+    unsigned long ctl_cap = msg ? msg->msg_controllen : 0;
     long r = recvmsg(fd, msg, msg_to_host(flags));
     if (r >= 0 && msg) {
         if (msg->msg_name && msg->msg_namelen >= 2) {
             unsigned short *fam = msg->msg_name;
             *fam = (unsigned short)af_to_linux(*fam);
         }
-        if (msg->msg_control && msg->msg_controllen)
-            cmsgs_rewrite(msg->msg_control, msg->msg_controllen, 0);
+        if (msg->msg_control && msg->msg_controllen) {
+            if (IsBsd()) {
+                unsigned char tmp[1024];
+                unsigned long n = msg->msg_controllen;
+                if (n <= sizeof(tmp)) {
+                    memcpy(tmp, msg->msg_control, n);
+                    msg->msg_controllen =
+                        cmsgs_to_linux_layout(tmp, n, msg->msg_control, ctl_cap);
+                }
+            } else {
+                cmsgs_rewrite(msg->msg_control, msg->msg_controllen, 0);
+            }
+        }
         msg->msg_flags = msg_to_linux(msg->msg_flags);
     }
     return r;
