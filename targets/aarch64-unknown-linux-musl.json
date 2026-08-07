@@ -36,7 +36,6 @@
     "unix"
   ],
   "target-pointer-width": 64,
-  "panic-strategy": "abort",
   "exe-suffix": ".com.dbg",
   "emit-debug-gdb-scripts": false,
   "relocation-model": "static",

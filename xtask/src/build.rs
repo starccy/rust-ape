@@ -388,7 +388,7 @@ fn cargo_build(
         "-Z",
         "json-target-spec",
         "-Z",
-        "build-std=panic_abort,std",
+        "build-std=std,panic_abort,panic_unwind",
         "-Z",
         "build-std-features=",
     ]);
