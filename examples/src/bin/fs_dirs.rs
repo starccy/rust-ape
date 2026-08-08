@@ -4,6 +4,13 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+const ODD_NAMES: [&str; 4] = [
+    "中文文件名.txt",
+    "emoji-🦀.txt",
+    "with spaces and (parens).txt",
+    "tildes~and'quotes.txt",
+];
+
 fn main() {
     let root = scratch_dir();
     let _ = fs::remove_dir_all(&root); // in case a previous run died mid-way
@@ -41,6 +48,59 @@ fn main() {
     let leaf = fs::read_to_string(root.join("a/renamed/c/leaf.txt")).expect("read after rename");
     assert_eq!(leaf, "leaf\n", "file content changed across a rename");
     println!("renamed a/b -> a/renamed");
+
+    // Non-ASCII names, in a directory that is itself non-ASCII.
+    let odd = root.join("名字 folder");
+    fs::create_dir(&odd).expect("create a non-ASCII directory");
+    let mut written = BTreeSet::new();
+    for name in ODD_NAMES {
+        let path = odd.join(name);
+        fs::write(&path, name.as_bytes()).expect("write to a non-ASCII path");
+        let back = fs::read_to_string(&path).expect("read from a non-ASCII path");
+        assert_eq!(back, name, "content differs at {name:?}");
+        let md = fs::metadata(&path).expect("metadata on a non-ASCII path");
+        assert_eq!(md.len(), name.len() as u64, "length differs at {name:?}");
+        written.insert(name.to_owned());
+    }
+    let listed: BTreeSet<String> = fs::read_dir(&odd)
+        .expect("read_dir on a non-ASCII directory")
+        .map(|e| e.expect("dir entry").file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(listed, written, "read_dir handed back names we never created");
+    println!("{} non-ASCII names round-tripped through read_dir", ODD_NAMES.len());
+
+    // Rename between two non-ASCII names, then remove by the new one.
+    let from = odd.join(ODD_NAMES[0]);
+    let to = odd.join("改名了-🦀.txt");
+    fs::rename(&from, &to).expect("rename a non-ASCII path");
+    assert!(!from.exists(), "old non-ASCII name still there");
+    assert_eq!(fs::read_to_string(&to).expect("read after rename"), ODD_NAMES[0]);
+    fs::remove_file(&to).expect("remove a non-ASCII path");
+    println!("renamed and removed {:?} -> {:?}", ODD_NAMES[0], "改名了-🦀.txt");
+
+    // Long paths, reported rather than asserted. Windows' MAX_PATH is 260 and
+    // whether cosmo's conversion opts into the extended form is its business,
+    // not ours; what's worth having is a record of where the wall sits.
+    let mut deep = root.join("deep");
+    fs::create_dir(&deep).expect("create the deep root");
+    let mut levels = 0;
+    while levels < 24 {
+        let next = deep.join("0123456789abcdef0123456789abcde");
+        if fs::create_dir(&next).is_err() {
+            break;
+        }
+        deep = next;
+        levels += 1;
+    }
+    let chars = deep.as_os_str().len();
+    let leaf = deep.join("leaf.txt");
+    match fs::write(&leaf, b"deep") {
+        Ok(()) => {
+            assert_eq!(fs::read(&leaf).expect("read the deep leaf"), b"deep");
+            println!("deepest path that round-tripped: {chars} chars over {levels} levels");
+        }
+        Err(e) => println!("nesting stopped at {chars} chars ({levels} levels), writing there failed: {e}"),
+    }
 
     fs::remove_dir_all(&root).expect("remove_dir_all");
     assert!(!root.exists(), "tree outlived remove_dir_all");

@@ -6,7 +6,7 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const FIRST: &str = "cosmopolitan\n";
 const SECOND: &str = "actually portable\n";
@@ -58,6 +58,8 @@ fn main() {
     println!("copied {copied} bytes to {}", copy.display());
     fs::remove_file(&copy).expect("remove copy");
 
+    big_file(&path);
+
     // Truncate back to empty.
     File::create(&path).expect("truncate").sync_all().expect("sync");
     assert_eq!(fs::metadata(&path).expect("metadata").len(), 0, "truncate");
@@ -67,6 +69,66 @@ fn main() {
     assert!(!path.exists(), "file outlived remove_file");
 
     println!("\nfile io ok");
+}
+
+/// Offsets past the 32-bit line. The file is sparse, so only the touched
+/// blocks reach the disk, but a machine that won't hand out the length at all
+/// (a CI runner short on quota, most likely) gets to skip this.
+fn big_file(path: &Path) {
+    const GIB: u64 = 1 << 30;
+    const BIG_LEN: u64 = 5 * GIB;
+    const MARK: [u8; 13] = *b"past-four-gib";
+    let big = path.with_extension("big");
+    let mut f = OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .read(true)
+        .write(true)
+        .open(&big)
+        .expect("create the big file");
+    if let Err(e) = f.set_len(BIG_LEN) {
+        println!("skipped the 4 GiB crossing, set_len({BIG_LEN}) failed: {e}");
+        drop(f);
+        let _ = fs::remove_file(&big);
+        return;
+    }
+    let md = fs::metadata(&big).expect("metadata big");
+    assert_eq!(md.len(), BIG_LEN, "set_len past 4 GiB reported the wrong length");
+
+    // One write straddling the boundary, one past it, one at the end.
+    let spots = [4 * GIB - 3, 4 * GIB + 4096, BIG_LEN - MARK.len() as u64];
+    for spot in spots {
+        let pos = f.seek(SeekFrom::Start(spot)).expect("seek past 4 GiB");
+        assert_eq!(pos, spot, "seek reported an offset it did not take");
+        f.write_all(&MARK).expect("write past 4 GiB");
+    }
+    f.sync_all().expect("sync big");
+
+    for spot in spots {
+        f.seek(SeekFrom::Start(spot)).expect("seek back");
+        let mut back = [0u8; MARK.len()];
+        f.read_exact(&mut back).expect("read back past 4 GiB");
+        assert_eq!(back, MARK, "what came back from offset {spot} is not what went in");
+        let pos = f.stream_position().expect("stream_position");
+        assert_eq!(pos, spot + MARK.len() as u64, "position drifted after a big read");
+    }
+
+    // SeekFrom::End resolved against a length that doesn't fit in 32 bits.
+    let pos = f.seek(SeekFrom::End(-(MARK.len() as i64))).expect("seek from end");
+    assert_eq!(pos, BIG_LEN - MARK.len() as u64, "SeekFrom::End past 4 GiB");
+    let mut back = [0u8; MARK.len()];
+    f.read_exact(&mut back).expect("read at the end");
+    assert_eq!(back, MARK, "the mark at the end came back changed");
+
+    // Untouched space inside the file reads as zeros.
+    f.seek(SeekFrom::Start(3 * GIB)).expect("seek into the hole");
+    let mut hole = [0xffu8; 32];
+    f.read_exact(&mut hole).expect("read the hole");
+    assert_eq!(hole, [0u8; 32], "the sparse hole did not read as zeros");
+
+    println!("4 GiB crossing ok: {} marks placed and read back in a {BIG_LEN}-byte file", spots.len());
+    drop(f);
+    fs::remove_file(&big).expect("remove the big file");
 }
 
 fn scratch_path() -> PathBuf {

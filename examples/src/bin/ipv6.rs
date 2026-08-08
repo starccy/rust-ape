@@ -56,6 +56,31 @@ fn main() {
     unsafe {
         let fd = libc::socket(libc::AF_INET6, libc::SOCK_STREAM, 0);
         assert!(fd >= 0, "socket(AF_INET6) failed");
+
+        // Options at IPPROTO_IPV6 rather than SOL_SOCKET. V6ONLY has to be
+        // set before the bind below, which is where it belongs anyway.
+        for (name, want, label) in [
+            (libc::IPV6_V6ONLY, 1, "IPV6_V6ONLY"),
+            (libc::IPV6_UNICAST_HOPS, 5, "IPV6_UNICAST_HOPS"),
+        ] {
+            let val: i32 = want;
+            assert_eq!(
+                libc::setsockopt(fd, libc::IPPROTO_IPV6, name, &val as *const _ as *const libc::c_void, 4),
+                0,
+                "setsockopt({label}) failed: {}",
+                std::io::Error::last_os_error()
+            );
+            let mut got: i32 = -1;
+            let mut len: libc::socklen_t = 4;
+            assert_eq!(
+                libc::getsockopt(fd, libc::IPPROTO_IPV6, name, &mut got as *mut _ as *mut libc::c_void, &mut len),
+                0,
+                "getsockopt({label})"
+            );
+            assert_ne!(got, 0, "{label} did not stick");
+            println!("{label} round-trip ok (set {want}, read {got})");
+        }
+
         let mut sa: libc::sockaddr_in6 = std::mem::zeroed();
         sa.sin6_family = libc::AF_INET6 as libc::sa_family_t;
         sa.sin6_addr.s6_addr[15] = 1; // ::1
@@ -76,6 +101,33 @@ fn main() {
         assert_ne!(out.sin6_port, 0);
         libc::close(fd);
         println!("raw socket/bind/getsockname AF_INET6 round-trip ok");
+    }
+
+    // getnameinfo, the other direction from the getaddrinfo above. It reads
+    // the family out of the sockaddr it is handed, so the shim has to rewrite
+    // that field on the way in. Numeric flags keep the resolver out of it.
+    unsafe {
+        let mut sa: libc::sockaddr_in6 = std::mem::zeroed();
+        sa.sin6_family = libc::AF_INET6 as libc::sa_family_t;
+        sa.sin6_addr.s6_addr[15] = 1;
+        sa.sin6_port = 443u16.to_be();
+        let mut host = [0 as libc::c_char; 64];
+        let mut serv = [0 as libc::c_char; 16];
+        let rc = libc::getnameinfo(
+            &sa as *const _ as *const libc::sockaddr,
+            std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+            host.as_mut_ptr(),
+            host.len() as libc::socklen_t,
+            serv.as_mut_ptr(),
+            serv.len() as libc::socklen_t,
+            libc::NI_NUMERICHOST | libc::NI_NUMERICSERV,
+        );
+        assert_eq!(rc, 0, "getnameinfo failed with {rc}");
+        let host = std::ffi::CStr::from_ptr(host.as_ptr()).to_string_lossy().into_owned();
+        let serv = std::ffi::CStr::from_ptr(serv.as_ptr()).to_string_lossy().into_owned();
+        assert_eq!(host, "::1", "getnameinfo formatted the address as {host:?}");
+        assert_eq!(serv, "443", "getnameinfo formatted the port as {serv:?}");
+        println!("getnameinfo([::1]:443) -> {host} port {serv}");
     }
 
     println!("\nipv6 ok");

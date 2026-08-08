@@ -12,17 +12,17 @@ ape = { path = "../ape" }
 # exercises those three patches.
 smol = "2"
 # Pulls in getrandom.
-rand = "0.8"
+rand = "0.10.2"
 tempfile = "3.27.0"
 # errno_codes compares raw_os_error against these constants; resolves to the
 # cosmo-adapted copy through [patch.crates-io] like everything else.
 libc = "0.2"
 sha2 = "0.11.0"
-blake3 = "1.8.5"
+blake3 = "1.8.6"
 md-5 = "0.11.0"
 ureq = "3.3.0"
-# TUI stack. crossterm depends on mio by default. use `use-dev-tty` feature to avoid that.
-ratatui = "0.29.0"
+ratatui = "0.30.2"
+# crossterm use mio by default, which can cause problem. so enable `use-dev-tty` here
 crossterm = { version = "0.28.1", features = ["use-dev-tty", "events"] }
 # parking_lot parks via raw syscall(SYS_futex) — the __ape_shim_syscall path.
 parking_lot = "0.12"

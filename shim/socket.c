@@ -23,11 +23,16 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <netdb.h>
 #include <poll.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <string.h>
+#include <sys/random.h>
 #include <sys/socket.h>
+#include <uchar.h>
+#include <unistd.h>
 #include <libc/dce.h>
 #include <libc/sysv/consts/af.h>
 #include <libc/sysv/consts/sock.h>
@@ -64,11 +69,46 @@ struct fam_copy {
     char buf[128]; // covers sockaddr_storage
 };
 
-static const void *addr_to_host(const void *addr, unsigned len, struct fam_copy *tmp) {
-    if (!addr || len < 2 || len > sizeof(tmp->buf)) return addr;
-    memcpy(tmp->buf, addr, len);
+#define SUN_PATH_OFF 2
+#define SUN_PATH_MAX 108
+
+// cosmo's own path translation, the one open() and friends go through.
+int __mkntpath(const char *, char16_t *);
+
+// sockaddr_un is the one address that carries a filename, and cosmo hands
+// sun_path to Winsock exactly as given. So an AF_UNIX socket bound to
+// anything but a relative path fails on Windows, reported as WSAENETDOWN,
+// which surfaces in Rust as "Network is down" for what is really a filename
+// in the wrong syntax. Running it through __mkntpath first turns /C/Users/...
+// and /tmp/... into what NT expects; Winsock takes the result and echoes it
+// back verbatim from getsockname, so a bind/connect pair stays consistent.
+//
+// Bailing out leaves the path as it was, which is no worse than not
+// translating: non-ASCII can't be expressed in sun_path's bytes, and a
+// translation that outgrows 108 bytes has nowhere to go.
+static void unix_path_to_nt(struct fam_copy *tmp, unsigned *len) {
+    char *path = tmp->buf + SUN_PATH_OFF;
+    unsigned avail = *len > SUN_PATH_OFF ? *len - SUN_PATH_OFF : 0;
+    if (!avail || !*path) return; // unnamed, or Linux's abstract namespace
+    if (!memchr(path, '\0', avail)) return;
+
+    char16_t wide[PATH_MAX];
+    int n = __mkntpath(path, wide);
+    if (n < 0 || n >= SUN_PATH_MAX) return;
+    for (int i = 0; i < n; i++)
+        if (wide[i] > 0x7f) return;
+    for (int i = 0; i < n; i++)
+        path[i] = (char)wide[i];
+    path[n] = '\0';
+    *len = SUN_PATH_OFF + (unsigned)n + 1;
+}
+
+static const void *addr_to_host(const void *addr, unsigned *len, struct fam_copy *tmp) {
+    if (!addr || *len < 2 || *len > sizeof(tmp->buf)) return addr;
+    memcpy(tmp->buf, addr, *len);
     unsigned short *fam = (unsigned short *)tmp->buf;
     *fam = (unsigned short)af_to_host(*fam);
+    if (IsWindows() && *fam == AF_UNIX) unix_path_to_nt(tmp, len);
     return tmp->buf;
 }
 
@@ -89,16 +129,132 @@ static int type_to_host(int lin, int *out) {
     return 0;
 }
 
+// Defined in winsock.c; keeps Windows from tearing Winsock down at exit while
+// other threads are still using it. Hooked here because these two are the only
+// ways a socket enters the process, and cosmo starts Winsock lazily too.
+void __ape_shim_pin_winsock(void);
+
 int __ape_shim_socket(int domain, int lin_type, int protocol) {
     int type;
     type_to_host(lin_type, &type);
+    __ape_shim_pin_winsock();
     return socket(af_to_host(domain), type, protocol);
 }
 
+// A pair of AF_UNIX sockets built the ordinary way: listen, connect, accept.
+//
+// cosmo has its own socketpair on NT, but poll() never reports the fds it
+// hands back as writable -- not when fresh, not after a send has blocked, not
+// after the peer drains. Readability works, which is why the signal self-pipe
+// gets by. Anything that waits for writability, which is every async write,
+// waits forever. A pair assembled from a real listener on the same host has
+// none of that; the difference is in how the pair is made, not in AF_UNIX.
+//
+// The listener sits at a random name under the temp directory for the length
+// of one connect. A nonce the client sends and the server checks keeps a local
+// process that raced us to the path from being accepted in our client's place;
+// a connection that fails the check is dropped and the next one considered.
+static int io_all(int fd, void *buf, unsigned long n, int writing) {
+    unsigned char *p = buf;
+    while (n) {
+        long r = writing ? send(fd, p, n, 0) : recv(fd, p, n, 0);
+        if (r <= 0) return -1;
+        p += r;
+        n -= (unsigned long)r;
+    }
+    return 0;
+}
+
+static int nt_unix_pair(int type, int sv[2]) {
+    unsigned char nonce[16];
+    if (getrandom(nonce, sizeof nonce, 0) != (long)sizeof nonce) return -1;
+
+    // /tmp is what cosmo maps to the host's temp directory.
+    char path[64];
+    int plen = snprintf(path, sizeof path, "/tmp/ape-sp-%d-%02x%02x%02x%02x.sock",
+                        (int)getpid(), nonce[0], nonce[1], nonce[2], nonce[3]);
+    if (plen < 0 || plen >= (int)sizeof path) return -1;
+
+    struct fam_copy sa;
+    memset(&sa, 0, sizeof sa);
+    *(unsigned short *)sa.buf = (unsigned short)AF_UNIX;
+    unsigned salen = SUN_PATH_OFF + (unsigned)plen + 1;
+    memcpy(sa.buf + SUN_PATH_OFF, path, (unsigned long)plen + 1);
+    unix_path_to_nt(&sa, &salen);
+
+    int srv = -1, cli = -1, acc = -1, err;
+    if ((srv = socket(AF_UNIX, type, 0)) < 0) goto fail;
+    if (bind(srv, (const struct sockaddr *)sa.buf, salen) < 0) goto fail;
+    if (listen(srv, 4) < 0) goto fail;
+    if ((cli = socket(AF_UNIX, type, 0)) < 0) goto fail;
+    if (connect(cli, (const struct sockaddr *)sa.buf, salen) < 0) goto fail;
+    if (io_all(cli, nonce, sizeof nonce, 1) < 0) goto fail;
+
+    for (int tries = 0; tries < 8 && acc < 0; tries++) {
+        int fd = accept4(srv, NULL, NULL, type & SOCK_CLOEXEC);
+        if (fd < 0) goto fail;
+        unsigned char got[sizeof nonce];
+        if (io_all(fd, got, sizeof got, 0) == 0 && !memcmp(got, nonce, sizeof got))
+            acc = fd;
+        else
+            close(fd);
+    }
+    if (acc < 0) { errno = ECONNABORTED; goto fail; }
+
+    close(srv);
+    unlink(path);
+    sv[0] = cli;
+    sv[1] = acc;
+    return 0;
+
+fail:
+    err = errno;
+    if (srv >= 0) close(srv);
+    if (cli >= 0) close(cli);
+    if (acc >= 0) close(acc);
+    unlink(path);
+    errno = err;
+    return -1;
+}
+
+// cosmo's socketpair rejects SOCK_NONBLOCK on Windows with WSAEOPNOTSUPP,
+// though socket() and accept4() both take it there and fcntl() sets O_NONBLOCK
+// on the resulting fds without complaint. So the flag is peeled off the type
+// and applied afterwards. Done on every host rather than under IsWindows(),
+// because the two are equivalent here: nothing else can see these fds between
+// the two calls, and SOCK_CLOEXEC, the flag that would care, still goes in
+// atomically.
+//
+// Without this, mio's UnixStream::pair() fails, which takes down every tokio
+// program built with the signal feature -- enable_all() stands up the signal
+// driver whether or not the program ever waits on a signal.
 int __ape_shim_socketpair(int domain, int lin_type, int protocol, int sv[2]) {
     int type;
     type_to_host(lin_type, &type);
-    return socketpair(af_to_host(domain), type, protocol, sv);
+    int nonblock = type & SOCK_NONBLOCK;
+    type &= ~SOCK_NONBLOCK;
+
+    __ape_shim_pin_winsock();
+    int host_domain = af_to_host(domain);
+    int made = -1;
+    if (IsWindows() && host_domain == AF_UNIX && (type & ~SOCK_CLOEXEC) == SOCK_STREAM)
+        made = nt_unix_pair(type, sv);
+    // Falling back rather than failing: cosmo's own pair is what shipped
+    // before, and it is still better than no pair at all.
+    if (made < 0 && socketpair(host_domain, type, protocol, sv) < 0) return -1;
+    if (!nonblock) return 0;
+
+    for (int i = 0; i < 2; i++) {
+        int fl = fcntl(sv[i], F_GETFL);
+        if (fl < 0 || fcntl(sv[i], F_SETFL, fl | O_NONBLOCK) < 0) {
+            int err = errno;
+            close(sv[0]);
+            close(sv[1]);
+            errno = err;
+            return -1;
+        }
+    }
+    return 0;
 }
 
 int __ape_shim_accept4(int fd, void *addr, unsigned *len, int lin_flags) {
@@ -118,12 +274,14 @@ int __ape_shim_accept(int fd, void *addr, unsigned *len) {
 
 int __ape_shim_bind(int fd, const void *addr, unsigned len) {
     struct fam_copy tmp;
-    return bind(fd, addr_to_host(addr, len, &tmp), len);
+    const void *host = addr_to_host(addr, &len, &tmp);
+    return bind(fd, host, len);
 }
 
 int __ape_shim_connect(int fd, const void *addr, unsigned len) {
     struct fam_copy tmp;
-    return connect(fd, addr_to_host(addr, len, &tmp), len);
+    const void *host = addr_to_host(addr, &len, &tmp);
+    return connect(fd, host, len);
 }
 
 int __ape_shim_getsockname(int fd, void *addr, unsigned *len) {
@@ -216,6 +374,23 @@ static int msg_to_host(int lin) {
     return host;
 }
 
+// MSG_NOSIGNAL only ever means "don't raise SIGPIPE", and NT has no SIGPIPE
+// for cosmo to raise; it hands the flag to WSASend rather than acting on it.
+// Winsock tolerates the bit on AF_INET and rejects it on AF_UNIX with
+// ERROR_INVALID_PARAMETER, which is how writes to a socketpair failed -- and
+// a socketpair is how tokio's signal handler reaches its driver, so every
+// signal, and every async child waiting on SIGCHLD, silently never arrived.
+//
+// Retrying without the flag, rather than clearing it up front, is deliberate.
+// Clearing it for every send on NT also worked for the socketpair, but it
+// wedged large transfers: 3 runs in 20 of the reqwest example froze mid-body
+// with both ends parked, against 0 in 20 once the flag was left alone. cosmo
+// evidently does read the bit somewhere in its NT send path, so the only
+// sends that get their flags touched here are the ones that already failed.
+static int nosignal_retry(int host_flags, long r) {
+    return r < 0 && IsWindows() && (host_flags & MSG_NOSIGNAL) && errno == EINVAL;
+}
+
 // ---------------------------------------------------------------------------
 // NT nonblocking-send emulation. cosmo's sys_send_nt hardcodes the
 // __winsock_block nonblock argument to false (verified in 4.0.2 and current
@@ -254,15 +429,23 @@ unsigned long __ape_shim_nt_clamp(int fd, unsigned long n) {
 
 long __ape_shim_send(int fd, const void *buf, unsigned long n, int flags) {
     if (__ape_shim_nt_wants_eagain(fd)) return -1;
-    return send(fd, buf, __ape_shim_nt_clamp(fd, n), msg_to_host(flags));
+    int host = msg_to_host(flags);
+    unsigned long len = __ape_shim_nt_clamp(fd, n);
+    long r = send(fd, buf, len, host);
+    if (nosignal_retry(host, r)) r = send(fd, buf, len, host & ~MSG_NOSIGNAL);
+    return r;
 }
 
 long __ape_shim_sendto(int fd, const void *buf, unsigned long n, int flags,
                        const void *addr, unsigned alen) {
     struct fam_copy tmp;
     if (__ape_shim_nt_wants_eagain(fd)) return -1;
-    return sendto(fd, buf, __ape_shim_nt_clamp(fd, n), msg_to_host(flags),
-                  addr_to_host(addr, alen, &tmp), alen);
+    int host = msg_to_host(flags);
+    unsigned long len = __ape_shim_nt_clamp(fd, n);
+    const void *to = addr_to_host(addr, &alen, &tmp);
+    long r = sendto(fd, buf, len, host, to, alen);
+    if (nosignal_retry(host, r)) r = sendto(fd, buf, len, host & ~MSG_NOSIGNAL, to, alen);
+    return r;
 }
 
 long __ape_shim_recv(int fd, void *buf, unsigned long n, int flags) {
@@ -398,11 +581,16 @@ static unsigned long cmsgs_to_linux_layout(const unsigned char *src, unsigned lo
 
 long __ape_shim_sendmsg(int fd, const struct msghdr *msg, int flags) {
     if (__ape_shim_nt_wants_eagain(fd)) return -1;
-    if (!msg) return sendmsg(fd, msg, msg_to_host(flags));
+    if (!msg) {
+        int host = msg_to_host(flags);
+        long r = sendmsg(fd, msg, host);
+        if (nosignal_retry(host, r)) r = sendmsg(fd, msg, host & ~MSG_NOSIGNAL);
+        return r;
+    }
     struct msghdr m = *msg;
     struct fam_copy name_tmp;
     if (m.msg_name)
-        m.msg_name = (void *)addr_to_host(m.msg_name, m.msg_namelen, &name_tmp);
+        m.msg_name = (void *)addr_to_host(m.msg_name, &m.msg_namelen, &name_tmp);
     // control payload: rewrite on a copy — the caller's buffer is logically
     // const. Oversized control data passes through untranslated rather than
     // failing (SOL_SOCKET is 1 == Linux on every cosmo host except the BSDs'
@@ -422,7 +610,10 @@ long __ape_shim_sendmsg(int fd, const struct msghdr *msg, int flags) {
             m.msg_control = ctl_tmp;
         }
     }
-    return sendmsg(fd, &m, msg_to_host(flags));
+    int host = msg_to_host(flags);
+    long r = sendmsg(fd, &m, host);
+    if (nosignal_retry(host, r)) r = sendmsg(fd, &m, host & ~MSG_NOSIGNAL);
+    return r;
 }
 
 long __ape_shim_recvmsg(int fd, struct msghdr *msg, int flags) {
@@ -494,6 +685,6 @@ int __ape_shim_getnameinfo(const void *addr, unsigned alen, char *host_out,
                            unsigned hostlen, char *serv, unsigned servlen, int flags) {
     struct fam_copy tmp;
     // NI_* flag values are musl's on both sides (cosmo ships musl's netdb).
-    return getnameinfo(addr_to_host(addr, alen, &tmp), alen, host_out, hostlen,
+    return getnameinfo(addr_to_host(addr, &alen, &tmp), alen, host_out, hostlen,
                        serv, servlen, flags);
 }

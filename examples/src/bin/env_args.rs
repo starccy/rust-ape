@@ -4,8 +4,19 @@
 use std::env;
 
 const VAR: &str = "RUST_APE_EXAMPLE_VAR";
+const ODD_VAR: &str = "RUST_APE_EXAMPLE_ODD";
+// for non-ascii testing
+const ODD: &str = "测试呀 🦀";
 
 fn main() {
+    // Child mode, driven by the parent's spawn at the end of main.
+    if let Some(from_env) = env::var_os(ODD_VAR) {
+        assert_eq!(from_env.to_str(), Some(ODD), "the environment mangled non-ASCII text");
+        let from_argv = env::args().nth(1).expect("child argv[1]");
+        assert_eq!(from_argv, ODD, "argv mangled non-ASCII text");
+        return;
+    }
+
     // argv[0] plus whatever was passed. Under APE, argv[0] is the path the
     // program was invoked by, not the loader.
     let args: Vec<String> = env::args().collect();
@@ -49,6 +60,17 @@ fn main() {
     assert!(md.is_file(), "our executable is not a regular file");
     assert!(md.len() > 0, "our executable is empty");
     println!("executable: {exe} ({} bytes)", md.len());
+
+    // Non-ASCII out through a spawn and back in through both channels.
+    // argv[0], not current_exe(): under the APE loader /proc/self/exe points
+    // at the loader.
+    let status = std::process::Command::new(&args[0])
+        .arg(ODD)
+        .env(ODD_VAR, ODD)
+        .status()
+        .expect("spawn self");
+    assert!(status.success(), "the child rejected the non-ASCII round trip: {status}");
+    println!("non-ASCII survived argv and the environment: {ODD:?}");
 
     println!("\nenv args ok");
 }

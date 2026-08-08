@@ -408,3 +408,25 @@ unsigned long __ape_shim_getauxval(unsigned long lin) {
         v = MINSIGSTKSZ;
     return v;
 }
+
+// ---------------------------------------------------------------------------
+// SIGRTMIN/SIGRTMAX. musl exposes these as functions rather than constants, so
+// the libc crate calls __libc_current_sigrt{min,max}() and cosmo, which has
+// them as runtime `extern const int` instead, defines neither symbol. Without
+// these two nothing that pulls tokio's signal feature will link.
+//
+// The answers are musl's own numbers, not the host's, because these are
+// consumed inside the Rust world rather than handed to cosmo. tokio sizes its
+// per-signal table with SIGRTMAX() and indexes it by signal number, and those
+// numbers are Linux-coded everywhere above the shim boundary.
+//
+// Real-time signals themselves still don't work off Linux, per the note at
+// the top of this file. Nothing here changes that; it only gets the range's
+// bounds to agree with the coding everything else uses.
+int __libc_current_sigrtmin(void) {
+    return 35;
+}
+
+int __libc_current_sigrtmax(void) {
+    return 64;
+}

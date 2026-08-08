@@ -48,6 +48,6 @@ fn main() {
         assert_eq!(sum, 500_000_500_000, "unblocked work computed the wrong sum");
         println!("unblock computed {sum}");
 
-        println!("\nasync tasks ok");
+        println!("\nsmol tasks ok");
     });
 }

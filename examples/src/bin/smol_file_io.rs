@@ -1,4 +1,4 @@
-//! demo for async file basic I/O
+//! File I/O on smol: write, read back, copy and metadata, all async.
 
 use smol::io::{AsyncBufReadExt, AsyncWriteExt};
 use smol::stream::StreamExt;
@@ -48,7 +48,7 @@ fn main() {
         smol::fs::remove_file(&path).await.expect("remove original");
         assert!(!path.exists(), "file outlived remove_file");
 
-        println!("\nasync file io ok: {} lines", LINES.len());
+        println!("\nsmol file io ok: {} lines", LINES.len());
     });
 }
 
