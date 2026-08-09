@@ -24,6 +24,9 @@ ureq = "3.4.0"
 ratatui = "0.30.2"
 # crossterm use mio by default, which can cause problem. so enable `use-dev-tty` here
 crossterm = { version = "0.28.1", features = ["use-dev-tty", "events"] }
+# file_watch. notify picks its backend off the target triple, so it reaches for
+# inotify on every host and lands on shim/inotify.c.
+notify = "8"
 # pty. Its unix path wants TIOCSCTTY from the child between fork and exec,
 # which shim/termios.c answers.
 portable-pty = "0.9"
