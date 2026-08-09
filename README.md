@@ -65,7 +65,11 @@ cargo xtask build examples
 ```
 
 That leaves all the binaries in `examples/target/ape/`, each one a scenario you
-can copy to another machine and run. They double as the test suite; see
+can copy to another machine and run.
+
+The [CI runs](https://github.com/starccy/rust-ape/actions) show how each example
+did on each platform, and you can download the built binaries there too
+(if they haven't expired). They double as the test suite; see
 [What works](#what-works).
 
 **2. Create a project.**
@@ -106,9 +110,11 @@ on Windows, `.\name.com`.
 ## What works
 
 Everything in `examples/` is a self-contained scenario that exits non-zero on
-failure. Including TCP/UDP server/client, blocking and async I/O, clocks, hashing,
-and an HTTPS client and so on. Build them all with `cargo xtask build examples`;
-they are the shortest way to see what does and doesn't work here.
+failure. Including TCP/UDP server/client, blocking and async I/O on both smol
+and tokio, unix sockets, clocks, hashing, unwinding, file watching, a
+pseudo-terminal, and an HTTPS client.
+Build them all with `cargo xtask build examples`; they are the shortest way to
+see what does and doesn't work here.
 CI builds them **once on Linux** and runs those same files on five platforms:
 
 | | x86-64 | arm64 |
@@ -126,19 +132,92 @@ CI builds them **once on Linux** and runs those same files on five platforms:
 
 ## Limitations
 
+### Where the platforms differ
+
+One binary, but not one behaviour. Everything below is measured on Linux and
+on a Windows VM unless the cell says otherwise. The macOS column is arm64 and
+weaker evidence, since I have no Mac to debug on and can only go by what
+GitHub Actions reports.
+
+| | Linux | Windows | macOS |
+| --- | --- | --- | --- |
+| epoll, under mio and tokio | the real syscalls | emulated over `poll()`, and a set past a few dozen descriptors stops blocking and scans on a 10ms tick | emulated over `poll()` |
+| inotify, under `notify` | the real syscalls | emulated by scanning every 200ms, so no opens, no closes, and a rename looks like a delete plus a create | the same emulation |
+| pseudo-terminal | works | **none at all**, `openpty` is ENOSYS | works, the same unix path |
+| `UnixDatagram` | works | **no**, NT's AF_UNIX is stream-only | works |
+| system certificate store | 121 roots out of `/etc/ssl` | **empty**, see below | `/etc/ssl` again, which is right here by luck |
+| loading a shared library | `cosmo_dlopen` | `cosmo_dlopen`, and it rewrites `.so` to `.dll` for you | arm64 only (seems acceptable) |
+| calling host APIs directly | n/a | Win32, either a plain `extern "C"` away or through `GetProcAddress` | n/a |
+| jemalloc as the global allocator | clean | works, but writes `Error in munmap(): Operation not supported` to stderr, because NT cannot release part of a mapping | clean |
+| SQLite writers contending | real locks, ~25ms for 1000 inserts across 4 threads | emulated locks, ~3.1s for the same | untested |
+| runtime CPU feature detection | works | `AT_HWCAP` reads 0 on arm64, so dispatch falls back to scalar | same on arm64 |
+| `std::env::current_exe` | the loader, not you | fails, there is no `/proc/self/exe` | the loader, not you |
+| spawning by bare program name | as usual | resolved the Unix way, so it is `cmd.exe` and never `cmd` | as usual |
+
 ### Problems you can work around
+
+#### APE-specific APIs
 
 Where `ape::` and `std::` overlap, prefer `ape::`. For example,
 `std::env::current_exe()` returns the APE loader rather than your program,
 and on Windows it fails outright looking for `/proc/self/exe`;
 `ape::program_executable_name()` handles both.
 
-For async, use smol rather than tokio. Cosmopolitan
+#### Async
+
+Both smol and tokio work, by different routes. Cosmopolitan
 [dropped epoll in 2024](https://github.com/jart/cosmopolitan/commit/2ec413b5a9b5d88d363cf5657a8c3ddce4d7feb1),
-and mio hardwires epoll on Linux targets, so tokio cannot run here. smol works
-because its `polling` crate has a compile-time escape hatch
-(`--cfg polling_test_poll_backend`) that switches it to plain `poll`, which
-this project sets.
+and the two runtimes deal with that differently here. smol's `polling` crate
+takes a cfg that switches it to plain `poll()`, which this project sets, and
+that path has been trouble-free throughout. tokio's `mio` has the same escape
+hatch and it is **not** used, because mio's poll backend drops a descriptor's
+interest the moment it reports an event and expects it back through an
+internal type that `SourceFd` users never reach, so anything registered that
+way goes deaf after one event. `tokio::process`'s stdio hits it
+([tokio#8042](https://github.com/tokio-rs/tokio/issues/8042)), crossterm's tty
+hits it, and the backend has other open bugs besides
+([mio#1874](https://github.com/tokio-rs/mio/issues/1874)). So mio is left on
+epoll and `shim/epoll.c` answers it: the raw syscalls on Linux, an emulation
+over cosmo's `poll()` everywhere else. Read that file's header before relying
+on it, the two things it cannot promise are written down there.
+
+One thing trips up existing projects rather than new ones. A `.cargo/config.toml`
+that pins `linker` for `aarch64-unknown-linux-musl` (plenty of projects ship one
+for cross-compiling) wins over what `cargo xtask build` sets, and the arm64 half
+then goes to the wrong linker and fails on `-lunwind`. Move that entry out of the
+way.
+
+#### TLS cert
+
+**The system certificate store is empty on Windows**, and it fails in a way
+that is hard to recognize. Every crate that reads it
+picks its backend at compile time, and this target says unix, so
+`rustls-native-certs`, `rustls-platform-verifier` and native-tls all go
+looking in `/etc/ssl` no matter which machine they end up on. Measured: 121
+roots on Linux, zero on Windows. rustls-platform-verifier at least says
+`No CA certificates were loaded from the system`, which is what `xh` and `gix`
+both die with. rustls-native-certs returns **zero roots and zero errors**, so
+nothing looks wrong until every certificate fails to verify.
+
+Three ways out, cheapest first.
+
+Bundle the roots. `webpki-roots` compiles them in and the question stops
+existing. `examples/reqwest_client.rs` does this.
+
+Ship a PEM and point `SSL_CERT_FILE` at it. **No code change at all.** The
+unix path those crates take honours the variable, so putting a `cacert.pem`
+next to the binary is enough. Verified by copying `/etc/ssl/cert.pem` to the
+Windows box and setting nothing but that variable.
+
+Read the real store. cosmo imports no `Crypt*` symbol at all, so this is
+`LoadLibraryA` plus `GetProcAddress`, and it is x86-64 only, because the
+pointer that comes back wants Microsoft's convention and `extern "win64"`
+exists nowhere else.
+[`examples/src/bin/win_cert_store.rs`](examples/src/bin/win_cert_store.rs) has
+the full version, with the three crypt32 entry points, the enumeration loop
+over both the `ROOT` and `CA` stores, and the DER handed straight to a rustls
+`RootCertStore`. Do this behind `ape::is_windows()`, and
+keep one of the first two options for the other hosts.
 
 C dependencies work as long as they are compiled from source. Vendored C, C++
 or hand-written assembly built through the `cc` crate is fine; the examples
@@ -150,14 +229,59 @@ library, like openssl-sys, which will find none for this target.
 
 What follows is only what has been hit so far, not a complete inventory.
 
-There are no async subprocesses, on any platform. async-process needs SIGCHLD
-or pidfd/waitid to reap children, and cosmo has neither everywhere, so
-`async-process.patch` disables its driver. Synchronous `std::process::Command`
-works fine, pipes included.
+smol's async-process is disabled. Its reaper wants pidfd or waitid and cosmo
+has neither everywhere, so `async-process.patch` turns the driver off.
+Synchronous `std::process::Command` is fine, pipes included, and tokio's
+reaper goes through SIGCHLD instead and does work; `tokio_process.rs` covers
+that one.
 
-Runtime CPU detection doesn't work off Linux on arm64. `AT_HWCAP` reads as 0
-there, so crates that dispatch on it fall back to scalar code, which is
-correct but slower. x86 is unaffected, since CPUID is a hardware instruction.
+The epoll behind mio is not the real thing off Linux, and two of the gaps are
+inherent to building it on `poll()`. `EPOLLET` is accepted and ignored, so
+every registration behaves as level-triggered: mio asks for edge triggering
+and gets told about a ready descriptor more often than Linux would tell it.
+That costs wakeups, it does not lose them, which is the direction an emulation
+should err in. The other one costs latency. On Windows cosmo sorts a
+`poll()` call into an NT wait and a `WSAPoll`, each holding 64, and answers
+`EINVAL` rather than truncating when one of them overflows. Its own path for
+oversized arrays splits the call up but gets the arithmetic wrong (4.0.2), so
+`shim/epoll.c` hands cosmo 32 at a time once it has seen the refusal, which
+means a set that big can no longer block in the kernel and scans on a 10ms
+tick instead. A tokio program holding 120 children's stdin and stdout, 240
+pipes in all, gets through in about a second and a half, which is what
+`tokio_pipe_stress.rs` measures. Sets that stay small never enter that mode
+and keep blocking as before. async-io stays on `poll()` rather than epoll,
+because polling's epoll backend wants timerfd and cosmo has none, so
+`shim/poll.c` carries the same retry and the ceiling isn't there either.
+
+`UnixDatagram` doesn't work on Windows. NT's AF_UNIX is stream-only and
+answers `socket(AF_UNIX, SOCK_DGRAM)` with WSAEAFNOSUPPORT, which is a gap in
+the OS rather than in cosmo. `UnixStream` and `UnixListener` do work, paths
+included.
+
+macOS has an AF_UNIX gap of its own, and it lands somewhere you would not
+guess. std's `Command::spawn` takes a fork path instead of `posix_spawn`
+whenever there is a pre_exec closure, a uid, a chroot, or a bare program name
+with the environment touched, and on a linux target it builds the channel the
+child reports a failed exec on out of a `SOCK_SEQPACKET` pair. XNU's AF_UNIX
+has no such type. `shim/socket.c` retries those as a stream pair, which
+carries the same one-write-then-EOF exchange and gives up message boundaries
+in return. `spawn_preexec.rs` covers it, and it is the only example that
+reaches that path at all.
+
+A host API can call back into your code, but only on a thread cosmo made. On
+one of its own, everything works: `examples/host_api.rs` runs a Win32 callback
+that allocates and prints. On a thread the host created, which is every
+`CALLBACK_FUNCTION` audio callback, window procedure and IO completion
+routine, cosmo's thread block was never installed and the first libc call is
+an access violation. Not `malloc`, not `write`. Win32 itself is fine there,
+because cosmo's thunks only shuffle registers, so the way through is to have
+the callback ring an event and let a thread you own do the work. Audio and GUI
+APIs take `CALLBACK_EVENT` and `CALLBACK_WINDOW` for exactly this. The example
+shows that shape. Adopting the foreign thread outright is possible, by
+allocating a block with `_mktls` and installing it with `__set_tls` plus the
+real thread id in `tib_ptid`, but that is internal cosmo territory, and it
+still leaves `pthread_self()` null, thread-local destructors unrun and a few
+KiB leaked per thread.
 
 TUI support is partial. Some of the escape sequences TUIs rely on work,
 others don't; one known case is that setting the cursor position does nothing
@@ -170,13 +294,21 @@ dependency tree (`cargo tree`) against this table before investing time:
 
 | If it involves | Verdict |
 | --- | --- |
-| tokio, mio, or anything else epoll-only | ❌ no epoll under cosmo, and mio can't be told to use anything else |
-| spawning processes from async (async-process) | ❌ disabled here; sync `std::process::Command` is the only way |
+| tokio, or anything else on mio | ✅ mio picks epoll on this target and `shim/epoll.c` provides it. Its waker is still forced onto a pipe, since cosmo has no eventfd |
+| file watching (`notify`, and watchexec on top of it) | ⚠️ notify reads the target triple and asks for inotify on every host; `shim/inotify.c` answers, with the real syscalls on Linux and a 200ms scan-and-diff elsewhere. The emulation reports creations, deletions and content changes, and cannot report opens, closes, or a rename as anything but a delete plus a create |
+| smol's async-process | ❌ its reaper is disabled here. `tokio::process` and sync `std::process::Command` both work |
+| `UnixDatagram` | ❌ NT's AF_UNIX is stream-only. `UnixStream`/`UnixListener` are fine |
 | `-sys` crates that link a prebuilt system library (openssl-sys, …) | ❌ no such library exists for this target |
+| rustls on its default aws-lc-rs backend | ❌ aws-lc-sys guards a whole `.S` file on `__linux__`, which cosmocc undefines, and the object comes out with no symbol table. Switch to the ring backend, whose asm is guarded on `__ELF__` |
+| zstd, anywhere it reaches zstd-sys | ⚠️ same `__linux__` guard, on `huf_decompress_amd64.S`. Its `no_asm` feature takes the C path and links fine |
+| anything that reads the system certificate store (rustls-platform-verifier, rustls-native-certs, native-tls) | ⚠️ it asks the OS the compile-time way, so it reads `/etc/ssl` on every host and comes back empty on Windows, sometimes without saying so. Bundled roots, `SSL_CERT_FILE`, or crypt32 at runtime; [all three written out above](#problems-you-can-work-around) |
+| a pseudo-terminal (portable-pty, and terminal multiplexers on top of it) | ⚠️ works on Unix, where cosmo has openpty and the shim answers the session ioctls the child needs after fork. On Windows there is no pty at all: cosmo imports `CreatePseudoConsole` but never wires it to openpty, so openpty is ENOSYS and nothing routes around it |
 | C/C++/asm vendored in the crate, built via `cc` | ⚠️ works if the code sticks to APIs cosmo has (e.g. `ring` and `blake3` do, OpenSSL's `dladdr()` use doesn't) |
+| calling a host API directly (Win32, or a shared library through `cosmo_dlopen`) | ⚠️ works, chosen at runtime with `ape::is_windows()` and friends, never by `cfg`. Almost all of what cosmo imports is a plain `extern "C"` away, though A/W pairs are exported unsuffixed and wide (`MessageBox`, not `MessageBoxW`). Beyond that it's `GetProcAddress` and an `extern "win64"` pointer, which is x86_64-only and so needs an arch gate. `windows-sys` builds and links; the `windows` crate does not. See `examples/host_api.rs` |
+| a replacement `#[global_allocator]` | ⚠️ jemalloc works, and ripgrep (which picks it up on exactly this target) builds and runs unmodified. On Windows it writes a few `Error in munmap(): Operation not supported` lines to stderr per run, because NT can't release part of a mapping; stdout stays clean and no `MALLOC_CONF` setting quiets it. mimalloc is the one to avoid, it segfaults before `main` on every host |
 | raw `libc` usage in the domains the shim covers (errno, file/socket/signal flags, IPv6 families, nonblocking writes) | ✅ translated at the libc boundary |
 | `libc::` constants outside the shim's tables (uncommon ioctls, `SYS_*` numbers beyond futex/getrandom, …) | ⚠️ compiles, then silently misbehaves off Linux |
-| terminal control (`tcgetattr`/`struct termios`, crossterm, ratatui TUIs) | ⚠️ repacked and translated by the shim; TUIs run on Linux terminals and Windows consoles (crossterm needs its `use-dev-tty` feature). Known gaps on the cosmo side: NT never answers the DSR query (`cursor::position()` times out), OPOST/CSIZE report host semantics, arbitrary baud rates unmapped |
+| terminal control (`tcgetattr`/`struct termios`, crossterm, ratatui TUIs) | ⚠️ repacked and translated by the shim; TUIs run on Linux terminals and Windows consoles, crossterm's default mio event source included. Known gaps on the cosmo side: NT never answers the DSR query (`cursor::position()` times out), OPOST/CSIZE report host semantics, arbitrary baud rates unmapped |
 | smol, async-io, rustls, and pure-Rust crates in general | ✅ works, some via `patches/` |
 
 ### Why things break in this particular way
@@ -226,3 +358,7 @@ paths in `Cargo.toml` are fixed up.
 * [ahgamut/rust-ape-example](https://github.com/ahgamut/rust-ape-example): an
   early demonstration of building Rust code with cosmocc, and where the idea
   of this project came from.
+* [crisidev/ape-rs](https://github.com/crisidev/ape-rs), and the
+  [blog series](https://blog.crisidev.org/tags/series-one-bin-to-rule-them-all/)
+  that goes with it. Reading someone else work through the same problems is
+  what got me interested in making Rust fit APE properly again.
