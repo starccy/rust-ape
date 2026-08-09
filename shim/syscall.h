@@ -21,37 +21,43 @@
 
 #include <errno.h>
 
-// Five arguments covers every call the shim makes this way.
 #ifdef __x86_64__
-static inline long __ape_raw_syscall(long n, long a, long b, long c, long d,
-                                     long e) {
+static inline long __ape_raw_syscall6(long n, long a, long b, long c, long d,
+                                      long e, long f) {
     long r;
     register long r10 asm("r10") = d;
     register long r8 asm("r8") = e;
+    register long r9 asm("r9") = f;
     asm volatile("syscall"
                  : "=a"(r)
-                 : "a"(n), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8)
+                 : "a"(n), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8), "r"(r9)
                  : "rcx", "r11", "memory");
     return r;
 }
 #elif defined(__aarch64__)
-static inline long __ape_raw_syscall(long n, long a, long b, long c, long d,
-                                     long e) {
+static inline long __ape_raw_syscall6(long n, long a, long b, long c, long d,
+                                      long e, long f) {
     register long x8 asm("x8") = n;
     register long x0 asm("x0") = a;
     register long x1 asm("x1") = b;
     register long x2 asm("x2") = c;
     register long x3 asm("x3") = d;
     register long x4 asm("x4") = e;
+    register long x5 asm("x5") = f;
     asm volatile("svc #0"
                  : "+r"(x0)
-                 : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4)
+                 : "r"(x8), "r"(x1), "r"(x2), "r"(x3), "r"(x4), "r"(x5)
                  : "memory");
     return x0;
 }
 #else
 #error "no raw syscall for this architecture"
 #endif
+
+static inline long __ape_raw_syscall(long n, long a, long b, long c, long d,
+                                     long e) {
+    return __ape_raw_syscall6(n, a, b, c, d, e, 0);
+}
 
 // Linux packs -errno into the low 4K of the return value; anything else is a
 // valid result (a length, or 0).

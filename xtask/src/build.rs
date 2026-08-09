@@ -352,13 +352,21 @@ fn cargo_build(
     // Where std's sources live; cargo wants this absolute.
     cmd.env("__CARGO_TESTS_ONLY_SRC_ROOT", root.join("vendor/library"));
 
-    // rustix_use_libc: keep rustix off its raw-syscall backend, which cosmo
-    // can't translate away from Linux. polling_test_poll_backend and
-    // mio_unsupported_force_poll_poll: poll(), since there's no epoll — the
-    // former covers async-io/smol, the latter tokio's mio, which would
-    // otherwise want epoll_ctl and friends (and edge-triggered at that).
-    // mio_unsupported_force_waker_pipe goes with it: mio's default waker on
-    // Linux is an eventfd, which cosmo doesn't have either.
+    // * rustix_use_libc: keep rustix off its raw-syscall backend, which cosmo
+    // can't translate away from Linux.
+    //
+    // * polling_test_poll_backend: poll() for async-io/smol. Now that
+    // shim/epoll.c exists this looks removable, and it isn't: polling's epoll
+    // backend arms its timeouts with timerfd_create/timerfd_settime, which
+    // cosmo numbers but never wrapped, so dropping the cfg fails at link. It
+    // would also need EPOLLONESHOT, which the emulation doesn't implement and
+    // polling's whole API is built on. The poll() path costs nothing here --
+    // shim/poll.c carries the same oversized-array retry that shim/epoll.c
+    // does, so smol doesn't run into the NT ceiling either.
+    //
+    // * mio_unsupported_force_waker_pipe: mio's default waker
+    // on Linux is an eventfd, which cosmo doesn't have.
+    //
     // Passed as env because RUSTFLAGS there outranks anything
     // in a project's .cargo/config.toml, so nobody can drop these by
     // accident.
@@ -371,7 +379,6 @@ fn cargo_build(
     // scripts keep linking the real libc symbols.
     rustflags.push_str(
         "--cfg rustix_use_libc --cfg polling_test_poll_backend \
-         --cfg mio_unsupported_force_poll_poll \
          --cfg mio_unsupported_force_waker_pipe --cfg rust_ape_shim",
     );
     cmd.env("RUSTFLAGS", rustflags);

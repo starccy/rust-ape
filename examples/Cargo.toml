@@ -21,6 +21,10 @@ sha2 = "0.11.0"
 blake3 = "1.8.6"
 md-5 = "0.11.0"
 ureq = "3.4.0"
+# Carries crossterm, whose default event source is mio. tui_demo reaches it
+# through ratatui::crossterm rather than a direct dependency, so there is one
+# crossterm in the tree and it is the mio one. This used to be pinned to
+# `use-dev-tty` to stay off mio; shim/epoll.c is what made that unnecessary.
 ratatui = "0.30.2"
 # crossterm use mio by default, which can cause problem. so enable `use-dev-tty` here
 crossterm = { version = "0.28.1", features = ["use-dev-tty", "events"] }

@@ -129,7 +129,28 @@ diff a/libc/src/unix/linux_like/linux/mod.rs b/libc/src/unix/linux_like/linux/mo
      pub fn syscall(num: c_long, ...) -> c_long;
      pub fn sched_setaffinity(
          pid: crate::pid_t,
-@@ -3692,6 +3712,8 @@
+@@ -3647,13 +3667,20 @@
+         cpuset: *const crate::cpu_set_t,
+     ) -> c_int;
+     pub fn epoll_create(size: c_int) -> c_int;
++    // cosmo: epoll was deleted upstream in 2024; shim/epoll.c puts it back,
++    // as the raw syscalls on Linux and over cosmo's poll() elsewhere. Only
++    // the three mio and polling actually call are redirected; epoll_create
++    // above is the obsolete form nothing uses.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_epoll_create1")]
+     pub fn epoll_create1(flags: c_int) -> c_int;
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_epoll_wait")]
+     pub fn epoll_wait(
+         epfd: c_int,
+         events: *mut crate::epoll_event,
+         maxevents: c_int,
+         timeout: c_int,
+     ) -> c_int;
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_epoll_ctl")]
+     pub fn epoll_ctl(epfd: c_int, op: c_int, fd: c_int, event: *mut crate::epoll_event) -> c_int;
+     pub fn unshare(flags: c_int) -> c_int;
+     pub fn umount(target: *const c_char) -> c_int;
+@@ -3692,6 +3719,8 @@
          any(gnu_time_bits64, musl_redir_time64),
          link_name = "__clock_nanosleep_time64"
      )]
@@ -138,7 +159,7 @@ diff a/libc/src/unix/linux_like/linux/mod.rs b/libc/src/unix/linux_like/linux/mo
      pub fn clock_nanosleep(
          clk_id: crate::clockid_t,
          flags: c_int,
-@@ -3707,6 +3729,8 @@
+@@ -3707,6 +3736,8 @@
      ) -> c_int;
      #[cfg_attr(gnu_file_offset_bits64, link_name = "sendfile64")]
      pub fn sendfile(out_fd: c_int, in_fd: c_int, offset: *mut off_t, count: size_t) -> ssize_t;

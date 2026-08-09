@@ -42,6 +42,11 @@ static const int shim_no_at_empty_path = 0;
 
 #include "tables.h"
 
+// shim/epoll.c. An emulated epoll fd is a pipe end, so a duplicate of it has
+// to be recorded as naming the same set. No-op on Linux and for every fd that
+// isn't one.
+void __ape_shim_epoll_note_dup(int oldfd, int newfd);
+
 #define LIN_O_ACCMODE 0x03 // O_RDONLY/O_WRONLY/O_RDWR, same on every platform
 
 struct oflag {
@@ -200,7 +205,11 @@ int __ape_shim_fcntl(int fd, int cmd, ...) {
     int iarg = (int)(long)parg;
 
     switch (cmd) {
-        case 0: // F_DUPFD
+        case 0: { // F_DUPFD
+            int nfd = fcntl(fd, cmd, iarg);
+            if (nfd >= 0) __ape_shim_epoll_note_dup(fd, nfd);
+            return nfd;
+        }
         case 2: // F_SETFD (FD_CLOEXEC is 1 everywhere)
             return fcntl(fd, cmd, iarg);
         case 1: // F_GETFD
@@ -226,9 +235,12 @@ int __ape_shim_fcntl(int fd, int cmd, ...) {
         case SHIM_LIN_F_GETOWN:
             return F_GETOWN > 0 ? fcntl(fd, F_GETOWN) : (errno = EINVAL, -1);
 #endif
-        case SHIM_LIN_F_DUPFD_CLOEXEC:
-            return F_DUPFD_CLOEXEC > 0 ? fcntl(fd, F_DUPFD_CLOEXEC, iarg)
-                                       : (errno = EINVAL, -1);
+        case SHIM_LIN_F_DUPFD_CLOEXEC: {
+            if (F_DUPFD_CLOEXEC <= 0) return errno = EINVAL, -1;
+            int nfd = fcntl(fd, F_DUPFD_CLOEXEC, iarg);
+            if (nfd >= 0) __ape_shim_epoll_note_dup(fd, nfd);
+            return nfd;
+        }
         default:
             return errno = EINVAL, -1;
     }
