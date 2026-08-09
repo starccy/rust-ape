@@ -1,7 +1,8 @@
 // inotify() for the Linux-personality shim.
 //
 // Cosmopolitan ships the __NR_inotify_* numbers and nothing else: no
-// wrappers, no constants, no emulation. The `inotify` crate declares the
+// wrappers, no constants, no emulation. (And on aarch64 not even all the
+// numbers -- see below.) The `inotify` crate declares the
 // three entry points itself rather than going through the libc crate, so the
 // failure is a link error naming inotify_init1, inotify_add_watch and
 // inotify_rm_watch, and it takes the whole `notify` crate down with it --
@@ -55,9 +56,22 @@
 #include <unistd.h>
 #define _COSMO_SOURCE // for libc/dce.h's IsLinux()
 #include <libc/dce.h>
-#include <libc/sysv/consts/nr.h>
 
 #include "syscall.h"
+
+// Not cosmo's __NR_*: its aarch64 syscall table lists inotify_add_watch and
+// inotify_rm_watch as absent, which the kernel disagrees with, so calls made
+// through those constants die with ENOSYS on arm64. The numbers live here for
+// both architectures instead.
+#ifdef __x86_64__
+#define SHIM_NR_INOTIFY_INIT1 294
+#define SHIM_NR_INOTIFY_ADD_WATCH 254
+#define SHIM_NR_INOTIFY_RM_WATCH 255
+#elif defined(__aarch64__)
+#define SHIM_NR_INOTIFY_INIT1 26
+#define SHIM_NR_INOTIFY_ADD_WATCH 27
+#define SHIM_NR_INOTIFY_RM_WATCH 28
+#endif
 
 // Linux's IN_* values, hardcoded: there is no cosmo side to read them from.
 #define LIN_IN_ACCESS 0x00000001u
@@ -562,7 +576,7 @@ static int use_syscalls(void) {
 int inotify_init1(int flags) {
     if (use_syscalls())
         return (int)__ape_syscall_ret(
-            __ape_raw_syscall(__NR_inotify_init1, flags, 0, 0, 0, 0));
+            __ape_raw_syscall(SHIM_NR_INOTIFY_INIT1, flags, 0, 0, 0, 0));
     return emu_init1(flags);
 }
 
@@ -571,13 +585,13 @@ int inotify_init(void) { return inotify_init1(0); }
 int inotify_add_watch(int fd, const char *path, uint32_t mask) {
     if (use_syscalls())
         return (int)__ape_syscall_ret(__ape_raw_syscall(
-            __NR_inotify_add_watch, fd, (long)path, (long)mask, 0, 0));
+            SHIM_NR_INOTIFY_ADD_WATCH, fd, (long)path, (long)mask, 0, 0));
     return emu_add_watch(fd, path, mask);
 }
 
 int inotify_rm_watch(int fd, int wd) {
     if (use_syscalls())
         return (int)__ape_syscall_ret(
-            __ape_raw_syscall(__NR_inotify_rm_watch, fd, wd, 0, 0, 0));
+            __ape_raw_syscall(SHIM_NR_INOTIFY_RM_WATCH, fd, wd, 0, 0, 0));
     return emu_rm_watch(fd, wd);
 }
