@@ -46,7 +46,7 @@ version:
 | `open.c` | the `O_*`, `F_*` and `AT_*` flags through `open`/`openat`/`fcntl`/`pipe2` and the `*at` family |
 | `socket.c` | socket types, sockopts, `MSG_*` flags, and the `AF_*` family value inside every sockaddr, both directions; plus three NT workarounds — `sun_path` through cosmo's path translation, `SOCK_NONBLOCK` peeled off `socketpair`, and a socketpair built from a real listener so poll reports it writable |
 | `signal.c` | signal numbers and `SA_*`/`SS_*` flags; `struct sigaction` repacked field by field, handlers wrapped in a trampoline so they see Linux-coded signums; also `__libc_current_sigrt{min,max}`, which musl has as functions and cosmo as variables |
-| `poll.c` | the `POLL*` event bits, in and out |
+| `poll.c` | the `POLL*` event bits, in and out; plus a chunked retry for arrays NT refuses outright, which is what keeps async-io off the same ceiling `epoll.c` works around |
 | `epoll.c` | epoll, which cosmo deleted in 2024: the raw syscalls on Linux, an interest list over cosmo's `poll()` everywhere else, chunked once a set grows past what NT's `poll()` will accept. Read its header for the two things the emulation can't promise |
 | `inotify.c` | inotify, which cosmo numbers but never wrapped: the raw syscalls on Linux, a scan-and-diff over the watched paths everywhere else, delivered through a pipe. Read its header for what a poller can't see |
 | `winsock.c` | holds a Winsock reference for the process, so cosmo's atexit `WSACleanup` doesn't pull it out from under threads that are still running |
