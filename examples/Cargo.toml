@@ -26,8 +26,6 @@ ureq = "3.4.0"
 # crossterm in the tree and it is the mio one. This used to be pinned to
 # `use-dev-tty` to stay off mio; shim/epoll.c is what made that unnecessary.
 ratatui = "0.30.2"
-# crossterm use mio by default, which can cause problem. so enable `use-dev-tty` here
-crossterm = { version = "0.28.1", features = ["use-dev-tty", "events"] }
 # file_watch. notify picks its backend off the target triple, so it reaches for
 # inotify on every host and lands on shim/inotify.c.
 notify = "8"
@@ -36,6 +34,29 @@ notify = "8"
 portable-pty = "0.9"
 # parking_lot parks via raw syscall(SYS_futex) — the __ape_shim_syscall path.
 parking_lot = "0.12"
+# tokio reaches the IO driver through mio, which picks epoll on a linux target
+# and gets it from shim/epoll.c. These examples are the only thing exercising
+# that shim through a real runtime rather than the probe.
+tokio = { version = "1", features = ["full"] }
+# tokio_codec only.
+tokio-util = { version = "0.7", features = ["full"] }
+futures-util = { version = "0.3", features = ["sink"] }
+# reqwest_client. The TLS stack is assembled by hand because reqwest's default
+# aws-lc-rs guards its assembly on __linux__, which cosmocc undefines, leaving
+# an object with no symbol table. ring's asm is guarded on __ELF__ instead.
+reqwest = { version = "0.13.4", default-features = false, features = [
+    "json", "charset", "http2", "query", "form", "multipart", "stream",
+    "cookies", "gzip", "brotli", "deflate", "zstd", "blocking", "socks",
+    "hickory-dns", "system-proxy", "rustls-no-provider" ] }
+rustls = { version = "0.23", default-features = false, features = [
+    "ring", "std", "tls12", "logging" ] }
+webpki-roots = "1"
+serde = { version = "1", features = ["derive"] }
+flate2 = "1"
+# reqwest's zstd feature reaches zstd-sys, whose huf_decompress_amd64.S hits
+# the same __linux__ trap. Named only to turn `no_asm` on through feature
+# unification.
+zstd-sys = { version = "2", features = ["no_asm"] }
 
 [patch.crates-io]
 async-io = { path = "../vendor/patches/async-io" }
