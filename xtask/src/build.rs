@@ -7,20 +7,35 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Extra `-D`s handed to every C dependency.
+/// Extra flags handed to every C dependency.
 ///
 /// `_GNU_SOURCE` puts cosmo's headers in the Linux shape a library built for
-/// linux-musl expects, gating declarations like `madvise` (mimalloc needs
-/// this one). cosmo uses the macro for visibility only, never to switch a
-/// function's signature the way glibc does for `strerror_r`.
+/// linux-musl expects, gating declarations like `madvise`. cosmo uses the
+/// macro for visibility only, never to switch a function's signature the way
+/// glibc does for `strerror_r`.
+///
+/// `scripts/cdeps-predef.h` rides along as a force-include for the cases a
+/// `-D` cannot express; read it for what is in there and why.
 ///
 /// The rest are self-referential macros for cosmo constants that are
 /// `extern const int` rather than macros, so that a library's `#ifndef X`
 /// probe answers "defined" at any include order instead of installing a
 /// `#define X 0` fallback that breaks cosmo's declaration (libgit2's
 /// src/util/posix.h). Uses still reach the runtime variable: GCC expands the
-/// macro once.
-const C_PREDEFS: &[&str] = &["-D_GNU_SOURCE", "-DSOCK_CLOEXEC=SOCK_CLOEXEC"];
+/// macro once. jemalloc needs `MADV_FREE`, where the failing probe is an
+/// `#ifdef` that falls through to a name only its Linux configure path
+/// defines, so the miss surfaces as an undeclared identifier in pages.c.
+/// `HAVE_ENDIAN_H` is a different shape again: mikepb's portable/endian.h,
+/// vendored by tree-sitter among others, picks its branch off `__linux__` and
+/// friends and ends in `#error platform not supported` when none match. That
+/// macro is the escape hatch it publishes, and cosmo's <endian.h> has every
+/// name it would otherwise define.
+const C_PREDEFS: &[&str] = &[
+    "-D_GNU_SOURCE",
+    "-DSOCK_CLOEXEC=SOCK_CLOEXEC",
+    "-DMADV_FREE=MADV_FREE",
+    "-DHAVE_ENDIAN_H",
+];
 
 #[derive(Args)]
 pub struct BuildArgs {
@@ -377,8 +392,9 @@ fn cargo_build(
         cmd.env(
             format!("{var}_{t}"),
             format!(
-                "-fno-stack-protector -mstack-protector-guard=global {} {user}",
-                C_PREDEFS.join(" ")
+                "-fno-stack-protector -mstack-protector-guard=global {} -include {} {user}",
+                C_PREDEFS.join(" "),
+                root.join("scripts/cdeps-predef.h").display()
             ),
         );
     }
