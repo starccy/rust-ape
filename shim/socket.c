@@ -241,7 +241,22 @@ int __ape_shim_socketpair(int domain, int lin_type, int protocol, int sv[2]) {
         made = nt_unix_pair(type, sv);
     // Falling back rather than failing: cosmo's own pair is what shipped
     // before, and it is still better than no pair at all.
-    if (made < 0 && socketpair(host_domain, type, protocol, sv) < 0) return -1;
+    if (made < 0 && socketpair(host_domain, type, protocol, sv) < 0) {
+        // XNU's AF_UNIX has no SOCK_SEQPACKET and says so with
+        // EPROTONOSUPPORT. std asks for one on every linux target, as the
+        // channel a failed exec reports its errno back on, so without this
+        // every Command::spawn that skips posix_spawn (a pre_exec closure, a
+        // uid, a chroot) dies on macOS before it even forks. A stream pair
+        // carries that exchange whole, one write and then EOF from the
+        // CLOEXEC close. What it gives up is message boundaries, so a caller
+        // that sends two records back to back may read them as one.
+        if (!(host_domain == AF_UNIX && (type & ~SOCK_CLOEXEC) == SOCK_SEQPACKET &&
+              (errno == EPROTONOSUPPORT || errno == ESOCKTNOSUPPORT ||
+               errno == EPROTOTYPE)))
+            return -1;
+        int stream = (type & SOCK_CLOEXEC) | SOCK_STREAM;
+        if (socketpair(host_domain, stream, protocol, sv) < 0) return -1;
+    }
     if (!nonblock) return 0;
 
     for (int i = 0; i < 2; i++) {
