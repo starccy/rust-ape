@@ -33,7 +33,9 @@
 #include <stdint.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/types.h>
 #include <termios.h>
+#include <unistd.h>
 
 #include <libc/sysv/consts/baud.internal.h>
 #include <libc/sysv/consts/fio.h>
@@ -379,5 +381,28 @@ int __ape_shim_ioctl(int fd, int lin_req, ...) {
         return ioctl(fd, TIOCSWINSZ, arg);
     if (lin_req == SHIM_LIN_FIONREAD && FIONREAD)
         return ioctl(fd, FIONREAD, arg); // int* both sides
+
+    // Session and job control, which is what a pty child does between fork
+    // and exec: setsid, then claim the slave as its controlling terminal.
+    // Without these portable-pty's spawn stops at ENOTTY.
+    if (lin_req == SHIM_LIN_TIOCSCTTY && TIOCSCTTY)
+        return ioctl(fd, TIOCSCTTY, arg); // arg is an int by value, not a pointer
+    if (lin_req == SHIM_LIN_TIOCNOTTY && TIOCNOTTY) return ioctl(fd, TIOCNOTTY, arg);
+    // cosmo publishes no TIOCGPGRP or TIOCGSID, and its tcsetpgrp knows what
+    // to do on NT, so all three go through the tc* wrappers instead.
+    if (lin_req == SHIM_LIN_TIOCGPGRP) {
+        pid_t p = tcgetpgrp(fd);
+        if (p < 0) return -1;
+        *(int32_t *)arg = (int32_t)p;
+        return 0;
+    }
+    if (lin_req == SHIM_LIN_TIOCSPGRP) return tcsetpgrp(fd, (pid_t)*(const int32_t *)arg);
+    if (lin_req == SHIM_LIN_TIOCGSID) {
+        pid_t s = tcgetsid(fd);
+        if (s < 0) return -1;
+        *(int32_t *)arg = (int32_t)s;
+        return 0;
+    }
+
     return errno = ENOTTY, -1;
 }

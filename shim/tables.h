@@ -62,6 +62,9 @@
 #define SHIM_LIN_BOTHER 4096
 #define SHIM_LIN_CBAUD 4111
 #define SHIM_LIN_CBAUDEX 4096
+#define SHIM_LIN_TIOCGPGRP 21519
+#define SHIM_LIN_TIOCSPGRP 21520
+#define SHIM_LIN_TIOCGSID 21545
 #if defined(__x86_64__)
 #define SHIM_LIN_SYS_futex 202
 #elif defined(__aarch64__)
@@ -1059,9 +1062,13 @@ static const int SHIM_FIX_TCION = 3; /* cosmo fixes this per-platform-invariant 
 /* SHIM_TIOC_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/termios.h */
 #define SHIM_LIN_TIOCGWINSZ 21523
 #define SHIM_LIN_TIOCSWINSZ 21524
+#define SHIM_LIN_TIOCSCTTY 21518
+#define SHIM_LIN_TIOCNOTTY 21538
 #define SHIM_TIOC_TABLE(X) \
   X(TIOCGWINSZ, SHIM_LIN_TIOCGWINSZ) \
   X(TIOCSWINSZ, SHIM_LIN_TIOCSWINSZ) \
+  X(TIOCSCTTY, SHIM_LIN_TIOCSCTTY) \
+  X(TIOCNOTTY, SHIM_LIN_TIOCNOTTY) \
   /* end SHIM_TIOC_TABLE */
 
 /* SHIM_FIO_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/fio.h */

@@ -185,6 +185,8 @@ const TCFLOWS: &[(&str, bool)] = &[
 /// tcgetattr/tcsetattr, so their Linux values live in SINGLES instead.
 const TIOCS: &[(&str, bool)] = &[
     ("TIOCGWINSZ", R), ("TIOCSWINSZ", R),
+    // Session control, which is what a pty child does between fork and exec.
+    ("TIOCSCTTY", R), ("TIOCNOTTY", R),
 ];
 
 const FIOS: &[(&str, bool)] = &[
@@ -351,6 +353,9 @@ const SINGLES: &[&str] = &[
     "TCGETS", "TCSETS", "TCSETSW", "TCSETSF",
     "TCGETS2", "TCSETS2", "TCSETSW2", "TCSETSF2",
     "BOTHER", "CBAUD", "CBAUDEX",
+    // Job-control ioctl requests the shim reroutes to tcgetpgrp/tcsetpgrp/
+    // tcgetsid; cosmo publishes no constant for the first and last of them.
+    "TIOCGPGRP", "TIOCSPGRP", "TIOCGSID",
     // raw syscall rerouting: futex (std's parker, parking_lot & friends)
     // and getrandom (the getrandom crate's syscall path)
     "SYS_futex", "FUTEX_WAIT", "FUTEX_WAKE", "FUTEX_PRIVATE_FLAG",

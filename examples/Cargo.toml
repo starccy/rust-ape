@@ -20,10 +20,13 @@ libc = "0.2"
 sha2 = "0.11.0"
 blake3 = "1.8.6"
 md-5 = "0.11.0"
-ureq = "3.3.0"
+ureq = "3.4.0"
 ratatui = "0.30.2"
 # crossterm use mio by default, which can cause problem. so enable `use-dev-tty` here
 crossterm = { version = "0.28.1", features = ["use-dev-tty", "events"] }
+# pty. Its unix path wants TIOCSCTTY from the child between fork and exec,
+# which shim/termios.c answers.
+portable-pty = "0.9"
 # parking_lot parks via raw syscall(SYS_futex) — the __ape_shim_syscall path.
 parking_lot = "0.12"
 

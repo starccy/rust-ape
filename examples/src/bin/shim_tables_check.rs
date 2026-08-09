@@ -89,6 +89,12 @@
 #[cfg(target_arch = "aarch64")] const _: () = assert!(libc::CBAUD as i64 == 4111);
 #[cfg(target_arch = "x86_64")] const _: () = assert!(libc::CBAUDEX as i64 == 4096);
 #[cfg(target_arch = "aarch64")] const _: () = assert!(libc::CBAUDEX as i64 == 4096);
+#[cfg(target_arch = "x86_64")] const _: () = assert!(libc::TIOCGPGRP as i64 == 21519);
+#[cfg(target_arch = "aarch64")] const _: () = assert!(libc::TIOCGPGRP as i64 == 21519);
+#[cfg(target_arch = "x86_64")] const _: () = assert!(libc::TIOCSPGRP as i64 == 21520);
+#[cfg(target_arch = "aarch64")] const _: () = assert!(libc::TIOCSPGRP as i64 == 21520);
+#[cfg(target_arch = "x86_64")] const _: () = assert!(libc::TIOCGSID as i64 == 21545);
+#[cfg(target_arch = "aarch64")] const _: () = assert!(libc::TIOCGSID as i64 == 21545);
 #[cfg(target_arch = "x86_64")] const _: () = assert!(libc::SYS_futex as i64 == 202);
 #[cfg(target_arch = "aarch64")] const _: () = assert!(libc::SYS_futex as i64 == 98);
 #[cfg(target_arch = "x86_64")] const _: () = assert!(libc::FUTEX_WAIT as i64 == 0);
@@ -935,6 +941,10 @@
 #[cfg(target_arch = "aarch64")] const _: () = assert!(libc::TIOCGWINSZ as i64 == 21523);
 #[cfg(target_arch = "x86_64")] const _: () = assert!(libc::TIOCSWINSZ as i64 == 21524);
 #[cfg(target_arch = "aarch64")] const _: () = assert!(libc::TIOCSWINSZ as i64 == 21524);
+#[cfg(target_arch = "x86_64")] const _: () = assert!(libc::TIOCSCTTY as i64 == 21518);
+#[cfg(target_arch = "aarch64")] const _: () = assert!(libc::TIOCSCTTY as i64 == 21518);
+#[cfg(target_arch = "x86_64")] const _: () = assert!(libc::TIOCNOTTY as i64 == 21538);
+#[cfg(target_arch = "aarch64")] const _: () = assert!(libc::TIOCNOTTY as i64 == 21538);
 #[cfg(target_arch = "x86_64")] const _: () = assert!(libc::FIONREAD as i64 == 21531);
 #[cfg(target_arch = "aarch64")] const _: () = assert!(libc::FIONREAD as i64 == 21531);
 

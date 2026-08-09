@@ -55,7 +55,7 @@ version:
 | `rlimit.c` | the `RLIMIT_*` resource numbers, plus a `prlimit` cosmo doesn't have |
 | `xattr.c` | the extended-attribute family, as a raw syscall on Linux and `ENOTSUP` elsewhere |
 | `syscall.h` | raw Linux syscalls, for the few APIs cosmo numbers but doesn't wrap |
-| `termios.c` | terminal control, with `struct termios` repacked, flag bits, `c_cc` indices and baud codes translated, and tty ioctls rerouted |
+| `termios.c` | terminal control, with `struct termios` repacked, flag bits, `c_cc` indices and baud codes translated, and tty ioctls rerouted; the session and job-control requests (`TIOCSCTTY`, `TIOCNOTTY`, `TIOCGPGRP`, `TIOCSPGRP`, `TIOCGSID`) are answered too, which is what a pty child needs between fork and exec |
 | `layouts.c` | no code, only compile-time asserts for the structs passed through unrepacked |
 | `stack_chk.c` | a weak `__stack_chk_guard` so -sys crates that force `-fstack-protector` back on still link on aarch64 |
 | `tables.h` | the generated Linux-to-cosmo value tables everything above reads |
