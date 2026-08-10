@@ -37,11 +37,25 @@
 #include <termios.h>
 #include <unistd.h>
 
+#include <libc/intrin/nomultics.h>
 #include <libc/sysv/consts/baud.internal.h>
 #include <libc/sysv/consts/fio.h>
 #include <libc/sysv/consts/termios.h>
 
 #include "tables.h"
+
+// cosmo's NT tcsetattr rebuilds __ttyconf.magic from the termios flags alone
+// (tcsetattr-nt.c starts with `__ttyconf.magic = 0`), which also wipes
+// kTtyXtMouse -- a bit owned by the DECSET interceptor on the write path,
+// not by termios. Carrying it across the call keeps xterm mouse reporting
+// active no matter how raw-mode toggles and mouse-enable writes are
+// ordered. A no-op on hosts whose tcsetattr goes to the kernel.
+static int tcsetattr_keep_mouse(int fd, int act, const struct termios *t) {
+    unsigned mouse = __ttyconf.magic & kTtyXtMouse;
+    int rc = tcsetattr(fd, act, t);
+    __ttyconf.magic |= mouse;
+    return rc;
+}
 
 // ---- Linux-side layouts (kernel prefix shared) ----------------------------
 
@@ -257,7 +271,7 @@ int __ape_shim_tcsetattr(int fd, int act, const struct lin_termios *lt) {
     struct termios t;
     uint32_t f[4] = { lt->c_iflag, lt->c_oflag, lt->c_cflag, lt->c_lflag };
     prefix_to_host(&t, f, lt->c_cc, 32);
-    return tcsetattr(fd, act, &t);
+    return tcsetattr_keep_mouse(fd, act, &t);
 }
 
 int __ape_shim_tcflush(int fd, int qs) {
@@ -358,7 +372,7 @@ static int tio_set(int fd, const void *arg, bool two, int act) {
         cc = k->c_cc;
     }
     prefix_to_host(&t, f, cc, 19);
-    return tcsetattr(fd, act, &t);
+    return tcsetattr_keep_mouse(fd, act, &t);
 }
 
 int __ape_shim_ioctl(int fd, int lin_req, ...) {

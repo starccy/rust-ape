@@ -134,11 +134,45 @@ static int type_to_host(int lin, int *out) {
 // ways a socket enters the process, and cosmo starts Winsock lazily too.
 void __ape_shim_pin_winsock(void);
 
+// shim/epoll.c's edge-triggered arming: EAGAIN from a recv-flavored call
+// re-arms the read side, EAGAIN from a send-flavored one the write side, and
+// fd creation/duplication retires stale pipe-pair records for that number.
+void __ape_shim_epoll_rearm_in(int fd);
+void __ape_shim_epoll_rearm_out(int fd);
+void __ape_shim_epoll_note_pair(int a, int b);
+void __ape_shim_epoll_note_new_fd(int fd);
+void __ape_shim_epoll_hint_pipe_write(int fd);
+
+// Data as well as EAGAIN re-arms the read side: a real kernel reports a
+// fresh edge when new bytes arrive later, so a consumer that stops at a
+// short read instead of draining to EAGAIN must keep getting events. EOF
+// and hard errors don't re-arm, keeping HUP/ERR single-shot.
+static long recv_result(int fd, long r) {
+    if (r > 0 || (r == -1 && errno == EAGAIN)) __ape_shim_epoll_rearm_in(fd);
+    return r;
+}
+
+// A short send re-arms the write side like EAGAIN does: callers treat a
+// partial send as a full buffer and wait for the next writability event,
+// and the NT clamp produces partial sends on sockets whose buffers still
+// have room. `want` is the original request length, before clamping.
+static long send_result(int fd, long r, unsigned long want) {
+    if (r > 0) {
+        __ape_shim_epoll_hint_pipe_write(fd);
+        if ((unsigned long)r < want) __ape_shim_epoll_rearm_out(fd);
+    } else if (r == -1 && errno == EAGAIN) {
+        __ape_shim_epoll_rearm_out(fd);
+    }
+    return r;
+}
+
 int __ape_shim_socket(int domain, int lin_type, int protocol) {
     int type;
     type_to_host(lin_type, &type);
     __ape_shim_pin_winsock();
-    return socket(af_to_host(domain), type, protocol);
+    int fd = socket(af_to_host(domain), type, protocol);
+    if (fd >= 0) __ape_shim_epoll_note_new_fd(fd);
+    return fd;
 }
 
 // A pair of AF_UNIX sockets built the ordinary way: listen, connect, accept.
@@ -257,18 +291,20 @@ int __ape_shim_socketpair(int domain, int lin_type, int protocol, int sv[2]) {
         int stream = (type & SOCK_CLOEXEC) | SOCK_STREAM;
         if (socketpair(host_domain, stream, protocol, sv) < 0) return -1;
     }
-    if (!nonblock) return 0;
-
-    for (int i = 0; i < 2; i++) {
-        int fl = fcntl(sv[i], F_GETFL);
-        if (fl < 0 || fcntl(sv[i], F_SETFL, fl | O_NONBLOCK) < 0) {
-            int err = errno;
-            close(sv[0]);
-            close(sv[1]);
-            errno = err;
-            return -1;
+    if (nonblock) {
+        for (int i = 0; i < 2; i++) {
+            int fl = fcntl(sv[i], F_GETFL);
+            if (fl < 0 || fcntl(sv[i], F_SETFL, fl | O_NONBLOCK) < 0) {
+                int err = errno;
+                close(sv[0]);
+                close(sv[1]);
+                errno = err;
+                return -1;
+            }
         }
     }
+    // Either end may serve as the waker's read side; record both directions.
+    __ape_shim_epoll_note_pair(sv[0], sv[1]);
     return 0;
 }
 
@@ -277,13 +313,25 @@ int __ape_shim_accept4(int fd, void *addr, unsigned *len, int lin_flags) {
     if (lin_flags & SHIM_LIN_SOCK_CLOEXEC) flags |= SOCK_CLOEXEC;
     if (lin_flags & SHIM_LIN_SOCK_NONBLOCK) flags |= SOCK_NONBLOCK;
     int r = accept4(fd, addr, len, flags);
-    if (r >= 0) addr_to_linux(addr, len);
+    if (r >= 0) {
+        addr_to_linux(addr, len);
+        __ape_shim_epoll_note_new_fd(r);
+        __ape_shim_epoll_rearm_in(fd); // more connections may be pending
+    } else if (errno == EAGAIN) {
+        __ape_shim_epoll_rearm_in(fd);
+    }
     return r;
 }
 
 int __ape_shim_accept(int fd, void *addr, unsigned *len) {
     int r = accept(fd, addr, len);
-    if (r >= 0) addr_to_linux(addr, len);
+    if (r >= 0) {
+        addr_to_linux(addr, len);
+        __ape_shim_epoll_note_new_fd(r);
+        __ape_shim_epoll_rearm_in(fd); // more connections may be pending
+    } else if (errno == EAGAIN) {
+        __ape_shim_epoll_rearm_in(fd);
+    }
     return r;
 }
 
@@ -443,35 +491,35 @@ unsigned long __ape_shim_nt_clamp(int fd, unsigned long n) {
 }
 
 long __ape_shim_send(int fd, const void *buf, unsigned long n, int flags) {
-    if (__ape_shim_nt_wants_eagain(fd)) return -1;
+    if (__ape_shim_nt_wants_eagain(fd)) return send_result(fd, -1, n);
     int host = msg_to_host(flags);
     unsigned long len = __ape_shim_nt_clamp(fd, n);
     long r = send(fd, buf, len, host);
     if (nosignal_retry(host, r)) r = send(fd, buf, len, host & ~MSG_NOSIGNAL);
-    return r;
+    return send_result(fd, r, n);
 }
 
 long __ape_shim_sendto(int fd, const void *buf, unsigned long n, int flags,
                        const void *addr, unsigned alen) {
     struct fam_copy tmp;
-    if (__ape_shim_nt_wants_eagain(fd)) return -1;
+    if (__ape_shim_nt_wants_eagain(fd)) return send_result(fd, -1, n);
     int host = msg_to_host(flags);
     unsigned long len = __ape_shim_nt_clamp(fd, n);
     const void *to = addr_to_host(addr, &alen, &tmp);
     long r = sendto(fd, buf, len, host, to, alen);
     if (nosignal_retry(host, r)) r = sendto(fd, buf, len, host & ~MSG_NOSIGNAL, to, alen);
-    return r;
+    return send_result(fd, r, n);
 }
 
 long __ape_shim_recv(int fd, void *buf, unsigned long n, int flags) {
-    return recv(fd, buf, n, msg_to_host(flags));
+    return recv_result(fd, recv(fd, buf, n, msg_to_host(flags)));
 }
 
 long __ape_shim_recvfrom(int fd, void *buf, unsigned long n, int flags,
                          void *addr, unsigned *alen) {
     long r = recvfrom(fd, buf, n, msg_to_host(flags), addr, alen);
     if (r >= 0) addr_to_linux(addr, alen);
-    return r;
+    return recv_result(fd, r);
 }
 
 // ---------------------------------------------------------------------------
@@ -594,13 +642,22 @@ static unsigned long cmsgs_to_linux_layout(const unsigned char *src, unsigned lo
     return di;
 }
 
+static unsigned long msg_total(const struct msghdr *msg) {
+    unsigned long total = 0;
+    if (msg && msg->msg_iov)
+        for (size_t i = 0; i < (size_t)msg->msg_iovlen; i++)
+            total += msg->msg_iov[i].iov_len;
+    return total;
+}
+
 long __ape_shim_sendmsg(int fd, const struct msghdr *msg, int flags) {
-    if (__ape_shim_nt_wants_eagain(fd)) return -1;
+    unsigned long want = msg_total(msg);
+    if (__ape_shim_nt_wants_eagain(fd)) return send_result(fd, -1, want);
     if (!msg) {
         int host = msg_to_host(flags);
         long r = sendmsg(fd, msg, host);
         if (nosignal_retry(host, r)) r = sendmsg(fd, msg, host & ~MSG_NOSIGNAL);
-        return r;
+        return send_result(fd, r, want);
     }
     struct msghdr m = *msg;
     struct fam_copy name_tmp;
@@ -628,7 +685,7 @@ long __ape_shim_sendmsg(int fd, const struct msghdr *msg, int flags) {
     int host = msg_to_host(flags);
     long r = sendmsg(fd, &m, host);
     if (nosignal_retry(host, r)) r = sendmsg(fd, &m, host & ~MSG_NOSIGNAL);
-    return r;
+    return send_result(fd, r, want);
 }
 
 long __ape_shim_recvmsg(int fd, struct msghdr *msg, int flags) {
@@ -649,7 +706,7 @@ long __ape_shim_recvmsg(int fd, struct msghdr *msg, int flags) {
     // BSD->linux expansion below writes back into the caller's buffer and
     // needs the original capacity.
     unsigned long ctl_cap = msg ? msg->msg_controllen : 0;
-    long r = recvmsg(fd, msg, msg_to_host(flags));
+    long r = recv_result(fd, recvmsg(fd, msg, msg_to_host(flags)));
     if (r >= 0 && msg) {
         if (msg->msg_name && msg->msg_namelen >= 2) {
             unsigned short *fam = msg->msg_name;

@@ -17,14 +17,23 @@
 //   else   -- an interest list kept here, flattened into a pollfd array and
 //             handed to cosmo's poll() on every wait.
 //
-// Two things the emulation cannot promise, both worth knowing before you
-// read further:
+// Two things worth knowing before you read further:
 //
-//   * EPOLLET is accepted and ignored, so every registration behaves as
-//     level-triggered. Edge semantics need the kernel to notice the moment
-//     data arrives; polling for state cannot tell "still readable" from
-//     "drained and refilled" without a window where events go missing.
-//     Reporting too often is survivable, reporting too rarely is not.
+//   * EPOLLET and EPOLLONESHOT are emulated with per-direction arming
+//     rather than kernel edges. An armed direction is polled; once an
+//     event is reported the direction disarms (ONESHOT disarms the whole
+//     entry) and is no longer polled, so a permanently-ready condition --
+//     an idle socket's POLLOUT, an unread waker pipe's POLLIN -- does not
+//     turn the wait into a busy loop. Re-arming happens on epoll_ctl MOD
+//     and from the io/socket/read shims through the
+//     __ape_shim_epoll_rearm_* hooks: EAGAIN re-arms the direction it
+//     came from, a read that returned data re-arms the read side, and a
+//     short write re-arms the write side. A read end that is registered
+//     but never read is additionally re-armed through the pipe-pair table
+//     below whenever its write end is written. Re-arms may be spurious;
+//     none can lose an event. Setting RUST_APE_EPOLL_LT in the
+//     environment ignores both flags and restores plain level-triggered
+//     behavior.
 //   * On Windows, cosmo's poll() refuses arrays past a certain size, and a
 //     wait that hits that stops blocking and scans on a 10ms tick instead.
 //     See poll_chunked below. It only happens to the calls cosmo would
@@ -90,10 +99,17 @@ struct shim_epoll_event {
 #define SHIM_EPOLLERR 0x008u
 #define SHIM_EPOLLHUP 0x010u
 #define SHIM_EPOLLRDHUP 0x2000u
+#define SHIM_EPOLLONESHOT 0x40000000u
+#define SHIM_EPOLLET 0x80000000u
 
 #define SHIM_EPOLL_CTL_ADD 1
 #define SHIM_EPOLL_CTL_DEL 2
 #define SHIM_EPOLL_CTL_MOD 3
+
+// Per-direction arming for EPOLLET/EPOLLONESHOT entries. The read side
+// covers IN, PRI, and RDHUP; ERR and HUP are terminal and disarm both.
+#define SHIM_ARM_IN 1u
+#define SHIM_ARM_OUT 2u
 
 // Linux's EPOLL_CLOEXEC, which is O_CLOEXEC's value there.
 #define SHIM_EPOLL_CLOEXEC 02000000
@@ -102,6 +118,7 @@ struct shim_epoll_entry {
     int fd;
     uint32_t events;
     uint64_t data;
+    uint32_t armed;
 };
 
 // An epoll fd can be duplicated, and mio does exactly that: tokio's runtime
@@ -160,15 +177,36 @@ void __ape_shim_epoll_note_dup(int oldfd, int newfd) {
     pthread_mutex_unlock(&g_sets_lock);
 }
 
-static short epoll_to_poll(uint32_t e) {
+// The escape hatch: ignore EPOLLET/EPOLLONESHOT and behave like the old
+// purely level-triggered emulation. The race on `cached` is harmless.
+static int lt_forced(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        const char *v = getenv("RUST_APE_EPOLL_LT");
+        cached = v && *v;
+    }
+    return cached;
+}
+
+// Which directions of this entry should be polled right now. Plain
+// level-triggered registrations are always fully armed.
+static uint32_t effective_armed(const struct shim_epoll_entry *e) {
+    if (!(e->events & (SHIM_EPOLLET | SHIM_EPOLLONESHOT)) || lt_forced())
+        return SHIM_ARM_IN | SHIM_ARM_OUT;
+    return e->armed;
+}
+
+static short epoll_to_poll(uint32_t e, uint32_t armed) {
     short p = 0;
-    if (e & SHIM_EPOLLIN) p |= POLLIN;
-    if (e & SHIM_EPOLLOUT) p |= POLLOUT;
-    if (e & SHIM_EPOLLPRI) p |= POLLPRI;
+    if (armed & SHIM_ARM_IN) {
+        if (e & SHIM_EPOLLIN) p |= POLLIN;
+        if (e & SHIM_EPOLLPRI) p |= POLLPRI;
 #ifdef POLLRDHUP
-    if (e & SHIM_EPOLLRDHUP) p |= POLLRDHUP;
+        if (e & SHIM_EPOLLRDHUP) p |= POLLRDHUP;
 #endif
-    return p; // EPOLLET and friends carry no poll() meaning; see the header
+    }
+    if ((armed & SHIM_ARM_OUT) && (e & SHIM_EPOLLOUT)) p |= POLLOUT;
+    return p;
 }
 
 static uint32_t poll_to_epoll(short r) {
@@ -208,7 +246,10 @@ static void drain(int fd) {
 // builds and tears down runtimes in a loop (tokio does, on shutdown) ends up
 // with two sets claiming one number and the newer registrations landing in
 // the older set's list.
-static void forget_fd(int fd) {
+// Retired wakers are handed back to the caller to close outside the lock: a
+// close() can relay a pending signal on NT, and the handler may re-enter this
+// file through the write-shim hooks, which need g_sets_lock.
+static void forget_fd(int fd, int *closes, int *ncloses) {
     for (int i = 0; i < SHIM_EPOLL_MAX_SETS; i++) {
         if (!g_sets[i].used) continue;
         int hit = 0;
@@ -219,7 +260,7 @@ static void forget_fd(int fd) {
                 hit = 1;
             }
         if (hit && g_sets[i].nhandles == 0) {
-            close(g_sets[i].waker);
+            closes[(*ncloses)++] = g_sets[i].waker;
             free(g_sets[i].entries);
             pthread_mutex_destroy(&g_sets[i].lock);
             memset(&g_sets[i], 0, sizeof(g_sets[i]));
@@ -238,10 +279,12 @@ static int emu_create1(int flags) {
         if (flags & SHIM_EPOLL_CLOEXEC) fcntl(p[i], F_SETFD, FD_CLOEXEC);
     }
 
+    int closes[SHIM_EPOLL_MAX_SETS * 2];
+    int ncloses = 0;
     pthread_mutex_lock(&g_sets_lock);
     // The numbers we just got cannot belong to a live set. See forget_fd.
-    forget_fd(p[0]);
-    forget_fd(p[1]);
+    forget_fd(p[0], closes, &ncloses);
+    forget_fd(p[1], closes, &ncloses);
 
     // Sets whose handles are all closed without their numbers having been
     // reused yet. Only reclaims the waker fd yet to be leaked; correctness
@@ -252,7 +295,7 @@ static int emu_create1(int flags) {
         for (int h = 0; h < g_sets[i].nhandles; h++)
             if (fcntl(g_sets[i].handles[h], F_GETFD) != -1) alive = 1;
         if (alive) continue;
-        close(g_sets[i].waker);
+        closes[ncloses++] = g_sets[i].waker;
         free(g_sets[i].entries);
         pthread_mutex_destroy(&g_sets[i].lock);
         memset(&g_sets[i], 0, sizeof(g_sets[i]));
@@ -266,6 +309,7 @@ static int emu_create1(int flags) {
         }
     if (!s) {
         pthread_mutex_unlock(&g_sets_lock);
+        for (int i = 0; i < ncloses; i++) close(closes[i]);
         close(p[0]);
         close(p[1]);
         errno = EMFILE;
@@ -280,6 +324,7 @@ static int emu_create1(int flags) {
     s->cap = 0;
     pthread_mutex_init(&s->lock, NULL);
     pthread_mutex_unlock(&g_sets_lock);
+    for (int i = 0; i < ncloses; i++) close(closes[i]);
     return p[0];
 }
 
@@ -328,6 +373,7 @@ static int emu_ctl(int epfd, int op, int fd, struct shim_epoll_event *ev) {
             s->entries[s->count].fd = fd;
             s->entries[s->count].events = ev->events;
             s->entries[s->count].data = ev->data;
+            s->entries[s->count].armed = SHIM_ARM_IN | SHIM_ARM_OUT;
             s->count++;
             break;
         case SHIM_EPOLL_CTL_MOD:
@@ -338,6 +384,7 @@ static int emu_ctl(int epfd, int op, int fd, struct shim_epoll_event *ev) {
             }
             e->events = ev->events;
             e->data = ev->data;
+            e->armed = SHIM_ARM_IN | SHIM_ARM_OUT; // MOD re-arms; ONESHOT's protocol
             break;
         case SHIM_EPOLL_CTL_DEL:
             if (!e) {
@@ -423,7 +470,10 @@ static int emu_wait(int epfd, struct shim_epoll_event *out, int maxevents,
 
     for (;;) {
         // Snapshot the interest list. Entry 0 is the waker, so a change made
-        // while we are inside poll() below cuts the wait short.
+        // while we are inside poll() below cuts the wait short. Entries with
+        // no armed direction are left out entirely, so a reported and not
+        // yet re-armed condition is not polled; a re-arm writes the waker
+        // and the next rebuild includes the fd again.
         pthread_mutex_lock(&s->lock);
         int n = s->count;
         if (n + 1 > pcap) {
@@ -441,10 +491,23 @@ static int emu_wait(int epfd, struct shim_epoll_event *out, int maxevents,
         pfds[0].fd = s->handles[0];
         pfds[0].events = POLLIN;
         pfds[0].revents = 0;
+        int np = 1;
         for (int i = 0; i < n; i++) {
-            pfds[i + 1].fd = s->entries[i].fd;
-            pfds[i + 1].events = epoll_to_poll(s->entries[i].events);
-            pfds[i + 1].revents = 0;
+            uint32_t am = effective_armed(&s->entries[i]);
+            short ev = epoll_to_poll(s->entries[i].events, am);
+            // An ET/ONESHOT entry whose armed directions leave nothing to
+            // poll for is excluded entirely rather than given an events=0
+            // slot: cosmo's NT poll reports a pipe's readability without
+            // masking it against events, so an events=0 slot returns ready
+            // on every call and the wait never blocks. Plain LT entries
+            // keep the events=0 slot and with it HUP/ERR reporting.
+            if (!ev && ((s->entries[i].events & (SHIM_EPOLLET | SHIM_EPOLLONESHOT)) &&
+                        !lt_forced()))
+                continue;
+            pfds[np].fd = s->entries[i].fd;
+            pfds[np].events = ev;
+            pfds[np].revents = 0;
+            np++;
         }
         pthread_mutex_unlock(&s->lock);
 
@@ -456,9 +519,9 @@ static int emu_wait(int epfd, struct shim_epoll_event *out, int maxevents,
             ms = left <= 0 ? 0 : (left > INT_MAX ? INT_MAX : (int)left);
         }
 
-        int rc = poll(pfds, (nfds_t)(n + 1), ms);
-        if (rc == -1 && errno == EINVAL && n + 1 > SHIM_POLL_CHUNK)
-            rc = poll_chunked(pfds, n + 1, ms);
+        int rc = poll(pfds, (nfds_t)np, ms);
+        if (rc == -1 && errno == EINVAL && np > SHIM_POLL_CHUNK)
+            rc = poll_chunked(pfds, np, ms);
         if (rc == -1) {
             if (errno == EINTR) {
                 if (deadline < 0 || now_ms() < deadline) continue;
@@ -477,7 +540,7 @@ static int emu_wait(int epfd, struct shim_epoll_event *out, int maxevents,
                 // drop; the retry budget covers that without spinning
                 // forever on a genuinely wedged set.
                 int dropped = 0;
-                for (int i = 1; i <= n; i++) {
+                for (int i = 1; i < np; i++) {
                     struct pollfd one = {pfds[i].fd, pfds[i].events, 0};
                     int r1 = poll(&one, 1, 0);
                     if (r1 != -1 && !(one.revents & POLLNVAL)) continue;
@@ -509,17 +572,37 @@ static int emu_wait(int epfd, struct shim_epoll_event *out, int maxevents,
         }
 
         // Match revents back to tokens under the lock, since an fd may have
-        // been dropped from the list while poll() was running.
+        // been dropped from the list while poll() was running. Disarming
+        // happens here, only for events actually handed out: a ready entry
+        // cut off by maxevents stays armed and reports on the next wait.
         int got = 0;
         if (rc > 0) {
             pthread_mutex_lock(&s->lock);
-            for (int i = 1; i <= n && got < maxevents; i++) {
-                if (!pfds[i].revents) continue;
+            for (int i = 1; i < np && got < maxevents; i++) {
+                // Only bits that were asked for count as an event, plus
+                // POLLERR/POLLHUP/POLLNVAL, which poll may always report.
+                short care = pfds[i].events | POLLERR | POLLHUP | POLLNVAL;
+                short bits = pfds[i].revents & care;
+                if (!bits) continue;
                 struct shim_epoll_entry *e = find_entry(s, pfds[i].fd);
                 if (!e) continue; // deregistered mid-poll
-                out[got].events = poll_to_epoll(pfds[i].revents);
+                uint32_t ev = poll_to_epoll(bits);
+                out[got].events = ev;
                 out[got].data = e->data;
                 got++;
+                if (lt_forced()) continue;
+                if (e->events & SHIM_EPOLLONESHOT) {
+                    e->armed = 0;
+                } else if (e->events & SHIM_EPOLLET) {
+                    if (ev & (SHIM_EPOLLERR | SHIM_EPOLLHUP)) {
+                        e->armed = 0; // terminal; the consumer reads the EOF
+                    } else {
+                        if (ev & (SHIM_EPOLLIN | SHIM_EPOLLPRI | SHIM_EPOLLRDHUP))
+                            e->armed &= ~SHIM_ARM_IN;
+                        if (ev & SHIM_EPOLLOUT)
+                            e->armed &= ~SHIM_ARM_OUT;
+                    }
+                }
             }
             pthread_mutex_unlock(&s->lock);
         }
@@ -530,6 +613,142 @@ static int emu_wait(int epfd, struct shim_epoll_event *out, int maxevents,
         }
         // Woken with nothing to report and time still on the clock.
     }
+}
+
+// ---------------------------------------------------------------------------
+// Re-arming for the EPOLLET emulation. The io/socket/read shims call these:
+//
+//   rearm_in/rearm_out  -- an I/O call on fd showed that its read or write
+//                          side must be watched again (EAGAIN, a read that
+//                          returned data, or a short write).
+//   note_pipe           -- a pipe was created as (rfd, wfd); a write to wfd
+//                          makes rfd readable.
+//   note_new_fd         -- fd was just created; recorded pairs naming this
+//                          number refer to a closed fd and are dropped.
+//   hint_pipe_write     -- wfd was written; re-arm the paired read end.
+//                          This covers a read end that is registered
+//                          EPOLLET but never read, which the EAGAIN-based
+//                          re-arms cannot reach.
+//
+// A spurious re-arm costs one extra wakeup; a stale pair can only cause
+// spurious re-arms. Neither can lose an event.
+
+static void rearm(int fd, uint32_t bits) {
+    // This runs inside the write()/send() shims, which a signal handler may
+    // call (self-pipe wakeups are written from handlers, and cosmo's NT
+    // layer runs handlers from within syscalls). No syscall may happen
+    // while a lock is held here, or a handler running on the thread that
+    // holds the lock would deadlock against it; the waker writes are
+    // collected and issued after everything is released.
+    int kicks[SHIM_EPOLL_MAX_SETS];
+    int nkicks = 0;
+    pthread_mutex_lock(&g_sets_lock);
+    for (int i = 0; i < SHIM_EPOLL_MAX_SETS; i++) {
+        struct shim_epoll_set *s = &g_sets[i];
+        if (!s->used) continue;
+        pthread_mutex_lock(&s->lock);
+        struct shim_epoll_entry *e = find_entry(s, fd);
+        // ONESHOT entries only re-arm through epoll_ctl MOD; re-arming one
+        // here would grow a second event out of a single registration.
+        if (e && (e->events & SHIM_EPOLLET) && !(e->events & SHIM_EPOLLONESHOT)) {
+            uint32_t neu = e->armed | bits;
+            if (neu != e->armed) {
+                e->armed = neu;
+                // A waiter may be parked with this fd left out of its array.
+                kicks[nkicks++] = s->waker;
+            }
+        }
+        pthread_mutex_unlock(&s->lock);
+    }
+    pthread_mutex_unlock(&g_sets_lock);
+    for (int i = 0; i < nkicks; i++) {
+        char b = 1;
+        (void)!write(kicks[i], &b, 1);
+    }
+}
+
+void __ape_shim_epoll_rearm_in(int fd) {
+    if (fd < 0 || use_syscalls()) return;
+    rearm(fd, SHIM_ARM_IN);
+}
+
+void __ape_shim_epoll_rearm_out(int fd) {
+    if (fd < 0 || use_syscalls()) return;
+    rearm(fd, SHIM_ARM_OUT);
+}
+
+// The pipe-pair table. Small and approximate by design: entries are dropped
+// when either number is observed being reused, overwritten oldest-first when
+// full, and only ever consulted to produce extra wakeups.
+#define SHIM_PIPE_PAIRS 32
+static struct {
+    int r, w;
+} g_pairs[SHIM_PIPE_PAIRS];
+static int g_pairs_next;
+static volatile int g_pairs_live; // lock-free "is the table empty" fast path
+static pthread_mutex_t g_pairs_lock = PTHREAD_MUTEX_INITIALIZER;
+
+// Caller must hold g_pairs_lock.
+static void pairs_drop_locked(int fd) {
+    for (int i = 0; i < SHIM_PIPE_PAIRS; i++) {
+        if (g_pairs[i].w && (g_pairs[i].r == fd || g_pairs[i].w == fd)) {
+            g_pairs[i].r = g_pairs[i].w = 0;
+            g_pairs_live--;
+        }
+    }
+}
+
+void __ape_shim_epoll_note_new_fd(int fd) {
+    if (fd < 0 || !g_pairs_live || use_syscalls()) return;
+    pthread_mutex_lock(&g_pairs_lock);
+    pairs_drop_locked(fd);
+    pthread_mutex_unlock(&g_pairs_lock);
+}
+
+// Caller must hold g_pairs_lock. wfd 0 can't be stored (0 marks an empty
+// slot); a pipe write end on stdin's number is not a case worth carrying
+// state for.
+static void pairs_insert_locked(int rfd, int wfd) {
+    if (rfd < 0 || wfd <= 0) return;
+    int i = g_pairs_next++ % SHIM_PIPE_PAIRS;
+    if (g_pairs[i].w) g_pairs_live--; // overwriting the oldest
+    g_pairs[i].r = rfd;
+    g_pairs[i].w = wfd;
+    g_pairs_live++;
+}
+
+void __ape_shim_epoll_note_pipe(int rfd, int wfd) {
+    if (rfd < 0 || wfd < 0 || use_syscalls()) return;
+    pthread_mutex_lock(&g_pairs_lock);
+    pairs_drop_locked(rfd);
+    pairs_drop_locked(wfd);
+    pairs_insert_locked(rfd, wfd);
+    pthread_mutex_unlock(&g_pairs_lock);
+}
+
+// For socketpair, where either end may serve as the never-read side.
+void __ape_shim_epoll_note_pair(int a, int b) {
+    if (a < 0 || b < 0 || use_syscalls()) return;
+    pthread_mutex_lock(&g_pairs_lock);
+    pairs_drop_locked(a);
+    pairs_drop_locked(b);
+    pairs_insert_locked(a, b);
+    pairs_insert_locked(b, a);
+    pthread_mutex_unlock(&g_pairs_lock);
+}
+
+void __ape_shim_epoll_hint_pipe_write(int wfd) {
+    if (wfd <= 0 || !g_pairs_live || use_syscalls()) return;
+    int rfd = -1;
+    pthread_mutex_lock(&g_pairs_lock);
+    for (int i = 0; i < SHIM_PIPE_PAIRS; i++) {
+        if (g_pairs[i].w == wfd) {
+            rfd = g_pairs[i].r;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_pairs_lock);
+    if (rfd >= 0) rearm(rfd, SHIM_ARM_IN);
 }
 
 // Which implementation answers. Linux takes the syscalls unless

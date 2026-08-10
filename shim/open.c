@@ -44,8 +44,12 @@ static const int shim_no_at_empty_path = 0;
 
 // shim/epoll.c. An emulated epoll fd is a pipe end, so a duplicate of it has
 // to be recorded as naming the same set. No-op on Linux and for every fd that
-// isn't one.
+// isn't one. note_pipe/note_new_fd maintain the pipe-pair table behind the
+// edge-triggered emulation: a fresh pipe is recorded, and any newly created
+// fd number retires stale records from a previous life of that number.
 void __ape_shim_epoll_note_dup(int oldfd, int newfd);
+void __ape_shim_epoll_note_pipe(int rfd, int wfd);
+void __ape_shim_epoll_note_new_fd(int fd);
 
 #define LIN_O_ACCMODE 0x03 // O_RDONLY/O_WRONLY/O_RDWR, same on every platform
 
@@ -172,7 +176,9 @@ int __ape_shim_open(const char *path, int lin, ...) {
         mode = va_arg(ap, unsigned);
         va_end(ap);
     }
-    return open(path, host, mode);
+    int fd = open(path, host, mode);
+    if (fd >= 0) __ape_shim_epoll_note_new_fd(fd);
+    return fd;
 }
 
 int __ape_shim_openat(int dirfd, const char *path, int lin, ...) {
@@ -185,13 +191,17 @@ int __ape_shim_openat(int dirfd, const char *path, int lin, ...) {
         mode = va_arg(ap, unsigned);
         va_end(ap);
     }
-    return openat(at_fdcwd(dirfd), path, host, mode);
+    int fd = openat(at_fdcwd(dirfd), path, host, mode);
+    if (fd >= 0) __ape_shim_epoll_note_new_fd(fd);
+    return fd;
 }
 
 int __ape_shim_pipe2(int fds[2], int lin) {
     int host;
     if (oflags_to_host(lin, &host) < 0) return -1;
-    return pipe2(fds, host);
+    int rc = pipe2(fds, host);
+    if (rc == 0) __ape_shim_epoll_note_pipe(fds[0], fds[1]);
+    return rc;
 }
 
 // fcntl: commands 0..4 (F_DUPFD..F_SETFL) are portable by definition and pass
@@ -207,7 +217,10 @@ int __ape_shim_fcntl(int fd, int cmd, ...) {
     switch (cmd) {
         case 0: { // F_DUPFD
             int nfd = fcntl(fd, cmd, iarg);
-            if (nfd >= 0) __ape_shim_epoll_note_dup(fd, nfd);
+            if (nfd >= 0) {
+                __ape_shim_epoll_note_dup(fd, nfd);
+                __ape_shim_epoll_note_new_fd(nfd);
+            }
             return nfd;
         }
         case 2: // F_SETFD (FD_CLOEXEC is 1 everywhere)
@@ -238,7 +251,10 @@ int __ape_shim_fcntl(int fd, int cmd, ...) {
         case SHIM_LIN_F_DUPFD_CLOEXEC: {
             if (F_DUPFD_CLOEXEC <= 0) return errno = EINVAL, -1;
             int nfd = fcntl(fd, F_DUPFD_CLOEXEC, iarg);
-            if (nfd >= 0) __ape_shim_epoll_note_dup(fd, nfd);
+            if (nfd >= 0) {
+                __ape_shim_epoll_note_dup(fd, nfd);
+                __ape_shim_epoll_note_new_fd(nfd);
+            }
             return nfd;
         }
         default:

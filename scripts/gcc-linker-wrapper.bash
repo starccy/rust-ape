@@ -50,9 +50,12 @@ for shim_src in "$SDK_ROOT"/shim/*.c; do
         # These replace cosmo-internal compilation units and need the
         # _COSMO_SOURCE-gated macros live before the -include'd
         # normalize.inc, which only a command-line define can arrange.
+        # SYSDEBUG=1 keeps their STRACE/DATATRACE lines alive (the SDK
+        # headers default it to 0, but libc.a was built with 1, so without
+        # it a replaced member silently vanishes from --strace output).
         extra=
         case "$shim_src" in
-            */commandv.c|*/mkntpath.c|*/mkntpathat.c|*/readlinkat-nt.c|*/realpath.c) extra=-D_COSMO_SOURCE ;;
+            */commandv.c|*/mkntpath.c|*/mkntpathat.c|*/read.c|*/readlinkat-nt.c|*/realpath.c) extra="-D_COSMO_SOURCE -DSYSDEBUG=1" ;;
         esac
         "$COSMO/bin/$ARCH-unknown-cosmo-cc" -c -O2 -fno-stack-protector $extra \
             -o "$tmp" "$shim_src"
