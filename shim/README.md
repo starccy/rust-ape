@@ -54,6 +54,7 @@ version:
 | `clock.c` | `CLOCK_*` ids, plus `pthread_condattr_setclock` |
 | `futex.c` | reroutes std's `SYS_futex` calls onto cosmo's cross-platform futex, which is what makes Mutex/Condvar actually sleep instead of spin |
 | `io.c` | a poll gate on `write`/`writev` for nonblocking fds, working around cosmo's NT send path ignoring O_NONBLOCK |
+| `dladdr.c` | `dladdr`, which cosmo's dlfcn lacks: answered from `/proc/self/maps` on Linux (`dli_fname` and `dli_fbase` only), "no information" elsewhere |
 | `rlimit.c` | the `RLIMIT_*` resource numbers, plus a `prlimit` cosmo doesn't have |
 | `xattr.c` | the extended-attribute family, as a raw syscall on Linux and `ENOTSUP` elsewhere |
 | `syscall.h` | raw Linux syscalls, for the few APIs cosmo numbers but doesn't wrap |
