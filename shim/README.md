@@ -55,6 +55,11 @@ version:
 | `futex.c` | reroutes std's `SYS_futex` calls onto cosmo's cross-platform futex, which is what makes Mutex/Condvar actually sleep instead of spin |
 | `io.c` | a poll gate on `write`/`writev` for nonblocking fds, working around cosmo's NT send path ignoring O_NONBLOCK |
 | `dladdr.c` | `dladdr`, which cosmo's dlfcn lacks: answered from `/proc/self/maps` on Linux (`dli_fname` and `dli_fbase` only), "no information" elsewhere |
+| `commandv.c` | replaces cosmo's `libc.a(commandv.o)`. The `$PATH` resolver behind `posix_spawnp`/`execvp`, i.e. Rust's `Command::spawn`: on NT an extensionless name that misses retries with `.exe` then `.com` (what CreateProcess and the Cygwin/MSYS exec layers do) |
+| `mkntpath.c` | replaces cosmo's `libc.a(mkntpath.o)`: a win32-absolute segment (`X:\…` or `\\server\share`) embedded mid-path re-roots the path, because unix `Path` semantics treat those as relative and glue the cwd in front |
+| `mkntpathat.c` | replaces cosmo's `libc.a(mkntpathat.o)`: dirfd-relative NT paths on a network share came back as the relative path `UNC\srv\share\...` (the `\\?\` strip only knew drive letters), so every `*at` call there was ENOENT — which std's `remove_dir_all` swallows until the final rmdir's ENOTEMPTY |
+| `readlinkat-nt.c` | replaces cosmo's `libc.a(readlinkat-nt.o)`. `readlink` of an existing non-symlink now fails with EINVAL instead of stale errno, which is the signal musl-realpath's walk relies on — without it `realpath()` failed for every path on NT |
+| `realpath.c` | replaces cosmo's `libc.a(realpath.o)`: on NT a leading `//` survives (UNC share, musl's POSIX reading) and the unopenable `//server`/`//server/share` prefixes skip `readlink`, making `canonicalize()` work on shares |
 | `rlimit.c` | the `RLIMIT_*` resource numbers, plus a `prlimit` cosmo doesn't have |
 | `xattr.c` | the extended-attribute family, as a raw syscall on Linux and `ENOTSUP` elsewhere |
 | `syscall.h` | raw Linux syscalls, for the few APIs cosmo numbers but doesn't wrap |

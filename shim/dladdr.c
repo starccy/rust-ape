@@ -8,11 +8,11 @@
 // stack_chk.c, filling a hole instead of translating across one.
 //
 // On Linux the answer comes from /proc/self/maps: the mapping that contains
-// the address names the file it was mapped from, which is the only field
-// the known caller reads (dli_fname). dli_fbase is that mapping's start,
-// and the symbol-level fields stay NULL, which is also what glibc reports
-// for an address it cannot pin to a symbol. Every other host answers 0
-// ("no information"), and callers already treat that as the miss case.
+// the address names the file it was mapped from (dli_fname). dli_fbase is
+// that mapping's start, and the symbol-level fields stay NULL, which is
+// also what glibc reports for an address it cannot pin to a symbol. Every
+// other host answers 0 ("no information"), which callers already treat as
+// the miss case.
 //
 // The returned dli_fname points into a static buffer overwritten by the
 // next call. glibc hands out pointers into loader internals that live
