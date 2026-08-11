@@ -16,8 +16,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # The toolchain only runs on Linux since cosmocc is a Linux-hosted cross compiler.
-  # Build once here; the run jobs below all use the same files.
+  # Build the examples once on Linux, then run them on all hosts.
   build:
     name: build (linux)
     runs-on: ubuntu-latest
@@ -25,8 +24,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # cosmocc's zip is a little bit large and the patched crates come from crates.io.
-      # config.rs pins every one of those versions, so use it as the cache key.
       - uses: actions/cache@v6
         with:
           path: cache
@@ -56,7 +53,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           name: examples
-          path: examples/target/ape/*.com
+          path: examples/target/ape/debug/*.com
           retention-days: 7
           if-no-files-found: error
 
@@ -112,10 +109,7 @@ jobs:
               [ $rc -eq 142 ] && status="TIMED OUT after 60s" || status="FAILED (exit $rc)"
               fail=1
             fi
-            # Collapse output per binary, with the status in the group title.
-            # On a hang the partial output is often the only clue, and cosmo
-            # flushes the trace as it goes, so the last logged syscall shows
-            # where it stopped.
+            
             echo "::group::$name - $status"
             cat /tmp/out.txt
             if [ -s /tmp/err.txt ]; then
@@ -135,12 +129,10 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          # See the Unix step for why this doesn't disturb the program's argv.
           $strace = if ("${{ inputs.strace }}" -eq "true") { @("--strace") } else { @() }
           $fail = 0
           $summary = @()
           foreach ($b in Get-ChildItem ape\*.com) {
-            # Same 60s cap as the Unix side.
             $o = New-TemporaryFile
             $e = New-TemporaryFile
             $args = @{}
@@ -157,7 +149,6 @@ jobs:
               $status = "TIMED OUT after 60s"
               $fail = 1
             }
-            # Collapsed per binary, same as the Unix side.
             "::group::$($b.Name) - $status"
             Get-Content $o -ErrorAction SilentlyContinue
             if ((Get-Item $e -ErrorAction SilentlyContinue).Length -gt 0) {

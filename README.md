@@ -10,9 +10,9 @@ Linux, macOS, Windows and BSD, on both x86-64 and arm64.
 
 ```console
 $ cargo xtask build hello
-==> apelink -> hello/target/ape/hello.com
+==> apelink -> hello/target/ape/debug/hello.com
 
-$ ./hello/target/ape/hello.com          # Linux
+$ ./hello/target/ape/debug/hello.com    # Linux
 hello from rust-ape, running on Linux
 
 C:\> .\hello.com                        # the same file, on Windows
@@ -61,10 +61,10 @@ To confirm that worked, you can just build the bundled examples now:
 
 ```sh
 cargo xtask build examples
-./examples/target/ape/platform.com
+./examples/target/ape/debug/platform.com
 ```
 
-That leaves all the binaries in `examples/target/ape/`, each one a scenario you
+That leaves all the binaries in `examples/target/ape/debug/`, each one a scenario you
 can copy to another machine and run.
 
 The [CI runs](https://github.com/starccy/rust-ape/actions) show how each example
@@ -90,9 +90,10 @@ cargo xtask build /path/to/project
 ```
 
 Both architectures get compiled and `apelink` fuses them into one file under
-`target/ape/`. Every `[[bin]]` in the package is packed; use `--bin` to pick
-one, `--example` to build an example target instead (packed under
-`target/ape/examples/`, mirroring cargo's layout), `-p`/`--package` to pick
+`target/ape/debug/` (`target/ape/release/` with `--release`). Every `[[bin]]`
+in the package is packed; use `--bin` to pick one, `--example` to build an
+example target instead (packed under `target/ape/<profile>/examples/`,
+mirroring cargo's layout), `-p`/`--package` to pick
 a workspace member, `--release` for an optimized build. Feature selection works like it does
 in `cargo build`: `--features` (`-F`), `--all-features` and
 `--no-default-features` are passed through as-is.
@@ -350,6 +351,10 @@ paths in `Cargo.toml` are fixed up.
 | `scripts/` | Linker and archiver wrappers around cosmocc |
 | `examples/` | Scenario binaries, also the cross-platform test suite |
 | `vendor/`, `cache/` | Created by `setup`, not checked in |
+
+## TODO
+
+* Benchmark against a natively built binary
 
 ## Thanks
 

@@ -65,7 +65,7 @@ pub struct BuildArgs {
     /// Do not activate the `default` feature
     #[arg(long)]
     pub no_default_features: bool,
-    /// Where to write the result (defaults to <project>/target/ape/<name>.com)
+    /// Where to write the result (defaults to <project>/target/ape/<profile>/<name>.com)
     #[arg(long)]
     pub output: Option<PathBuf>,
 }
@@ -116,10 +116,10 @@ pub fn run(args: &BuildArgs) -> Result<()> {
     for target in &targets {
         let output = match &args.output {
             Some(o) => o.clone(),
-            // let example binaries land in target/ape/examples/ so
-            // they don't collide with the main bin
+            // let example binaries land in target/ape/<profile>/examples/
+            // so they don't collide with the main bin
             None => {
-                let mut dir = project.join("target/ape");
+                let mut dir = project.join("target/ape").join(profile);
                 if target.example {
                     dir = dir.join("examples");
                 }
