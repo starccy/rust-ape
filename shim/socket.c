@@ -404,6 +404,14 @@ static void sockopt_to_host(int *level, int *name) {
 }
 
 int __ape_shim_setsockopt(int fd, int level, int name, const void *val, unsigned len) {
+    // SO_REUSEPORT has no Windows equivalent (cosmo publishes it as 0 there,
+    // which the NT layer rejects with ENOPROTOOPT), and WinSock's
+    // SO_REUSEADDR already allows rebinding a port. On Linux the option
+    // always succeeds, so accept it as a no-op instead of failing callers
+    // that treat the error as fatal.
+    if (level == SHIM_LIN_SOL_SOCKET && name == SHIM_LIN_SO_REUSEPORT &&
+        !SO_REUSEPORT)
+        return 0;
     sockopt_to_host(&level, &name);
     return setsockopt(fd, level, name, val, len);
 }
