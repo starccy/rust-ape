@@ -57,6 +57,15 @@ flate2 = "1"
 # the same __linux__ trap. Named only to turn `no_asm` on through feature
 # unification.
 zstd-sys = { version = "2", features = ["no_asm"] }
+# local_time. chrono's Local reads TZ and /etc/localtime and parses the TZif
+# itself; there is no way to compile a database in, which is exactly the gap
+# the example measures.
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
+# local_time. tzdb-bundle-always compiles the IANA database into the binary,
+# which is what makes a zone name resolvable on a host that ships no tzdata.
+# The default tzdb-bundle-platform bundles by target_os, and this target says
+# linux, so it would leave Windows with nothing.
+jiff = { version = "0.2.35", features = ["tzdb-bundle-always"] }
 
 [patch.crates-io]
 async-io = { path = "../vendor/patches/async-io" }
