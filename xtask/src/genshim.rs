@@ -71,7 +71,13 @@ const ERRNOS: &[(&str, bool)] = &[
     // first-match, and on NT both resolve to the same host value — a timeout
     // must read back as ETIMEDOUT (what everyone compares against), not the
     // STREAMS relic. Moved out of its natural cluster here.
-    ("EBADRQC", R), ("EBADSLT", R), ("ENOSTR", R), ("ENODATA", R),
+    //
+    // ENOATTR carries ENODATA's Linux value (see libc_name): it is the
+    // BSD/XNU spelling of the same condition and Linux has no name of its
+    // own for it. It sits AFTER ENODATA so the forward lookup keeps mapping
+    // Linux 61 onto the host's ENODATA; the reverse direction is what this
+    // entry is for, and there ENOATTR's host value is unique everywhere.
+    ("EBADRQC", R), ("EBADSLT", R), ("ENOSTR", R), ("ENODATA", R), ("ENOATTR", R),
     ("ENOSR", R), ("ENONET", R), ("ENOPKG", R), ("EREMOTE", R), ("ENOLINK", R),
     ("EADV", R), ("ESRMNT", R), ("ECOMM", R), ("EPROTO", R), ("EMULTIHOP", R),
     ("EDOTDOT", R), ("EBADMSG", R), ("EOVERFLOW", R), ("ENOTUNIQ", R),
@@ -269,6 +275,21 @@ fn cosmo_name(libc_name: &str) -> &str {
     match libc_name {
         "IPV6_ADD_MEMBERSHIP" => "IPV6_JOIN_GROUP",
         "IPV6_DROP_MEMBERSHIP" => "IPV6_LEAVE_GROUP",
+        other => other,
+    }
+}
+
+/// Table name -> the libc crate name whose value it carries, for the entries
+/// cosmo publishes under a spelling Linux never had. Without this the value
+/// lookup and the generated assert would both go looking for a `libc::` const
+/// that does not exist.
+fn libc_name(name: &str) -> &str {
+    match name {
+        // "attribute not found" from the xattr syscalls: BSD and XNU say
+        // ENOATTR, Linux says ENODATA, and that is what the xattr crates
+        // compare against. Untranslated, XNU's 93 reads back as
+        // EPROTONOSUPPORT on the Rust side.
+        "ENOATTR" => "ENODATA",
         other => other,
     }
 }
@@ -547,6 +568,7 @@ pub fn run(args: &GenShimArgs) -> Result<()> {
         per_arch.insert(arch, consts);
     }
     let value = |arch: &str, name: &str| -> Result<i64> {
+        let name = libc_name(name);
         if let Some(&(_, x, a)) = CFG_OVERRIDES.iter().find(|(n, _, _)| *n == name) {
             return Ok(if arch == "x86_64" { x } else { a });
         }
@@ -576,6 +598,7 @@ pub fn run(args: &GenShimArgs) -> Result<()> {
     let _ = writeln!(rs);
 
     let assert_line = |rs: &mut String, arch: &str, name: &str, v: i64| {
+        let name = libc_name(name);
         let _ = writeln!(
             rs,
             "#[cfg(target_arch = \"{arch}\")] const _: () = assert!(libc::{name} as i64 == {v});"

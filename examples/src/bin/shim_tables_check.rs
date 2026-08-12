@@ -229,6 +229,8 @@
 #[cfg(target_arch = "aarch64")] const _: () = assert!(libc::ENOSTR as i64 == 60);
 #[cfg(target_arch = "x86_64")] const _: () = assert!(libc::ENODATA as i64 == 61);
 #[cfg(target_arch = "aarch64")] const _: () = assert!(libc::ENODATA as i64 == 61);
+#[cfg(target_arch = "x86_64")] const _: () = assert!(libc::ENODATA as i64 == 61);
+#[cfg(target_arch = "aarch64")] const _: () = assert!(libc::ENODATA as i64 == 61);
 #[cfg(target_arch = "x86_64")] const _: () = assert!(libc::ENOSR as i64 == 63);
 #[cfg(target_arch = "aarch64")] const _: () = assert!(libc::ENOSR as i64 == 63);
 #[cfg(target_arch = "x86_64")] const _: () = assert!(libc::ENONET as i64 == 64);
