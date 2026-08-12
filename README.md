@@ -3,7 +3,7 @@
 [![CI](https://github.com/starccy/rust-ape/actions/workflows/ci.yml/badge.svg)](https://github.com/starccy/rust-ape/actions/workflows/ci.yml)
 
 Build Rust programs into Cosmopolitan APE binaries: One file that runs on
-Linux, macOS, Windows and BSD, on both x86-64 and arm64.
+Linux, macOS, Windows, on both x86-64 and arm64.
 
 > **Status: experimental.** Only the breakage I've run into myself is fixed;
 > everything beyond that is untested territory. Not for production use.
@@ -78,9 +78,9 @@ did on each platform, and you can download the built binaries there too
 cargo xtask generate /path/to/project
 ```
 
-Its behavior is very similar to `cargo new`. You get a normal cargo project,
-plus a `[patch.crates-io]` section wiring it to the adapted crates and
-a `rust-toolchain.toml` matching the SDK. Write Rust the
+The result is very similar to what `cargo new` produces. You get a normal cargo
+project, plus a `[patch.crates-io]` section that points it at the adapted crates
+and a `rust-toolchain.toml` matching the SDK. Write Rust the
 way you normally would, **with the caveats below**.
 
 **3. Build it.**
@@ -90,13 +90,10 @@ cargo xtask build /path/to/project
 ```
 
 Both architectures get compiled and `apelink` fuses them into one file under
-`target/ape/debug/` (`target/ape/release/` with `--release`). Every `[[bin]]`
-in the package is packed; use `--bin` to pick one, `--example` to build an
-example target instead (packed under `target/ape/<profile>/examples/`,
-mirroring cargo's layout), `-p`/`--package` to pick
-a workspace member, `--release` for an optimized build. Feature selection works like it does
-in `cargo build`: `--features` (`-F`), `--all-features` and
-`--no-default-features` are passed through as-is.
+`target/ape/debug/` (`target/ape/release/` with `--release`). The interface is
+very similar to `cargo build`: `--bin`, `--example`, `-p`/`--package`,
+`--release`, `--features` and friends work the way you would expect; see
+`cargo xtask build --help` for the full list.
 
 Plain `cargo build` inside the project will **not** work. The build needs a
 patched std via `-Z build-std`, two `--cfg` flags, and `CC`/`CXX`/`AR` pointing
@@ -120,12 +117,12 @@ CI builds them **once on Linux** and runs those same files on five platforms:
 
 | | x86-64 | arm64 |
 | --- | --- | --- |
-| Linux | ✅ | ✅ |
-| Windows | ✅ | ✅ |
-| macOS | untested | ✅ |
-| others | untested | untested |
+| Linux | :white_check_mark: | :white_check_mark: |
+| Windows | :white_check_mark: | :white_check_mark: |
+| macOS | :interrobang: | :white_check_mark: |
+| others | :interrobang: | :interrobang: |
 
-> The untested cells would probably work. However, the
+> The :interrobang: cell means untested. They would probably work. However, the
 > [compile-time-constant mismatches](#why-things-break-in-this-particular-way)
 > that break things here are per-platform, so those platforms may fail in ways
 > the tested ones no longer do. I rarely use them and don't plan to test them;
@@ -135,10 +132,10 @@ CI builds them **once on Linux** and runs those same files on five platforms:
 
 ### Where the platforms differ
 
-One binary, but not one behaviour. Everything below is measured on Linux and
-on a Windows VM unless the cell says otherwise. The macOS column is arm64 and
-weaker evidence, since I have no Mac to debug on and can only go by what
-GitHub Actions reports.
+The following things behave differently depending on the platform the binary
+runs on. Everything is measured on Linux and on a Windows VM unless the cell
+says otherwise. The macOS column is arm64 and weaker evidence, since I have
+no Mac to debug on and can only go by what GitHub Actions reports.
 
 | | Linux | Windows | macOS |
 | --- | --- | --- | --- |
@@ -146,14 +143,13 @@ GitHub Actions reports.
 | inotify, under `notify` | the real syscalls | emulated by scanning every 200ms, so no opens, no closes, and a rename looks like a delete plus a create | the same emulation |
 | pseudo-terminal | works | **none at all**, `openpty` is ENOSYS | works, the same unix path |
 | `UnixDatagram` | works | **no**, NT's AF_UNIX is stream-only | works |
-| system certificate store | 121 roots out of `/etc/ssl` | **empty**, see below | `/etc/ssl` again, which is right here by luck |
+| system certificate store | the roots from `/etc/ssl` | **empty**, see below | `/etc/ssl` again, which is right here by luck |
 | loading a shared library | `cosmo_dlopen` | `cosmo_dlopen`, and it rewrites `.so` to `.dll` for you | arm64 only (seems acceptable) |
 | calling host APIs directly | n/a | Win32, either a plain `extern "C"` away or through `GetProcAddress` | n/a |
 | jemalloc as the global allocator | clean | works, but writes `Error in munmap(): Operation not supported` to stderr, because NT cannot release part of a mapping | clean |
 | SQLite writers contending | real locks, ~25ms for 1000 inserts across 4 threads | emulated locks, ~3.1s for the same | untested |
 | runtime CPU feature detection | works | `AT_HWCAP` reads 0 on arm64, so dispatch falls back to scalar | same on arm64 |
 | `std::env::current_exe` | the loader, not you | fails, there is no `/proc/self/exe` | the loader, not you |
-| spawning by bare program name | as usual | resolved the Unix way, so it is `cmd.exe` and never `cmd` | as usual |
 
 ### Problems you can work around
 
@@ -194,11 +190,12 @@ way.
 that is hard to recognize. Every crate that reads it
 picks its backend at compile time, and this target says unix, so
 `rustls-native-certs`, `rustls-platform-verifier` and native-tls all go
-looking in `/etc/ssl` no matter which machine they end up on. Measured: 121
-roots on Linux, zero on Windows. rustls-platform-verifier at least says
-`No CA certificates were loaded from the system`, which is what `xh` and `gix`
-both die with. rustls-native-certs returns **zero roots and zero errors**, so
-nothing looks wrong until every certificate fails to verify.
+looking in `/etc/ssl` no matter which machine they end up on. On Windows
+that means finding nothing. Anything that talks to the network over TLS
+most likely has to deal with this. rustls-platform-verifier at least says
+`No CA certificates were loaded from the system`; rustls-native-certs returns
+**zero roots and zero errors**, so nothing looks wrong until every
+certificate fails to verify.
 
 Three ways out, cheapest first.
 
@@ -222,7 +219,7 @@ keep one of the first two options for the other hosts.
 
 C dependencies work as long as they are compiled from source. Vendored C, C++
 or hand-written assembly built through the `cc` crate is fine; the examples
-link `ring` (30 native objects) and `blake3`'s SIMD backends, both compiled by
+link `ring` and `blake3`'s SIMD backends, both compiled by
 cosmocc. What does not work is `-sys` crates that expect a prebuilt system
 library, like openssl-sys, which will find none for this target.
 
@@ -295,22 +292,19 @@ dependency tree (`cargo tree`) against this table before investing time:
 
 | If it involves | Verdict |
 | --- | --- |
-| tokio, or anything else on mio | ✅ mio picks epoll on this target and `shim/epoll.c` provides it. Its waker is still forced onto a pipe, since cosmo has no eventfd |
-| file watching (`notify`, and watchexec on top of it) | ⚠️ notify reads the target triple and asks for inotify on every host; `shim/inotify.c` answers, with the real syscalls on Linux and a 200ms scan-and-diff elsewhere. The emulation reports creations, deletions and content changes, and cannot report opens, closes, or a rename as anything but a delete plus a create |
-| smol's async-process | ❌ its reaper is disabled here. `tokio::process` and sync `std::process::Command` both work |
-| `UnixDatagram` | ❌ NT's AF_UNIX is stream-only. `UnixStream`/`UnixListener` are fine |
-| `-sys` crates that link a prebuilt system library (openssl-sys, …) | ❌ no such library exists for this target |
-| rustls on its default aws-lc-rs backend | ❌ aws-lc-sys guards a whole `.S` file on `__linux__`, which cosmocc undefines, and the object comes out with no symbol table. Switch to the ring backend, whose asm is guarded on `__ELF__` |
-| zstd, anywhere it reaches zstd-sys | ⚠️ same `__linux__` guard, on `huf_decompress_amd64.S`. Its `no_asm` feature takes the C path and links fine |
-| anything that reads the system certificate store (rustls-platform-verifier, rustls-native-certs, native-tls) | ⚠️ it asks the OS the compile-time way, so it reads `/etc/ssl` on every host and comes back empty on Windows, sometimes without saying so. Bundled roots, `SSL_CERT_FILE`, or crypt32 at runtime; [all three written out above](#problems-you-can-work-around) |
-| a pseudo-terminal (portable-pty, and terminal multiplexers on top of it) | ⚠️ works on Unix, where cosmo has openpty and the shim answers the session ioctls the child needs after fork. On Windows there is no pty at all: cosmo imports `CreatePseudoConsole` but never wires it to openpty, so openpty is ENOSYS and nothing routes around it |
-| C/C++/asm vendored in the crate, built via `cc` | ⚠️ works if the code sticks to APIs cosmo has (e.g. `ring` and `blake3` do, OpenSSL's `dladdr()` use doesn't) |
-| calling a host API directly (Win32, or a shared library through `cosmo_dlopen`) | ⚠️ works, chosen at runtime with `ape::is_windows()` and friends, never by `cfg`. Almost all of what cosmo imports is a plain `extern "C"` away, though A/W pairs are exported unsuffixed and wide (`MessageBox`, not `MessageBoxW`). Beyond that it's `GetProcAddress` and an `extern "win64"` pointer, which is x86_64-only and so needs an arch gate. `windows-sys` builds and links; the `windows` crate does not. See `examples/host_api.rs` |
-| a replacement `#[global_allocator]` | ⚠️ jemalloc works, and ripgrep (which picks it up on exactly this target) builds and runs unmodified. On Windows it writes a few `Error in munmap(): Operation not supported` lines to stderr per run, because NT can't release part of a mapping; stdout stays clean and no `MALLOC_CONF` setting quiets it. mimalloc is the one to avoid, it segfaults before `main` on every host |
-| raw `libc` usage in the domains the shim covers (errno, file/socket/signal flags, IPv6 families, nonblocking writes) | ✅ translated at the libc boundary |
-| `libc::` constants outside the shim's tables (uncommon ioctls, `SYS_*` numbers beyond futex/getrandom, …) | ⚠️ compiles, then silently misbehaves off Linux |
-| terminal control (`tcgetattr`/`struct termios`, crossterm, ratatui TUIs) | ⚠️ repacked and translated by the shim; TUIs run on Linux terminals and Windows consoles, crossterm's default mio event source included. Known gaps on the cosmo side: NT never answers the DSR query (`cursor::position()` times out), OPOST/CSIZE report host semantics, arbitrary baud rates unmapped |
-| smol, async-io, rustls, and pure-Rust crates in general | ✅ works, some via `patches/` |
+| tokio, or anything else on mio | :white_check_mark: mio picks epoll on this target and `shim/epoll.c` provides it. Its waker is still forced onto a pipe, since cosmo has no eventfd |
+| smol's async-process | :x: its reaper is disabled here. `tokio::process` and sync `std::process::Command` both work |
+| `-sys` crates that link a prebuilt system library | :x: no such library exists for this target |
+| rustls on its default aws-lc-rs backend | :x: aws-lc-sys guards a whole `.S` file on `__linux__`, which cosmocc undefines, and the object comes out with no symbol table. Switch to the ring backend, whose asm is guarded on `__ELF__` |
+| zstd, anywhere it reaches zstd-sys | :warning: same `__linux__` guard, on `huf_decompress_amd64.S`. Its `no_asm` feature takes the C path and links fine |
+| anything that reads the system certificate store (rustls-platform-verifier, rustls-native-certs, native-tls) | :warning: it asks the OS the compile-time way, so it reads `/etc/ssl` on every host and comes back empty on Windows, sometimes without saying so. Bundled roots, `SSL_CERT_FILE`, or crypt32 at runtime; [all three written out above](#problems-you-can-work-around) |
+| a pseudo-terminal (portable-pty, and terminal multiplexers on top of it) | :warning: works on Unix, where cosmo has openpty and the shim answers the session ioctls the child needs after fork. On Windows there is no pty at all: cosmo imports `CreatePseudoConsole` but never wires it to openpty, so openpty is ENOSYS and nothing routes around it |
+| C/C++/asm vendored in the crate, built via `cc` | :warning: works if the code sticks to APIs cosmo has (e.g. `ring` and `blake3` do, OpenSSL's `dladdr()` use doesn't) |
+| calling a host API directly (Win32, or a shared library through `cosmo_dlopen`) | :warning: works, chosen at runtime with `ape::is_windows()` and friends, never by `cfg`. Almost all of what cosmo imports is a plain `extern "C"` away, though A/W pairs are exported unsuffixed and wide (`MessageBox`, not `MessageBoxW`). Beyond that it's `GetProcAddress` and an `extern "win64"` pointer, which is x86_64-only and so needs an arch gate. `windows-sys` builds and links; the `windows` crate does not. See `examples/host_api.rs` |
+| a replacement `#[global_allocator]` | :warning: jemalloc works, and ripgrep (which picks it up on exactly this target) builds and runs unmodified. On Windows it writes a few `Error in munmap(): Operation not supported` lines to stderr per run, because NT can't release part of a mapping; stdout stays clean and no `MALLOC_CONF` setting quiets it. mimalloc is the one to avoid, it segfaults before `main` on every host |
+| raw `libc` usage in the domains the shim covers (errno, file/socket/signal flags, IPv6 families, nonblocking writes) | :white_check_mark: translated at the libc boundary |
+| terminal control (`tcgetattr`/`struct termios`, crossterm, ratatui TUIs) | :warning: repacked and translated by the shim; TUIs run on Linux terminals and Windows consoles, crossterm's default mio event source included. Known gaps on the cosmo side: NT never answers the DSR query (`cursor::position()` times out), OPOST/CSIZE report host semantics, arbitrary baud rates unmapped |
+| smol, async-io, rustls, and pure-Rust crates in general | :white_check_mark: works, some via `patches/` |
 
 ### Why things break in this particular way
 
@@ -324,20 +318,6 @@ errors on another platform, it is often a compile-time constant, so check that
 first; it can also be something cosmo itself doesn't support on that host,
 which cosmo's [function list](https://justine.lol/cosmopolitan/functions.html)
 can tell you per platform.
-
-## Notes
-
-Some design issues that you should know about:
-
-**Nightly Rust is required**, since `-Z build-std` is the only way to build a
-patched std and it has been unstable for years.
-
-The patches apply to the `rust-src` of the pinned nightly, which ties them to
-one exact Rust version; upgrading Rust means redoing every patch.
-
-Generated projects reference this directory by absolute path, so moving it,
-or taking a generated project to another machine, breaks the build until the
-paths in `Cargo.toml` are fixed up.
 
 ## Layout
 
@@ -355,6 +335,8 @@ paths in `Cargo.toml` are fixed up.
 ## TODO
 
 * Benchmark against a natively built binary
+* Maybe a separate repository demonstrating how to build various existing
+  projects as APE binaries
 
 ## Thanks
 
