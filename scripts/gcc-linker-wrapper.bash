@@ -12,9 +12,11 @@ ARCH="${ARCH:-x86_64}"
 declare -a args
 
 args=()
+tiny=0
 
 for o in "$@"; do
     case $o in
+        "-mtiny") tiny=1;;
         "-lunwind") continue;;
         "-Wl,-Bdynamic") continue;;
         "-Wl,-Bstatic") continue;;
@@ -34,12 +36,28 @@ args+=("-Wl,--defsym,__isoc23_sscanf=sscanf")
 # has to satisfy the linker.
 args+=("-Wl,--defsym,waitid=enosys")
 
+# In the default runtime the backtrace symbol loader yoinks zipos (it reads
+# /zip/.symtab.*), so /zip support comes along for free. The tiny runtime has
+# no such loader and --gc-sections throws zipos out, which also leaves the
+# packed binary without a zip central directory, so `zip foo.com asset` says
+# the file isn't an archive. Pull it back in; costs a few KB.
+if [ "$tiny" = 1 ]; then
+    args+=("-Wl,-u,zipos")
+fi
+
 # The Linux-personality shim (shim/*.c): the patched std/libc/errno crates
 # resolve __ape_shim_* to it. Compiled here, cached per arch, so an edited
 # shim is always what gets linked; the temp + mv keeps parallel links from
 # reading a half-written object.
+# tiny objects get their own cache names so switching modes never links a
+# shim compiled for the other runtime
+mode=
+if [ "$tiny" = 1 ]; then
+    mode="-tiny"
+fi
+
 for shim_src in "$SDK_ROOT"/shim/*.c; do
-    shim_obj="$SDK_ROOT/generated/shim-$(basename "$shim_src" .c)-$ARCH.o"
+    shim_obj="$SDK_ROOT/generated/shim-$(basename "$shim_src" .c)-$ARCH$mode.o"
     stale=0
     # a regenerated tables.h must rebuild every object, not just edited .c files
     for dep in "$shim_src" "$SDK_ROOT"/shim/*.h; do
@@ -55,8 +73,17 @@ for shim_src in "$SDK_ROOT"/shim/*.c; do
         # it a replaced member silently vanishes from --strace output).
         extra=
         case "$shim_src" in
-            */commandv.c|*/mkntpath.c|*/mkntpathat.c|*/read.c|*/readlinkat-nt.c|*/realpath.c) extra="-D_COSMO_SOURCE -DSYSDEBUG=1" ;;
+            */commandv.c|*/mkntpath.c|*/mkntpathat.c|*/read.c|*/readlinkat-nt.c|*/realpath.c)
+                extra="-D_COSMO_SOURCE"
+                # the tiny runtime never prints strace lines, so leave
+                # SYSDEBUG at its default 0 there and skip the dead code
+                if [ "$tiny" = 0 ]; then
+                    extra="$extra -DSYSDEBUG=1"
+                fi ;;
         esac
+        if [ "$tiny" = 1 ]; then
+            extra="$extra -mtiny"
+        fi
         "$COSMO/bin/$ARCH-unknown-cosmo-cc" -c -O2 -fno-stack-protector $extra \
             -o "$tmp" "$shim_src"
         mv -f "$tmp" "$shim_obj"

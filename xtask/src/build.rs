@@ -44,6 +44,10 @@ pub struct BuildArgs {
     pub project: PathBuf,
     #[arg(long)]
     pub release: bool,
+    /// Link cosmocc's tiny runtime (-mtiny), which drops the built-in
+    /// --strace/--ftrace machinery in exchange for a smaller binary
+    #[arg(long)]
+    pub tiny: bool,
     /// Force a std/libc rebuild (useful after hand-editing vendor/library)
     #[arg(long)]
     pub clean_std: bool,
@@ -129,7 +133,7 @@ pub fn run(args: &BuildArgs) -> Result<()> {
         if let Some(parent) = output.parent() {
             fs::create_dir_all(parent)?;
         }
-        apelink(&root, &project, profile, target, &output)?;
+        apelink(&root, &project, profile, target, &output, args.tiny)?;
         println!("==> {} ({} bytes)", output.display(), fs::metadata(&output)?.len());
     }
 
@@ -381,6 +385,11 @@ fn cargo_build(
         "--cfg rustix_use_libc --cfg polling_test_poll_backend \
          --cfg mio_unsupported_force_waker_pipe --cfg rust_ape_shim",
     );
+    // -mtiny reaches the final cosmocc invocation through the linker wrapper
+    // and swaps in the lib/tiny runtime, which has no --strace/--ftrace.
+    if args.tiny {
+        rustflags.push_str(" -C link-arg=-mtiny");
+    }
     cmd.env("RUSTFLAGS", rustflags);
 
     // C, C++ and asm in dependencies go through cosmocc too, so the ABI matches
@@ -392,6 +401,8 @@ fn cargo_build(
         &format!("AR_{t}"),
         root.join("generated").join(format!("ar-{arch}.bash")),
     );
+    // for C deps, -mtiny also drops the ftrace NOP padding on function entries
+    let tiny = if args.tiny { " -mtiny" } else { "" };
     for var in ["CFLAGS", "CXXFLAGS"] {
         let user = std::env::var(format!("{var}_{t}")).unwrap_or_default();
         // guard=global keeps things working when a -sys crate forces
@@ -399,7 +410,7 @@ fn cargo_build(
         cmd.env(
             format!("{var}_{t}"),
             format!(
-                "-fno-stack-protector -mstack-protector-guard=global {} -include {} {user}",
+                "-fno-stack-protector -mstack-protector-guard=global{tiny} {} -include {} {user}",
                 C_PREDEFS.join(" "),
                 root.join("scripts/cdeps-predef.h").display()
             ),
@@ -446,6 +457,7 @@ fn apelink(
     profile: &str,
     target: &PackTarget,
     output: &Path,
+    tiny: bool,
 ) -> Result<()> {
     let bin = root.join("vendor/cosmocc/bin");
     let dbg = |triple: &str| {
@@ -466,6 +478,11 @@ fn apelink(
     // -M ape-m1.c is the Apple Silicon bootstrap; some environments false-alarm
     // on it, so fall back to linking without it.
     let mut with_m1 = util::ape_command(&bin.join("apelink"));
+    // the tiny runtime has no backtrace printer to read .symtab.* back, so
+    // embedding the symbol tables would be dead weight
+    if tiny {
+        with_m1.arg("-s");
+    }
     with_m1
         .arg("-l")
         .arg(bin.join("ape-x86_64.elf"))
@@ -479,6 +496,9 @@ fn apelink(
     if !with_m1.status().context("could not run apelink")?.success() {
         eprintln!("warn: apelink -M failed; linking without Apple Silicon support");
         let mut plain = util::ape_command(&bin.join("apelink"));
+        if tiny {
+            plain.arg("-s");
+        }
         plain
             .arg("-l")
             .arg(bin.join("ape-x86_64.elf"))
