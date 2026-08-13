@@ -66,6 +66,7 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock", "s
 # The default tzdb-bundle-platform bundles by target_os, and this target says
 # linux, so it would leave Windows with nothing.
 jiff = { version = "0.2.35", features = ["tzdb-bundle-always"] }
+zip = { version = "8.6.0", default-features = false }
 
 [patch.crates-io]
 async-io = { path = "../vendor/patches/async-io" }
