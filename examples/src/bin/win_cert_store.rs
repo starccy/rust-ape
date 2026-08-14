@@ -14,6 +14,7 @@
 //! This example stops at the filled store; wiring it into a client from
 //! there is the same rustls code as on any other host.
 
+#[cfg(target_arch = "x86_64")]
 use std::ffi::c_void;
 
 fn main() {
