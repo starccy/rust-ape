@@ -291,7 +291,36 @@ diff a/libc/src/unix/linux_like/linux_l4re_shared.rs b/libc/src/unix/linux_like/
 diff a/libc/src/unix/linux_like/mod.rs b/libc/src/unix/linux_like/mod.rs
 --- a/libc/src/unix/linux_like/mod.rs
 +++ b/libc/src/unix/linux_like/mod.rs
-@@ -1753,6 +1753,7 @@
+@@ -213,13 +213,22 @@
+         __ss_align: size_t,
+     }
+ 
++    // cosmo: cosmo's public utsname is SYS_NMLN=150 per field, 900 bytes, not
++    // musl's 65/390 (it copies out of a 65-byte utsname_linux that faces the
++    // Linux kernel). Left at 65, uname() writes up to 510 bytes past the end
++    // of the caller's struct -- on the stack, which is the usual idiom, that
++    // is a wrecked frame and a SIGSEGV somewhere unrelated -- and every field
++    // but sysname reads out of the previous field's padding. Widening here
++    // rather than repacking in the shim because utsname is only ever uname's
++    // out-parameter, and a short write from a musl-sized uname would be safe
++    // anyway. examples/src/bin/uname_probe.rs demonstrates both failures.
+     pub struct utsname {
+-        pub sysname: [c_char; 65],
+-        pub nodename: [c_char; 65],
+-        pub release: [c_char; 65],
+-        pub version: [c_char; 65],
+-        pub machine: [c_char; 65],
+-        pub domainname: [c_char; 65],
++        pub sysname: [c_char; 150],
++        pub nodename: [c_char; 150],
++        pub release: [c_char; 150],
++        pub version: [c_char; 150],
++        pub machine: [c_char; 150],
++        pub domainname: [c_char; 150],
+     }
+ 
+     pub struct if_nameindex {
+@@ -1753,6 +1762,7 @@
  
          extern "C" {
              #[cfg_attr(gnu_time_bits64, link_name = "__ioctl_time64")]
@@ -299,7 +328,7 @@ diff a/libc/src/unix/linux_like/mod.rs b/libc/src/unix/linux_like/mod.rs
              pub fn ioctl(fd: c_int, request: Ioctl, ...) -> c_int;
          }
      }
-@@ -1897,16 +1898,22 @@
+@@ -1897,16 +1907,22 @@
  
      #[cfg_attr(gnu_time_bits64, link_name = "__clock_getres64")]
      #[cfg_attr(musl_redir_time64, link_name = "__clock_getres_time64")]
@@ -322,7 +351,7 @@ diff a/libc/src/unix/linux_like/mod.rs b/libc/src/unix/linux_like/mod.rs
      pub fn clock_settime(clk_id: crate::clockid_t, tp: *const crate::timespec) -> c_int;
      #[cfg(not(target_os = "l4re"))]
      pub fn clock_getcpuclockid(pid: crate::pid_t, clk_id: *mut crate::clockid_t) -> c_int;
-@@ -1927,6 +1934,8 @@
+@@ -1927,6 +1943,8 @@
      pub fn memalign(align: size_t, size: size_t) -> *mut c_void;
      pub fn setgroups(ngroups: size_t, ptr: *const crate::gid_t) -> c_int;
      #[cfg(not(target_os = "l4re"))]
@@ -331,7 +360,7 @@ diff a/libc/src/unix/linux_like/mod.rs b/libc/src/unix/linux_like/mod.rs
      pub fn pipe2(fds: *mut c_int, flags: c_int) -> c_int;
      #[cfg_attr(gnu_file_offset_bits64, link_name = "statfs64")]
      pub fn statfs(path: *const c_char, buf: *mut statfs) -> c_int;
-@@ -1941,6 +1950,8 @@
+@@ -1941,6 +1959,8 @@
      pub fn futimens(fd: c_int, times: *const crate::timespec) -> c_int;
      #[cfg_attr(gnu_time_bits64, link_name = "__utimensat64")]
      #[cfg_attr(musl_redir_time64, link_name = "__utimensat_time64")]
@@ -340,7 +369,7 @@ diff a/libc/src/unix/linux_like/mod.rs b/libc/src/unix/linux_like/mod.rs
      pub fn utimensat(
          dirfd: c_int,
          path: *const c_char,
-@@ -2016,18 +2027,26 @@
+@@ -2016,18 +2036,26 @@
      pub fn getifaddrs(ifap: *mut *mut crate::ifaddrs) -> c_int;
      #[cfg(not(target_os = "l4re"))]
      pub fn freeifaddrs(ifa: *mut crate::ifaddrs);

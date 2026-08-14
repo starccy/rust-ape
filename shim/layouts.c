@@ -17,6 +17,10 @@
 //     honest.
 //   - struct dirent: cosmo declares the Linux getdents64 ABI, which is
 //     musl's dirent on every arch.
+//   - struct utsname: cosmo's is 150 bytes per field against musl's 65. The
+//     libc crate's declaration is widened to cosmo's in patches/libc.patch,
+//     the same treatment aarch64's stat gets; the asserts on both sides are
+//     what keep that honest.
 //   - struct timespec: the {i64, i64} everyone already relies on.
 //   - struct flock: identical up to musl's tail padding (cosmo's l_sysid
 //     lives there); only l_type VALUES differ, translated in open.c.
@@ -84,6 +88,19 @@ CHECK(flock, l_pid, 24);
 // musl's flock is 32 bytes (4 of tail padding); cosmo's l_sysid at 28 fits
 // inside. Anything bigger would let cosmo write past a musl-sized struct.
 _Static_assert(sizeof(struct flock) <= 32, "cosmo flock outgrew musl's 32 bytes");
+
+// cosmo's utsname is SYS_NMLN=150 per field where musl has 65, so the libc
+// crate's declaration is widened to match in patches/libc.patch rather than
+// repacked here. These numbers are what that patch has to keep hitting: get
+// them wrong and uname() writes past the caller's struct.
+#include <sys/utsname.h>
+CHECK(utsname, sysname, 0);
+CHECK(utsname, nodename, 150);
+CHECK(utsname, release, 300);
+CHECK(utsname, version, 450);
+CHECK(utsname, machine, 600);
+CHECK(utsname, domainname, 750);
+_Static_assert(sizeof(struct utsname) == 900, "cosmo utsname size");
 
 // cosmo's termios, the repack target of shim/termios.c: no c_line, NCCS 20,
 // speeds as fields. If any of this drifts, the repack corrupts.

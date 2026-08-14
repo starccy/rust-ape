@@ -36,6 +36,14 @@ const _: () = {
     assert!(offset_of!(libc::stat, st_ctime_nsec) == 112);
     assert!(size_of::<libc::stat>() == 144);
 
+    assert!(offset_of!(libc::utsname, sysname) == 0);
+    assert!(offset_of!(libc::utsname, nodename) == 150);
+    assert!(offset_of!(libc::utsname, release) == 300);
+    assert!(offset_of!(libc::utsname, version) == 450);
+    assert!(offset_of!(libc::utsname, machine) == 600);
+    assert!(offset_of!(libc::utsname, domainname) == 750);
+    assert!(size_of::<libc::utsname>() == 900);
+
     assert!(offset_of!(libc::dirent, d_ino) == 0);
     assert!(offset_of!(libc::dirent, d_off) == 8);
     assert!(offset_of!(libc::dirent, d_reclen) == 16);
