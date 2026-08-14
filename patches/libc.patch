@@ -279,7 +279,13 @@ diff a/libc/src/unix/linux_like/linux_l4re_shared.rs b/libc/src/unix/linux_like/
      pub fn ppoll(
          fds: *mut crate::pollfd,
          nfds: crate::nfds_t,
-@@ -1824,6 +1834,8 @@
+@@ -1821,9 +1831,14 @@
+     pub fn getgrnam(name: *const c_char) -> *mut crate::group;
+     pub fn sem_unlink(name: *const c_char) -> c_int;
+     pub fn daemon(nochdir: c_int, noclose: c_int) -> c_int;
++    // cosmo: NT has no signal mask, so a SIG_DFL signal in the set runs its
++    // default action instead of waiting here; the shim holds the dispositions.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_sigwait")]
      pub fn sigwait(set: *const crate::sigset_t, sig: *mut c_int) -> c_int;
      pub fn getgrgid(gid: crate::gid_t) -> *mut crate::group;
      pub fn popen(command: *const c_char, mode: *const c_char) -> *mut crate::FILE;

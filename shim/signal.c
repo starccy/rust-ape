@@ -389,6 +389,62 @@ int __ape_shim_sigismember(const sigset_t *set, int sig) {
 }
 
 // ---------------------------------------------------------------------------
+// sigwait. NT has no signal mask -- cosmo's sigprocmask returns 0 and does
+// nothing -- so a signal in the waited-for set arrives while its disposition
+// is still SIG_DFL, and the default action runs instead of the signal being
+// queued for this call to consume: SIGALRM kills the process, SIGCHLD is
+// discarded, and a caller blocking here to hear that its child exited never
+// wakes up. Giving each such signal a no-op handler for the duration of the
+// wait is enough to make cosmo deliver it instead, and the call then behaves
+// as it does on Linux -- the handler never actually runs, sigwait consumes
+// the signal first.
+//
+// Only the dispositions still at SIG_DFL are touched, so restoring means
+// setting SIG_DFL back rather than saving 64 sigactions on the stack. The
+// window between arming and the wait is not covered (a signal landing there
+// runs the no-op handler and is lost); with no real mask to hold signals
+// pending there is nothing to close it with, and it is a few instructions
+// wide.
+//
+// Linux keeps cosmo's sigwait untouched: the mask is real there, and
+// rewriting dispositions would change behavior for no reason.
+
+static void sigwait_noop(int sig) { (void)sig; }
+
+int __ape_shim_sigwait(const struct lin_sigset *set, int *sig) {
+    sigset_t hset = (sigset_t)set->val[0]; // host-numbered, low word only
+    uint64_t defaulted = 0;
+
+    if (!IsLinux()) {
+        struct sigaction noop;
+        memset(&noop, 0, sizeof(noop));
+        noop.sa_handler = sigwait_noop;
+        for (int s = 1; s < 64; s++) {
+            struct sigaction old;
+            if (!sigismember(&hset, s)) continue;
+            if (sigaction(s, NULL, &old) < 0) continue;
+            if (old.sa_handler != SIG_DFL) continue;
+            if (sigaction(s, &noop, NULL) < 0) continue; // SIGKILL/SIGSTOP say no
+            defaulted |= (uint64_t)1 << s;
+        }
+    }
+
+    int hsig = 0;
+    int r = sigwait(&hset, &hsig);
+
+    if (defaulted) {
+        struct sigaction dfl;
+        memset(&dfl, 0, sizeof(dfl));
+        dfl.sa_handler = SIG_DFL;
+        for (int s = 1; s < 64; s++)
+            if (defaulted & ((uint64_t)1 << s)) sigaction(s, &dfl, NULL);
+    }
+
+    if (r == 0 && sig) *sig = sig_to_linux(hsig);
+    return r;
+}
+
+// ---------------------------------------------------------------------------
 // getauxval: the caller passes Linux-coded AT_* keys, but cosmo's are runtime
 // constants (the auxv is synthesized with host numbering on non-Linux
 // hosts), so keys map through SHIM_AUXV_TABLE. It lives here because of
