@@ -64,6 +64,7 @@ version:
 | `realpath.c` | replaces cosmo's `libc.a(realpath.o)`: on NT a leading `//` survives (UNC share, musl's POSIX reading) and the unopenable `//server`/`//server/share` prefixes skip `readlink`, making `canonicalize()` work on shares |
 | `rlimit.c` | the `RLIMIT_*` resource numbers, plus a `prlimit` cosmo doesn't have |
 | `xattr.c` | the extended-attribute family, as a raw syscall on Linux and `ENOTSUP` elsewhere |
+| `umask.c` | the process umask, which cosmo starts at 0777 on NT (nothing to inherit): reset to 0022 at startup, because a Linux-compiled caller reads it back and computes `mode & ~umask`, which 0777 turns into a mode with no write bit |
 | `syscall.h` | raw Linux syscalls, for the few APIs cosmo numbers but doesn't wrap |
 | `termios.c` | terminal control, with `struct termios` repacked, flag bits, `c_cc` indices and baud codes translated, and tty ioctls rerouted; the session and job-control requests (`TIOCSCTTY`, `TIOCNOTTY`, `TIOCGPGRP`, `TIOCSPGRP`, `TIOCGSID`) are answered too, which is what a pty child needs between fork and exec; `tcsetattr` carries cosmo's `kTtyXtMouse` bit across the call, since the NT implementation rebuilds `__ttyconf.magic` from termios flags alone and would silently turn xterm mouse reporting off |
 | `layouts.c` | no code, only compile-time asserts for the structs passed through unrepacked |
