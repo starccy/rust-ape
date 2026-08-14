@@ -34,6 +34,8 @@ notify = "8"
 portable-pty = "0.9"
 # parking_lot parks via raw syscall(SYS_futex) — the __ape_shim_syscall path.
 parking_lot = "0.12"
+# safe wrapper for if_name_index
+nix = { version = "0.31", features = ["net"] }
 # tokio reaches the IO driver through mio, which picks epoll on a linux target
 # and gets it from shim/epoll.c. These examples are the only thing exercising
 # that shim through a real runtime rather than the probe.
