@@ -25,6 +25,10 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #define _COSMO_SOURCE // for libc/dce.h's IsLinux()/IsWindows()
+// cosmo keeps eaccess/euidaccess behind _COSMO_SOURCE, which unistd.h above
+// was already read without. Same declarations as libc/calls/calls.h.
+int eaccess(const char *, int);
+int euidaccess(const char *, int);
 #include <libc/dce.h>
 #include <libc/sysv/consts/at.h>
 
@@ -289,13 +293,56 @@ int __ape_shim_linkat(int olddirfd, const char *oldpath, int newdirfd,
     return linkat(at_fdcwd(olddirfd), oldpath, at_fdcwd(newdirfd), newpath, host);
 }
 
-int __ape_shim_faccessat(int dirfd, const char *path, int amode, int lin) {
+// The amode of access/faccessat. POSIX pins R_OK/W_OK/X_OK to 4/2/1 and every
+// Unix keeps them there, but on Windows cosmo publishes NT's access mask
+// (GENERIC_READ & co) under those names, so a Linux-coded amode arrives as
+// garbage bits and the call fails with EINVAL. F_OK is 0 on every host,
+// which an empty host mask reproduces by itself.
+static int amode_to_host(int lin, int *out) {
     int host = 0;
-    if (at_bit(&lin, SHIM_LIN_AT_EACCESS, &AT_EACCESS, &host) < 0 ||
-        at_bit(&lin, SHIM_LIN_AT_SYMLINK_FOLLOW, &AT_SYMLINK_FOLLOW, &host) < 0)
+    if (lin & ~(SHIM_LIN_R_OK | SHIM_LIN_W_OK | SHIM_LIN_X_OK))
+        return errno = EINVAL, -1;
+    if (lin & SHIM_LIN_R_OK) host |= R_OK;
+    if (lin & SHIM_LIN_W_OK) host |= W_OK;
+    if (lin & SHIM_LIN_X_OK) host |= X_OK;
+    *out = host;
+    return 0;
+}
+
+int __ape_shim_access(const char *path, int amode) {
+    int host;
+    if (amode_to_host(amode, &host) < 0) return -1;
+    return access(path, host);
+}
+
+// The effective-identity spellings of the same question, same amode.
+int __ape_shim_eaccess(const char *path, int amode) {
+    int host;
+    if (amode_to_host(amode, &host) < 0) return -1;
+    return eaccess(path, host);
+}
+
+int __ape_shim_euidaccess(const char *path, int amode) {
+    int host;
+    if (amode_to_host(amode, &host) < 0) return -1;
+    return euidaccess(path, host);
+}
+
+int __ape_shim_faccessat(int dirfd, const char *path, int amode, int lin) {
+    int host = 0, hmode;
+    // AT_EACCESS asks for the effective rather than the real identity. Where
+    // cosmo has no value for it (Windows, which has one identity per process)
+    // the two answers coincide, so drop the bit instead of failing the call.
+    if (AT_EACCESS) {
+        if (at_bit(&lin, SHIM_LIN_AT_EACCESS, &AT_EACCESS, &host) < 0) return -1;
+    } else {
+        lin &= ~SHIM_LIN_AT_EACCESS;
+    }
+    if (at_bit(&lin, SHIM_LIN_AT_SYMLINK_FOLLOW, &AT_SYMLINK_FOLLOW, &host) < 0)
         return -1;
     if (lin) return errno = EINVAL, -1;
-    return faccessat(at_fdcwd(dirfd), path, amode, host); // amode: R_OK & co are universal
+    if (amode_to_host(amode, &hmode) < 0) return -1;
+    return faccessat(at_fdcwd(dirfd), path, hmode, host);
 }
 
 int __ape_shim_utimensat(int dirfd, const char *path,

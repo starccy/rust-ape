@@ -362,6 +362,11 @@ const SINGLES: &[&str] = &[
     "O_LARGEFILE", "O_SYNC", "O_DIRECTORY", "O_TMPFILE",
     "AT_FDCWD", "AT_SYMLINK_NOFOLLOW", "AT_REMOVEDIR", "AT_SYMLINK_FOLLOW",
     "AT_EMPTY_PATH", "AT_EACCESS", "AT_NO_AUTOMOUNT",
+    // access/faccessat amode bits. POSIX numbers these 4/2/1 and every Unix
+    // agrees, but cosmo publishes NT's access mask for them on Windows, so
+    // they need translating like any other constant. F_OK is 0 everywhere,
+    // which an empty translated mask reproduces on its own.
+    "R_OK", "W_OK", "X_OK",
     "UTIME_NOW", "UTIME_OMIT",
     "SOCK_CLOEXEC", "SOCK_NONBLOCK", "MAP_STACK",
     "SIG_BLOCK", "SIG_UNBLOCK", "SIG_SETMASK", "SO_ERROR",

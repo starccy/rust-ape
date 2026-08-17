@@ -27,6 +27,12 @@
 #[cfg(target_arch = "aarch64")] const _: () = assert!(libc::AT_EACCESS as i64 == 512);
 #[cfg(target_arch = "x86_64")] const _: () = assert!(libc::AT_NO_AUTOMOUNT as i64 == 2048);
 #[cfg(target_arch = "aarch64")] const _: () = assert!(libc::AT_NO_AUTOMOUNT as i64 == 2048);
+#[cfg(target_arch = "x86_64")] const _: () = assert!(libc::R_OK as i64 == 4);
+#[cfg(target_arch = "aarch64")] const _: () = assert!(libc::R_OK as i64 == 4);
+#[cfg(target_arch = "x86_64")] const _: () = assert!(libc::W_OK as i64 == 2);
+#[cfg(target_arch = "aarch64")] const _: () = assert!(libc::W_OK as i64 == 2);
+#[cfg(target_arch = "x86_64")] const _: () = assert!(libc::X_OK as i64 == 1);
+#[cfg(target_arch = "aarch64")] const _: () = assert!(libc::X_OK as i64 == 1);
 #[cfg(target_arch = "x86_64")] const _: () = assert!(libc::UTIME_NOW as i64 == 1073741823);
 #[cfg(target_arch = "aarch64")] const _: () = assert!(libc::UTIME_NOW as i64 == 1073741823);
 #[cfg(target_arch = "x86_64")] const _: () = assert!(libc::UTIME_OMIT as i64 == 1073741822);
