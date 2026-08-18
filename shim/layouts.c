@@ -21,6 +21,11 @@
 //     libc crate's declaration is widened to cosmo's in patches/libc.patch,
 //     the same treatment aarch64's stat gets; the asserts on both sides are
 //     what keep that honest.
+//   - struct statfs: identical for the whole Linux ABI, then cosmo adds a
+//     BSD-flavored tail (f_owner, f_fstypename) that takes it from musl's
+//     120 bytes to 144. Widened in patches/libc.patch like utsname, since
+//     a caller who allocates musl's 120 gets 24 bytes of its own frame
+//     overwritten. struct statvfs goes the other way and is fine.
 //   - struct timespec: the {i64, i64} everyone already relies on.
 //   - struct flock: identical up to musl's tail padding (cosmo's l_sysid
 //     lives there); only l_type VALUES differ, translated in open.c.
@@ -101,6 +106,33 @@ CHECK(utsname, version, 450);
 CHECK(utsname, machine, 600);
 CHECK(utsname, domainname, 750);
 _Static_assert(sizeof(struct utsname) == 900, "cosmo utsname size");
+
+// cosmo's statfs agrees with musl for the whole Linux ABI, then adds
+// f_owner and f_fstypename[16] past f_spare, which takes it from 120 bytes
+// to 144. The libc crate's declaration is widened to 144 in
+// patches/libc.patch, same treatment as utsname; these numbers are what
+// that patch has to keep hitting, because statfs()/fstatfs() write the full
+// 144 into whatever the caller handed over.
+#include <sys/statfs.h>
+#include <sys/statvfs.h>
+CHECK(statfs, f_type, 0);
+CHECK(statfs, f_bsize, 8);
+CHECK(statfs, f_blocks, 16);
+CHECK(statfs, f_bfree, 24);
+CHECK(statfs, f_bavail, 32);
+CHECK(statfs, f_files, 40);
+CHECK(statfs, f_ffree, 48);
+CHECK(statfs, f_fsid, 56);
+CHECK(statfs, f_namelen, 64);
+CHECK(statfs, f_frsize, 72);
+CHECK(statfs, f_flags, 80);
+CHECK(statfs, f_spare, 88);
+_Static_assert(sizeof(struct statfs) == 144, "cosmo statfs size");
+// The other direction: cosmo's statvfs is smaller than musl's 112, so it
+// short-writes and needs no widening. Pinned so that stops being quiet if
+// a cosmocc upgrade grows it.
+_Static_assert(sizeof(struct statvfs) <= 112,
+               "cosmo statvfs outgrew musl's 112 bytes");
 
 // cosmo's termios, the repack target of shim/termios.c: no c_line, NCCS 20,
 // speeds as fields. If any of this drifts, the repack corrupts.

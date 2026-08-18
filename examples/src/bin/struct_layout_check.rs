@@ -44,6 +44,28 @@ const _: () = {
     assert!(offset_of!(libc::utsname, domainname) == 750);
     assert!(size_of::<libc::utsname>() == 900);
 
+    // The Linux ABI part, which cosmo agrees with field for field, then the
+    // size cosmo's BSD-flavored tail takes it to. Only the size is
+    // load-bearing: it is what keeps statfs() inside the caller's struct.
+    assert!(offset_of!(libc::statfs, f_type) == 0);
+    assert!(offset_of!(libc::statfs, f_bsize) == 8);
+    assert!(offset_of!(libc::statfs, f_blocks) == 16);
+    assert!(offset_of!(libc::statfs, f_bfree) == 24);
+    assert!(offset_of!(libc::statfs, f_bavail) == 32);
+    assert!(offset_of!(libc::statfs, f_files) == 40);
+    assert!(offset_of!(libc::statfs, f_ffree) == 48);
+    assert!(offset_of!(libc::statfs, f_fsid) == 56);
+    assert!(offset_of!(libc::statfs, f_namelen) == 64);
+    assert!(offset_of!(libc::statfs, f_frsize) == 72);
+    assert!(offset_of!(libc::statfs, f_flags) == 80);
+    assert!(offset_of!(libc::statfs, f_spare) == 88);
+    assert!(size_of::<libc::statfs>() == 144);
+    assert!(size_of::<libc::statfs64>() == 144);
+    // statvfs is the other direction: cosmo's is 88 bytes against musl's
+    // 112, so it short-writes, which is safe. Pinned so a cosmocc upgrade
+    // that grows it past musl's has to come through here.
+    assert!(size_of::<libc::statvfs>() == 112);
+
     assert!(offset_of!(libc::dirent, d_ino) == 0);
     assert!(offset_of!(libc::dirent, d_off) == 8);
     assert!(offset_of!(libc::dirent, d_reclen) == 16);

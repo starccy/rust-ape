@@ -208,7 +208,37 @@ diff a/libc/src/unix/linux_like/linux/musl/b64/aarch64/mod.rs b/libc/src/unix/li
 diff a/libc/src/unix/linux_like/linux/musl/mod.rs b/libc/src/unix/linux_like/linux/musl/mod.rs
 --- a/libc/src/unix/linux_like/linux/musl/mod.rs
 +++ b/libc/src/unix/linux_like/linux/musl/mod.rs
-@@ -755,8 +755,15 @@
+@@ -412,6 +412,18 @@
+         pub f_frsize: c_ulong,
+         pub f_flags: c_ulong,
+         pub f_spare: [c_ulong; 4],
++        // cosmo: everything above is the Linux ABI, which is where cosmo's
++        // statfs stops agreeing with musl -- it carries a BSD-flavored tail
++        // (uint32_t f_owner, char f_fstypename[16]) that takes it to 144
++        // bytes against musl's 120. Left at 120, statfs()/fstatfs() write 24
++        // bytes past the end of the caller's struct; on the stack, which is
++        // the usual idiom, that wrecks whatever the frame keeps next to it
++        // and the SIGSEGV lands somewhere unrelated. Widened here rather
++        // than repacked in the shim for the same reason as utsname: these
++        // are only ever out-parameters, and a short write from a
++        // musl-sized statfs would be safe anyway.
++        __f_owner: u32,
++        __f_fstypename: [c_char; 16],
+     }
+ 
+     // MIPS/s390x implementation is special (see arch folders)
+@@ -429,6 +441,10 @@
+         pub f_frsize: c_ulong,
+         pub f_flags: c_ulong,
+         pub f_spare: [c_ulong; 4],
++        // cosmo: statfs64 is the same struct as statfs here, and cosmo has
++        // only the one -- widened for the same reason, see statfs above.
++        __f_owner: u32,
++        __f_fstypename: [c_char; 16],
+     }
+ 
+     pub struct sysinfo {
+@@ -755,8 +771,15 @@
  }
  
  extern "C" {
