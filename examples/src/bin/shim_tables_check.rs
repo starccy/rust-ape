@@ -37,6 +37,12 @@
 #[cfg(target_arch = "aarch64")] const _: () = assert!(libc::UTIME_NOW as i64 == 1073741823);
 #[cfg(target_arch = "x86_64")] const _: () = assert!(libc::UTIME_OMIT as i64 == 1073741822);
 #[cfg(target_arch = "aarch64")] const _: () = assert!(libc::UTIME_OMIT as i64 == 1073741822);
+#[cfg(target_arch = "x86_64")] const _: () = assert!(libc::WNOHANG as i64 == 1);
+#[cfg(target_arch = "aarch64")] const _: () = assert!(libc::WNOHANG as i64 == 1);
+#[cfg(target_arch = "x86_64")] const _: () = assert!(libc::WUNTRACED as i64 == 2);
+#[cfg(target_arch = "aarch64")] const _: () = assert!(libc::WUNTRACED as i64 == 2);
+#[cfg(target_arch = "x86_64")] const _: () = assert!(libc::WCONTINUED as i64 == 8);
+#[cfg(target_arch = "aarch64")] const _: () = assert!(libc::WCONTINUED as i64 == 8);
 #[cfg(target_arch = "x86_64")] const _: () = assert!(libc::SOCK_CLOEXEC as i64 == 524288);
 #[cfg(target_arch = "aarch64")] const _: () = assert!(libc::SOCK_CLOEXEC as i64 == 524288);
 #[cfg(target_arch = "x86_64")] const _: () = assert!(libc::SOCK_NONBLOCK as i64 == 2048);

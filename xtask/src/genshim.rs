@@ -368,6 +368,7 @@ const SINGLES: &[&str] = &[
     // which an empty translated mask reproduces on its own.
     "R_OK", "W_OK", "X_OK",
     "UTIME_NOW", "UTIME_OMIT",
+    "WNOHANG", "WUNTRACED", "WCONTINUED",
     "SOCK_CLOEXEC", "SOCK_NONBLOCK", "MAP_STACK",
     "SIG_BLOCK", "SIG_UNBLOCK", "SIG_SETMASK", "SO_ERROR",
     "SOL_SOCKET", "IPPROTO_IP", "IPPROTO_TCP", "IPPROTO_IPV6", "IPPROTO_UDP",

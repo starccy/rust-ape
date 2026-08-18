@@ -1,35 +1,15 @@
-// The signal half of the Linux-personality shim.
+// The signal half of the Linux-personality shim. Three translations:
+// signal numbers and sa_flags are cosmo runtime constants where platforms
+// diverge, and struct sigaction's layouts differ outright, so it is
+// repacked field by field in both directions.
 //
-// Three things cross this boundary and all three need translation:
+// Handlers are wrapped in a trampoline so signum (and si_signo/si_errno)
+// arrive Linux-coded; the ucontext_t argument passes through untranslated.
 //
-//   - signal numbers: the universal ones (SIGKILL 9, SIGSEGV 11, ...) are
-//     fixed to the Linux values by cosmo itself and pass through; the
-//     divergent ones (SIGCHLD is 17 on Linux, 20 on BSDs; SIGUSR1 10 vs 30)
-//     are runtime constants.
-//   - struct sigaction: the layouts genuinely differ. musl is {handler,
-//     128-byte sa_mask, int sa_flags, restorer}; cosmo is {handler, uint64
-//     sa_flags, restorer, uint64 sa_mask}. Passing one where the other is
-//     expected silently drops sa_flags — SA_SIGINFO and SA_ONSTACK included,
-//     on every host — so both directions get repacked field by field here.
-//   - sa_flags themselves: runtime constants under cosmo (SA_SIGINFO is 4 on
-//     Linux, 0x40 on the BSDs...).
-//
-// Handlers are wrapped in a trampoline so the signum argument (and si_signo/
-// si_errno for SA_SIGINFO handlers) arrive Linux-coded; cosmo delivers its
-// host-coded numbers. The third handler argument (ucontext_t) is passed
-// through untranslated — nothing in the supported crate set reads it.
-//
-// The sigset_t convention, established by the sigaddset/sigdelset/sigismember
-// accessors, is that the bits inside a set are HOST-numbered (the accessors
-// translate the signum at the boundary), and only the low 64 bits are
-// meaningful. musl's sigset_t is 128 bytes but every consumer of a set in
-// the final binary is a cosmo function reading a uint64, so repacking a mask
-// means copying the low word, and writing one back means zeroing the tail.
-//
-// Not handled: the real-time range (SIGRTMIN+n) — musl computes it with a
-// function, there is no constant to extract; those pass through raw.
-//
-// Values come from tables.h (`cargo xtask gen-shim`).
+// Conventions: bits inside a sigset_t are HOST-numbered (the accessors
+// translate at the boundary) and only the low 64 bits are meaningful; the
+// real-time range (SIGRTMIN+n) has no constants to extract and passes
+// through raw.
 
 #include <errno.h>
 #include <signal.h>
@@ -71,6 +51,10 @@ static int sig_to_linux(int host) {
     for (size_t i = 0; i < NSIGS; i++)
         if (*kSigs[i].host == host) return kSigs[i].lin;
     return host;
+}
+
+int __ape_shim_signum_to_linux(int host) {
+    return sig_to_linux(host);
 }
 
 // ---------------------------------------------------------------------------
