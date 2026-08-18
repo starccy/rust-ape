@@ -102,7 +102,7 @@ const ERRNOS: &[(&str, bool)] = &[
 const OFLAGS: &[(&str, bool)] = &[
     ("O_CREAT", R), ("O_EXCL", R), ("O_TRUNC", R), ("O_APPEND", R),
     ("O_NONBLOCK", R), ("O_CLOEXEC", R), ("O_DIRECTORY", R), ("O_NOFOLLOW", R),
-    ("O_PATH", R), ("O_DSYNC", R),
+    ("O_PATH", D), ("O_DSYNC", R),
     ("O_NOCTTY", D), ("O_ASYNC", D), ("O_DIRECT", D), ("O_NOATIME", D),
 ];
 

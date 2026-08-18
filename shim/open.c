@@ -6,12 +6,6 @@
 // the *at family at the __ape_shim_* entry points below, which translate the
 // Linux coding into cosmo's runtime constants and forward.
 //
-// For bits with no usable host value (cosmo publishes 0 for "not on this
-// platform"), flags that change semantics fail with EOPNOTSUPP so the
-// caller can tell (that's also what tempfile's O_TMPFILE fallback expects),
-// while pure performance hints (O_DIRECT, O_NOATIME, ...) are dropped,
-// matching how kernels treat them. Bits the tables don't know are EINVAL.
-//
 // All Linux values come from tables.h, generated out of the vendored libc
 // crate by `cargo xtask gen-shim` and cross-checked at build time.
 
@@ -59,9 +53,14 @@ void __ape_shim_epoll_note_new_fd(int fd);
 
 struct oflag {
     int linux_bit;
-    const unsigned *host; // cosmo's runtime constant; 0 = not on this host
+    const unsigned *host; // cosmo's runtime constant
     bool droppable;       // hint: drop when unsupported instead of failing
 };
+
+// cosmo may publish an unsupported flag as 0 or ~0; treat both as unsupported.
+static bool unsupported(unsigned host_bit) {
+    return host_bit == 0 || host_bit == (unsigned)-1;
+}
 
 #define X(name, lin, drop) { lin, &name, drop },
 static const struct oflag kOflags[] = { SHIM_OFLAG_TABLE(X) };
@@ -101,7 +100,7 @@ static int oflags_to_host(int lin, int *out) {
     for (size_t i = 0; i < NOFLAGS; i++) {
         if (!(lin & kOflags[i].linux_bit)) continue;
         lin &= ~kOflags[i].linux_bit;
-        if (*kOflags[i].host) {
+        if (!unsupported(*kOflags[i].host)) {
             host |= *kOflags[i].host;
         } else if (!kOflags[i].droppable) {
             return errno = EOPNOTSUPP, -1;
@@ -122,7 +121,7 @@ static int oflags_to_linux(int host) {
     }
     for (size_t i = 0; i < NOFLAGS; i++) {
         unsigned h = *kOflags[i].host;
-        if (h && (host & h) == (int)h) lin |= kOflags[i].linux_bit;
+        if (!unsupported(h) && (host & h) == (int)h) lin |= kOflags[i].linux_bit;
     }
     return lin;
 }
