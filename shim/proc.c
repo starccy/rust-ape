@@ -224,7 +224,12 @@ textwindows int __proc_harvest(struct Proc *pr, bool iswait4) {
   uint32_t status;
   struct rusage ru;
   GetExitCodeProcess(pr->handle, &status);
-  if (status == kNtStillActive)
+  // [rust-ape] 259 (kNtStillActive) is Microsoft's documented ambiguity:
+  // a program can really exit with it as an ordinary exit code. Taking
+  // it at face value leaves the process waited on forever, so only
+  // trust it while the process object is still unsignaled.
+  if (status == kNtStillActive &&
+      WaitForSingleObject(pr->handle, 0) == kNtWaitTimeout)
     return 0;
   __proc_stats(pr->handle, &ru);
   rusage_add(&pr->ru, &ru);
