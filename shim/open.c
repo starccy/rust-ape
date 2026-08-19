@@ -280,6 +280,19 @@ int __ape_shim_unlinkat(int dirfd, const char *path, int lin) {
 // git.exe exists; shim/suffix.c extends the same lie to exec.
 int __ape_shim_exe_fallback(int dirfd, const char *path, char *buf);
 
+// POSIX says lstat on a path ending in ".", ".." or a slash always
+// follows a symlink there; cosmo's NT conversion can report the symlink
+// itself instead, so those cases are routed to plain stat.
+static int lstat_must_follow(const char *p) {
+    size_t n = strlen(p);
+    if (!n) return 0;
+    if (p[n - 1] == '/') return 1;
+    const char *b = strrchr(p, '/');
+    b = b ? b + 1 : p;
+    return b[0] == '.' && (b[1] == 0 || (b[1] == '.' && b[2] == 0));
+}
+
+
 int __ape_shim_fstatat(int dirfd, const char *path, struct stat *st, int lin) {
     int host = 0;
     if (at_bit(&lin, SHIM_LIN_AT_SYMLINK_NOFOLLOW, &AT_SYMLINK_NOFOLLOW, &host) < 0 ||
@@ -287,6 +300,8 @@ int __ape_shim_fstatat(int dirfd, const char *path, struct stat *st, int lin) {
         return -1;
     lin &= ~SHIM_LIN_AT_NO_AUTOMOUNT; // Linux-only; a no-op everywhere else
     if (lin) return errno = EINVAL, -1;
+    if ((host & AT_SYMLINK_NOFOLLOW) && lstat_must_follow(path))
+        host &= ~AT_SYMLINK_NOFOLLOW;
     int rc = fstatat(at_fdcwd(dirfd), path, st, host);
     if (rc < 0 && errno == ENOENT) {
         char buf[PATH_MAX];
@@ -308,6 +323,7 @@ int __ape_shim_stat(const char *path, struct stat *st) {
 }
 
 int __ape_shim_lstat(const char *path, struct stat *st) {
+    if (lstat_must_follow(path)) return __ape_shim_stat(path, st);
     int rc = lstat(path, st);
     if (rc < 0 && errno == ENOENT) {
         char buf[PATH_MAX];
