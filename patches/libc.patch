@@ -254,7 +254,7 @@ diff a/libc/src/unix/linux_like/linux/musl/mod.rs b/libc/src/unix/linux_like/lin
      pub fn prlimit(
          pid: crate::pid_t,
          resource: c_int,
-@@ -792,6 +799,10 @@
+@@ -792,6 +815,10 @@
          offset: off_t,
          flags: c_int,
      ) -> ssize_t;
@@ -265,6 +265,18 @@ diff a/libc/src/unix/linux_like/linux/musl/mod.rs b/libc/src/unix/linux_like/lin
      pub fn getauxval(type_: c_ulong) -> c_ulong;
      pub fn renameat2(
          olddirfd: c_int,
+@@ -817,7 +844,11 @@
+     pub fn mlock2(addr: *const c_void, len: size_t, flags: c_uint) -> c_int;
+     pub fn malloc_usable_size(ptr: *mut c_void) -> size_t;
+ 
++    // cosmo: R_OK/W_OK/X_OK are Linux-coded; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_euidaccess")]
+     pub fn euidaccess(pathname: *const c_char, mode: c_int) -> c_int;
++    // cosmo: R_OK/W_OK/X_OK are Linux-coded; the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_eaccess")]
+     pub fn eaccess(pathname: *const c_char, mode: c_int) -> c_int;
+ 
+     pub fn asctime_r(tm: *const crate::tm, buf: *mut c_char) -> *mut c_char;
 diff a/libc/src/unix/linux_like/linux_l4re_shared.rs b/libc/src/unix/linux_like/linux_l4re_shared.rs
 --- a/libc/src/unix/linux_like/linux_l4re_shared.rs
 +++ b/libc/src/unix/linux_like/linux_l4re_shared.rs
