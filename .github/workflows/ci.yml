@@ -100,8 +100,10 @@ jobs:
           [ "${{ inputs.strace }}" = "true" ] && strace="--strace"
           fail=0
           : > /tmp/summary.txt
+          now_ms() { perl -MTime::HiRes=time -e 'printf "%d", time()*1000'; }
           for b in ape/*.com; do
             name=$(basename "$b")
+            t0=$(now_ms)
             if perl /tmp/run-capped.pl 60 "$b" $strace >/tmp/out.txt 2>/tmp/err.txt; then
               status="ok"
             else
@@ -109,8 +111,9 @@ jobs:
               [ $rc -eq 142 ] && status="TIMED OUT after 60s" || status="FAILED (exit $rc)"
               fail=1
             fi
+            ms=$(( $(now_ms) - t0 ))
             
-            echo "::group::$name - $status"
+            echo "::group::$name - $status (${ms}ms)"
             cat /tmp/out.txt
             if [ -s /tmp/err.txt ]; then
               echo "--- stderr"
@@ -119,7 +122,7 @@ jobs:
             fi
             echo "::endgroup::"
             [ "$status" = ok ] || echo "::error title=$name::$status"
-            printf '%-24s %s\n' "$name" "$status" >> /tmp/summary.txt
+            printf '%-24s %-20s %6sms\n' "$name" "$status" "$ms" >> /tmp/summary.txt
           done
           echo "=== summary"
           cat /tmp/summary.txt
@@ -137,6 +140,7 @@ jobs:
             $e = New-TemporaryFile
             $args = @{}
             if ($strace) { $args["ArgumentList"] = $strace }
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
             $p = Start-Process -FilePath $b.FullName -PassThru -NoNewWindow @args `
                  -RedirectStandardOutput $o -RedirectStandardError $e
             if ($p.WaitForExit(60000)) {
@@ -149,7 +153,9 @@ jobs:
               $status = "TIMED OUT after 60s"
               $fail = 1
             }
-            "::group::$($b.Name) - $status"
+            $sw.Stop()
+            $ms = $sw.ElapsedMilliseconds
+            "::group::$($b.Name) - $status (${ms}ms)"
             Get-Content $o -ErrorAction SilentlyContinue
             if ((Get-Item $e -ErrorAction SilentlyContinue).Length -gt 0) {
               "--- stderr"
@@ -157,7 +163,7 @@ jobs:
             }
             "::endgroup::"
             if ($status -ne "ok") { "::error title=$($b.Name)::$status" }
-            $summary += "{0,-24} {1}" -f $b.Name, $status
+            $summary += "{0,-24} {1,-20} {2,6}ms" -f $b.Name, $status, $ms
             Remove-Item $o, $e -Force -ErrorAction SilentlyContinue
           }
           "=== summary"
