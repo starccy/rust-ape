@@ -43,6 +43,16 @@ Then rebuild, since the SDK only re-applies patches when a stamp changes:
 cargo xtask setup
 ```
 
+## Checking the symbols
+
+```sh
+./patches/check-symbols.sh
+```
+
+Cross-checks `shim/` against the patches. Every `__ape_shim_*` symbol the
+shim defines must have a matching `link_name` redirect in a patch, so that
+no shim silently goes unused.
+
 ## Applying by hand
 
 `cargo xtask setup` does this for you; you only need it to inspect a patch

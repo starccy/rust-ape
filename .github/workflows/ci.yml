@@ -24,6 +24,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # every shim symbol must be referenced by a patch
+      - run: ./patches/check-symbols.sh
+
       - uses: actions/cache@v6
         with:
           path: cache
