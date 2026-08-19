@@ -48,6 +48,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <poll.h>
+#include <signal.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -224,6 +225,10 @@ static uint32_t poll_to_epoll(short r) {
     if (r & POLLNVAL) e |= SHIM_EPOLLERR;
     return e;
 }
+
+// shim/poll.c: a blocking poll with a low-latency first phase on NT.
+int __ape_shim_host_ppoll(struct pollfd *fds, unsigned long n,
+                          const struct timespec *timeout, const sigset_t *mask);
 
 static int64_t now_ms(void) {
     struct timespec ts;
@@ -519,7 +524,11 @@ static int emu_wait(int epfd, struct shim_epoll_event *out, int maxevents,
             ms = left <= 0 ? 0 : (left > INT_MAX ? INT_MAX : (int)left);
         }
 
-        int rc = poll(pfds, (nfds_t)np, ms);
+        // Through shim/poll.c rather than cosmo's poll() directly: on NT the
+        // latter is slow to notice a pipe went readable, and a reactor
+        // built on this pays that on every wakeup. Read its header.
+        struct timespec ts = {ms / 1000, (ms % 1000) * 1000000};
+        int rc = __ape_shim_host_ppoll(pfds, np, ms < 0 ? NULL : &ts, NULL);
         if (rc == -1 && errno == EINVAL && np > SHIM_POLL_CHUNK)
             rc = poll_chunked(pfds, np, ms);
         if (rc == -1) {
