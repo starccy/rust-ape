@@ -11,10 +11,12 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdarg.h>
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <string.h>
 #include <stdint.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -272,6 +274,12 @@ int __ape_shim_unlinkat(int dirfd, const char *path, int lin) {
     return unlinkat(at_fdcwd(dirfd), path, host);
 }
 
+// shim/suffix.c -- the NT executable-suffix retry (".exe magic"). The
+// identity probes a $PATH walk consists of (access/stat families) retry a
+// bare-name ENOENT with the host suffixes, so `git` resolves where only
+// git.exe exists; shim/suffix.c extends the same lie to exec.
+int __ape_shim_exe_fallback(int dirfd, const char *path, char *buf);
+
 int __ape_shim_fstatat(int dirfd, const char *path, struct stat *st, int lin) {
     int host = 0;
     if (at_bit(&lin, SHIM_LIN_AT_SYMLINK_NOFOLLOW, &AT_SYMLINK_NOFOLLOW, &host) < 0 ||
@@ -279,7 +287,33 @@ int __ape_shim_fstatat(int dirfd, const char *path, struct stat *st, int lin) {
         return -1;
     lin &= ~SHIM_LIN_AT_NO_AUTOMOUNT; // Linux-only; a no-op everywhere else
     if (lin) return errno = EINVAL, -1;
-    return fstatat(at_fdcwd(dirfd), path, st, host);
+    int rc = fstatat(at_fdcwd(dirfd), path, st, host);
+    if (rc < 0 && errno == ENOENT) {
+        char buf[PATH_MAX];
+        if (__ape_shim_exe_fallback(at_fdcwd(dirfd), path, buf))
+            rc = fstatat(at_fdcwd(dirfd), buf, st, host);
+    }
+    return rc;
+}
+
+// stat/lstat carry no constants to translate; they are here only for the
+// suffix retry (std's fs::metadata is how fish sizes up a candidate).
+int __ape_shim_stat(const char *path, struct stat *st) {
+    int rc = stat(path, st);
+    if (rc < 0 && errno == ENOENT) {
+        char buf[PATH_MAX];
+        if (__ape_shim_exe_fallback(AT_FDCWD, path, buf)) rc = stat(buf, st);
+    }
+    return rc;
+}
+
+int __ape_shim_lstat(const char *path, struct stat *st) {
+    int rc = lstat(path, st);
+    if (rc < 0 && errno == ENOENT) {
+        char buf[PATH_MAX];
+        if (__ape_shim_exe_fallback(AT_FDCWD, path, buf)) rc = lstat(buf, st);
+    }
+    return rc;
 }
 
 int __ape_shim_linkat(int olddirfd, const char *oldpath, int newdirfd,
@@ -311,20 +345,36 @@ static int amode_to_host(int lin, int *out) {
 int __ape_shim_access(const char *path, int amode) {
     int host;
     if (amode_to_host(amode, &host) < 0) return -1;
-    return access(path, host);
+    int rc = access(path, host);
+    if (rc < 0 && errno == ENOENT) {
+        char buf[PATH_MAX];
+        if (__ape_shim_exe_fallback(AT_FDCWD, path, buf)) rc = access(buf, host);
+    }
+    return rc;
 }
 
 // The effective-identity spellings of the same question, same amode.
 int __ape_shim_eaccess(const char *path, int amode) {
     int host;
     if (amode_to_host(amode, &host) < 0) return -1;
-    return eaccess(path, host);
+    int rc = eaccess(path, host);
+    if (rc < 0 && errno == ENOENT) {
+        char buf[PATH_MAX];
+        if (__ape_shim_exe_fallback(AT_FDCWD, path, buf)) rc = eaccess(buf, host);
+    }
+    return rc;
 }
 
 int __ape_shim_euidaccess(const char *path, int amode) {
     int host;
     if (amode_to_host(amode, &host) < 0) return -1;
-    return euidaccess(path, host);
+    int rc = euidaccess(path, host);
+    if (rc < 0 && errno == ENOENT) {
+        char buf[PATH_MAX];
+        if (__ape_shim_exe_fallback(AT_FDCWD, path, buf))
+            rc = euidaccess(buf, host);
+    }
+    return rc;
 }
 
 int __ape_shim_faccessat(int dirfd, const char *path, int amode, int lin) {
@@ -341,7 +391,13 @@ int __ape_shim_faccessat(int dirfd, const char *path, int amode, int lin) {
         return -1;
     if (lin) return errno = EINVAL, -1;
     if (amode_to_host(amode, &hmode) < 0) return -1;
-    return faccessat(at_fdcwd(dirfd), path, hmode, host);
+    int rc = faccessat(at_fdcwd(dirfd), path, hmode, host);
+    if (rc < 0 && errno == ENOENT) {
+        char buf[PATH_MAX];
+        if (__ape_shim_exe_fallback(at_fdcwd(dirfd), path, buf))
+            rc = faccessat(at_fdcwd(dirfd), buf, hmode, host);
+    }
+    return rc;
 }
 
 int __ape_shim_utimensat(int dirfd, const char *path,
