@@ -73,7 +73,7 @@ for shim_src in "$SDK_ROOT"/shim/*.c; do
         # it a replaced member silently vanishes from --strace output).
         extra=
         case "$shim_src" in
-            */commandv.c|*/fchdir-nt.c|*/mkntpath.c|*/mkntpathat.c|*/read.c|*/readlinkat-nt.c|*/realpath.c)
+            */commandv.c|*/fchdir-nt.c|*/proc.c|*/mkntpath.c|*/mkntpathat.c|*/read.c|*/readlinkat-nt.c|*/realpath.c)
                 extra="-D_COSMO_SOURCE"
                 # the tiny runtime never prints strace lines, so leave
                 # SYSDEBUG at its default 0 there and skip the dead code
