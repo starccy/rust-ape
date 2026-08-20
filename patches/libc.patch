@@ -236,6 +236,21 @@ diff a/libc/src/unix/linux_like/linux/musl/b64/mod.rs b/libc/src/unix/linux_like
      }
  
      pub struct sigset_t {
+@@ -49,7 +58,14 @@
+     }
+ 
+     pub struct sem_t {
++        // cosmo: musl's sem_t is 32 bytes of ints; cosmo's is a union with
++        // void *sem_space[32] -- 256 bytes, pointer-aligned -- and
++        // sem_init() writes the whole thing. Widened like pthread_attr_t:
++        // opaque storage, only ever passed by pointer, cosmo's functions
++        // define the layout. The u64 tail also raises the alignment from
++        // musl's 4 to cosmo's 8.
+         __val: [c_int; 8],
++        __cosmo_space: [u64; 28],
+     }
+ }
+ 
 diff a/libc/src/unix/linux_like/linux/musl/mod.rs b/libc/src/unix/linux_like/linux/musl/mod.rs
 --- a/libc/src/unix/linux_like/linux/musl/mod.rs
 +++ b/libc/src/unix/linux_like/linux/musl/mod.rs

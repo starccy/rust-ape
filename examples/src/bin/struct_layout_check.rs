@@ -11,7 +11,7 @@
 //! struct termios is absent on purpose. Its layouts genuinely differ, so
 //! shim/termios.c repacks it and carries its own asserts.
 
-use std::mem::{offset_of, size_of};
+use std::mem::{align_of, offset_of, size_of};
 
 const _: () = {
     assert!(offset_of!(libc::timespec, tv_sec) == 0);
@@ -68,6 +68,11 @@ const _: () = {
 
     // pthread_attr_t is opaque storage, widened from musl's 56 to cosmo's 64
     assert!(size_of::<libc::pthread_attr_t>() == 64);
+
+    // sem_t is widened from musl's 32 to cosmo's 256 for the same reason:
+    // sem_init() writes the whole cosmo union into the caller's buffer.
+    assert!(size_of::<libc::sem_t>() == 256);
+    assert!(align_of::<libc::sem_t>() == 8);
 
     assert!(offset_of!(libc::dirent, d_ino) == 0);
     assert!(offset_of!(libc::dirent, d_off) == 8);

@@ -138,6 +138,14 @@ _Static_assert(sizeof(struct statvfs) <= 112,
 #include <pthread.h>
 _Static_assert(sizeof(pthread_attr_t) == 64, "cosmo pthread_attr_t size");
 
+// cosmo's sem_t is a union padded out by void *sem_space[32] -- 256 bytes,
+// pointer-aligned -- against musl's 32 bytes of ints, and sem_init() writes
+// all of it. Widened to 256 in patches/libc.patch, same treatment as
+// pthread_attr_t.
+#include <semaphore.h>
+_Static_assert(sizeof(sem_t) == 256, "cosmo sem_t size");
+_Static_assert(_Alignof(sem_t) == 8, "cosmo sem_t alignment");
+
 // cosmo's termios, the repack target of shim/termios.c: no c_line, NCCS 20,
 // speeds as fields. If any of this drifts, the repack corrupts.
 #include <termios.h>
