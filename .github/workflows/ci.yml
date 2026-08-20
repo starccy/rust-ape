@@ -43,6 +43,9 @@ jobs:
 
       - run: cargo xtask setup
 
+      # find the mismatch struct size between musl and cosmo
+      - run: python3 scripts/struct-scan.py
+
       - name: Build the examples
         shell: bash
         run: |
