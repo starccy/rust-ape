@@ -215,6 +215,27 @@ diff a/libc/src/unix/linux_like/linux/musl/b64/aarch64/mod.rs b/libc/src/unix/li
      }
  
      pub struct user_regs_struct {
+diff a/libc/src/unix/linux_like/linux/musl/b64/mod.rs b/libc/src/unix/linux_like/linux/musl/b64/mod.rs
+--- a/libc/src/unix/linux_like/linux/musl/b64/mod.rs
++++ b/libc/src/unix/linux_like/linux/musl/b64/mod.rs
+@@ -12,7 +12,16 @@
+     }
+ 
+     pub struct pthread_attr_t {
+-        __size: [u64; 7],
++        // cosmo: musl's pthread_attr_t is 56 bytes, cosmo's is 64 -- its
++        // attr carries extra fields (__sigmask, __sigaltstackaddr, ...).
++        // pthread_attr_init() whole-struct-assigns and pthread_getattr_np()
++        // memcpy()s sizeof(cosmo attr), so a musl-sized buffer gets 8 bytes
++        // written past the end; Rust std keeps it on the stack in
++        // Thread::new (every spawn) and the stack-bounds probe of every
++        // thread start, wrecking a neighboring local. Widened for the same
++        // reason as utsname/statfs: it's opaque storage, only ever passed
++        // by pointer, and cosmo's own functions define the layout.
++        __size: [u64; 8],
+     }
+ 
+     pub struct sigset_t {
 diff a/libc/src/unix/linux_like/linux/musl/mod.rs b/libc/src/unix/linux_like/linux/musl/mod.rs
 --- a/libc/src/unix/linux_like/linux/musl/mod.rs
 +++ b/libc/src/unix/linux_like/linux/musl/mod.rs

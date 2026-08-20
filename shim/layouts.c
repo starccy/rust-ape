@@ -134,6 +134,10 @@ _Static_assert(sizeof(struct statfs) == 144, "cosmo statfs size");
 _Static_assert(sizeof(struct statvfs) <= 112,
                "cosmo statvfs outgrew musl's 112 bytes");
 
+// cosmo's pthread_attr_t is 64 bytes against musl's 56
+#include <pthread.h>
+_Static_assert(sizeof(pthread_attr_t) == 64, "cosmo pthread_attr_t size");
+
 // cosmo's termios, the repack target of shim/termios.c: no c_line, NCCS 20,
 // speeds as fields. If any of this drifts, the repack corrupts.
 #include <termios.h>

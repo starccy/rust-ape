@@ -66,6 +66,9 @@ const _: () = {
     // that grows it past musl's has to come through here.
     assert!(size_of::<libc::statvfs>() == 112);
 
+    // pthread_attr_t is opaque storage, widened from musl's 56 to cosmo's 64
+    assert!(size_of::<libc::pthread_attr_t>() == 64);
+
     assert!(offset_of!(libc::dirent, d_ino) == 0);
     assert!(offset_of!(libc::dirent, d_off) == 8);
     assert!(offset_of!(libc::dirent, d_reclen) == 16);
