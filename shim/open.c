@@ -295,6 +295,14 @@ static int lstat_must_follow(const char *p) {
 
 int __ape_shim_fstatat(int dirfd, const char *path, struct stat *st, int lin) {
     int host = 0;
+    // Cosmo rejects an empty path before ever looking at AT_EMPTY_PATH, so
+    // the call fails with EINVAL on every host, Linux included. Programs
+    // that read /proc/<pid>/fd depend on it to ask each descriptor what it
+    // refers to.
+    if (path && !path[0] && (lin & SHIM_LIN_AT_EMPTY_PATH)) {
+        if (dirfd != SHIM_LIN_AT_FDCWD) return fstat(dirfd, st);
+        return stat(".", st);
+    }
     if (at_bit(&lin, SHIM_LIN_AT_SYMLINK_NOFOLLOW, &AT_SYMLINK_NOFOLLOW, &host) < 0 ||
         at_bit(&lin, SHIM_LIN_AT_EMPTY_PATH, SHIM_AT_EMPTY_PATH, &host) < 0)
         return -1;
