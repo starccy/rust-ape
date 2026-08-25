@@ -163,9 +163,15 @@ static int polled_ms(void) {
     return ms;
 }
 
-int __ape_shim_host_ppoll(struct pollfd *fds, unsigned long n,
-                          const struct timespec *timeout,
-                          const sigset_t *mask) {
+// shim/packet.c: an AF_PACKET socket on NT is really two sockets, one per
+// address family, and the caller only ever holds one of them. A poll on the
+// fd it holds has to wait on both, or IPv6 traffic never wakes it.
+_Bool __ape_shim_packet_any(void);
+int __ape_shim_packet_secondary(int fd);
+
+static int host_ppoll_inner(struct pollfd *fds, unsigned long n,
+                            const struct timespec *timeout,
+                            const sigset_t *mask) {
     int zero_timeout = timeout && !timeout->tv_sec && !timeout->tv_nsec;
     int budget = IsWindows() ? polled_ms() : 0;
     if (!budget || !n || zero_timeout)
@@ -197,6 +203,49 @@ int __ape_shim_host_ppoll(struct pollfd *fds, unsigned long n,
     if (left <= 0) return 0;
     struct timespec rest = {left / 1000, (left % 1000) * 1000000};
     return ppoll(fds, n, &rest, mask);
+}
+
+// Every poll in the process funnels through here, so this is the one place
+// a packet socket's hidden second fd has to be spliced in. Each secondary's
+// readiness is folded back onto the fd the caller asked about, and the
+// whole detour hides behind a cheap check for any packet socket at all.
+#define SHIM_PKT_POLL_MAX 64
+
+int __ape_shim_host_ppoll(struct pollfd *fds, unsigned long n,
+                          const struct timespec *timeout,
+                          const sigset_t *mask) {
+    if (!__ape_shim_packet_any() || !n || n > SHIM_PKT_POLL_MAX)
+        return host_ppoll_inner(fds, n, timeout, mask);
+
+    struct pollfd big[SHIM_PKT_POLL_MAX * 2];
+    int extra_of[SHIM_PKT_POLL_MAX]; // slot in big[] holding fds[i]'s twin
+    unsigned long m = n;
+    int any = 0;
+    for (unsigned long i = 0; i < n; i++) {
+        big[i] = fds[i];
+        extra_of[i] = -1;
+        int fd6 = __ape_shim_packet_secondary(fds[i].fd);
+        if (fd6 < 0) continue;
+        big[m].fd = fd6;
+        big[m].events = fds[i].events;
+        big[m].revents = 0;
+        extra_of[i] = (int)m++;
+        any = 1;
+    }
+    if (!any) return host_ppoll_inner(fds, n, timeout, mask);
+
+    int r = host_ppoll_inner(big, m, timeout, mask);
+
+    // Fold each twin's readiness onto the fd the caller knows, and recount:
+    // one fd ready on both sockets is still one ready fd.
+    int ready = 0;
+    for (unsigned long i = 0; i < n; i++) {
+        short rev = big[i].revents;
+        if (extra_of[i] >= 0) rev |= big[extra_of[i]].revents;
+        fds[i].revents = rev;
+        if (rev) ready++;
+    }
+    return r < 0 ? r : ready;
 }
 
 int __ape_shim_poll(struct pollfd *fds, unsigned long n, int timeout) {

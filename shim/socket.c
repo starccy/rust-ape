@@ -143,6 +143,22 @@ void __ape_shim_epoll_note_pair(int a, int b);
 void __ape_shim_epoll_note_new_fd(int fd);
 void __ape_shim_epoll_hint_pipe_write(int fd);
 
+// shim/packet.c emulates AF_PACKET on NT with an SIO_RCVALL raw socket, and
+// these are the calls whose meaning differs enough that it has to answer
+// them itself. Every check hides behind a cheap load asking whether any
+// packet socket exists, so a program that never sniffs pays nothing.
+int __ape_shim_packet_socket(int lin_type, int protocol);
+_Bool __ape_shim_packet_is(int fd);
+_Bool __ape_shim_packet_sockopt(int fd, int level);
+int __ape_shim_packet_bind(int fd, const void *addr, unsigned len);
+long __ape_shim_packet_recv(int fd, void *buf, unsigned long n, void *addr,
+                            unsigned *alen);
+
+// musl's AF_PACKET. Left out of SHIM_AF_TABLE on purpose, since cosmo's
+// constant resolves to -1 on NT and translating to it would defeat the
+// emulation.
+#define SHIM_LIN_AF_PACKET 17
+
 // Data as well as EAGAIN re-arms the read side: a real kernel reports a
 // fresh edge when new bytes arrive later, so a consumer that stops at a
 // short read instead of draining to EAGAIN must keep getting events. EOF
@@ -170,6 +186,13 @@ int __ape_shim_socket(int domain, int lin_type, int protocol) {
     int type;
     type_to_host(lin_type, &type);
     __ape_shim_pin_winsock();
+    // NT has no packet socket, so shim/packet.c builds one out of a raw
+    // socket. Only there: on every other host AF_PACKET is the host's own.
+    if (IsWindows() && domain == SHIM_LIN_AF_PACKET) {
+        int fd = __ape_shim_packet_socket(lin_type, protocol);
+        if (fd >= 0) __ape_shim_epoll_note_new_fd(fd);
+        return fd;
+    }
     int fd = socket(af_to_host(domain), type, protocol);
     if (fd >= 0) __ape_shim_epoll_note_new_fd(fd);
     return fd;
@@ -337,6 +360,9 @@ int __ape_shim_accept(int fd, void *addr, unsigned *len) {
 
 int __ape_shim_bind(int fd, const void *addr, unsigned len) {
     struct fam_copy tmp;
+    // A packet socket binds to an interface index, not to an address, so
+    // shim/packet.c resolves it and turns the capture on.
+    if (__ape_shim_packet_is(fd)) return __ape_shim_packet_bind(fd, addr, len);
     const void *host = addr_to_host(addr, &len, &tmp);
     return bind(fd, host, len);
 }
@@ -412,6 +438,9 @@ int __ape_shim_setsockopt(int fd, int level, int name, const void *val, unsigned
     if (level == SHIM_LIN_SOL_SOCKET && name == SHIM_LIN_SO_REUSEPORT &&
         !SO_REUSEPORT)
         return 0;
+    // SOL_PACKET options succeed as no-ops, since promiscuity is already on
+    // and refusing would abort a capture that does work.
+    if (__ape_shim_packet_sockopt(fd, level)) return 0;
     sockopt_to_host(&level, &name);
     return setsockopt(fd, level, name, val, len);
 }
@@ -520,11 +549,17 @@ long __ape_shim_sendto(int fd, const void *buf, unsigned long n, int flags,
 }
 
 long __ape_shim_recv(int fd, void *buf, unsigned long n, int flags) {
+    // A packet socket's datagrams need the link-layer header put back in
+    // front of them, and may come from either of the two sockets behind it.
+    if (__ape_shim_packet_is(fd))
+        return recv_result(fd, __ape_shim_packet_recv(fd, buf, n, NULL, NULL));
     return recv_result(fd, recv(fd, buf, n, msg_to_host(flags)));
 }
 
 long __ape_shim_recvfrom(int fd, void *buf, unsigned long n, int flags,
                          void *addr, unsigned *alen) {
+    if (__ape_shim_packet_is(fd))
+        return recv_result(fd, __ape_shim_packet_recv(fd, buf, n, addr, alen));
     long r = recvfrom(fd, buf, n, msg_to_host(flags), addr, alen);
     if (r >= 0) addr_to_linux(addr, alen);
     return recv_result(fd, r);
