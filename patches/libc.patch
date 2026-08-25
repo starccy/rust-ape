@@ -334,9 +334,12 @@ diff a/libc/src/unix/linux_like/linux_l4re_shared.rs b/libc/src/unix/linux_like/
              pub fn getnameinfo(
                  sa: *const crate::sockaddr,
                  salen: crate::socklen_t,
-@@ -1729,6 +1730,9 @@
+@@ -1729,6 +1730,12 @@
      pub fn shmctl(shmid: c_int, cmd: c_int, buf: *mut crate::shmid_ds) -> c_int;
  
++    // cosmo: on NT a PROT_NONE anonymous mapping is only reserved (see
++    // shim/mmap.c); the shim commits the pages before raising protection.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_mprotect")]
      pub fn mprotect(addr: *mut c_void, len: size_t, prot: c_int) -> c_int;
 +    // cosmo: route every consumer of libc's errno through the shim, which
 +    // keeps the value in Linux coding; see shim/errno.c in the SDK.
@@ -344,7 +347,7 @@ diff a/libc/src/unix/linux_like/linux_l4re_shared.rs b/libc/src/unix/linux_like/
      pub fn __errno_location() -> *mut c_int;
  
      #[cfg_attr(gnu_time_bits64, link_name = "__glob64_time64")]
-@@ -1752,9 +1756,13 @@
+@@ -1752,9 +1759,13 @@
      pub fn seekdir(dirp: *mut crate::DIR, loc: c_long);
  
      pub fn telldir(dirp: *mut crate::DIR) -> c_long;
@@ -358,7 +361,7 @@ diff a/libc/src/unix/linux_like/linux_l4re_shared.rs b/libc/src/unix/linux_like/
      pub fn recvfrom(
          socket: c_int,
          buf: *mut c_void,
-@@ -1791,6 +1799,8 @@
+@@ -1791,6 +1802,8 @@
      pub fn prctl(option: c_int, ...) -> c_int;
      #[cfg_attr(gnu_time_bits64, link_name = "__ppoll64")]
      #[cfg_attr(musl_redir_time64, link_name = "__ppoll_time64")]
@@ -367,7 +370,7 @@ diff a/libc/src/unix/linux_like/linux_l4re_shared.rs b/libc/src/unix/linux_like/
      pub fn ppoll(
          fds: *mut crate::pollfd,
          nfds: crate::nfds_t,
-@@ -1821,9 +1831,14 @@
+@@ -1821,9 +1834,14 @@
      pub fn getgrnam(name: *const c_char) -> *mut crate::group;
      pub fn sem_unlink(name: *const c_char) -> c_int;
      pub fn daemon(nochdir: c_int, noclose: c_int) -> c_int;
