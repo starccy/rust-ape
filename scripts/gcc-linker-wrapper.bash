@@ -73,6 +73,14 @@ for shim_src in "$SDK_ROOT"/shim/*.c; do
         # it a replaced member silently vanishes from --strace output).
         extra=
         case "$shim_src" in
+            */dlmalloc.c)
+                # the allocator is built the way upstream builds it:
+                # freestanding, -O3, and with general registers only so a
+                # malloc reached from any context never touches vector state
+                extra="-D_COSMO_SOURCE -ffreestanding -fdata-sections -ffunction-sections"
+                if [ "$tiny" = 0 ]; then
+                    extra="$extra -DSYSDEBUG=1 -O3 -mgeneral-regs-only"
+                fi ;;
             */fork-nt.c|*/close-nt.c|*/commandv.c|*/console.c|*/fchdir-nt.c|*/ftruncate-nt.c|*/proc.c|*/mkntpath.c|*/mkntpathat.c|*/read.c|*/readlinkat-nt.c|*/realpath.c)
                 extra="-D_COSMO_SOURCE"
                 # the tiny runtime never prints strace lines, so leave
