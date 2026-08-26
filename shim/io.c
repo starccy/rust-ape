@@ -24,6 +24,8 @@ int __ape_shim_nt_wants_eagain(int fd);                     // socket.c
 unsigned long __ape_shim_nt_clamp(int fd, unsigned long n); // socket.c
 void __ape_shim_epoll_rearm_out(int fd);                    // epoll.c
 void __ape_shim_epoll_hint_pipe_write(int fd);              // epoll.c
+void __ape_shim_console_wrote(int fd, const void *, unsigned long);      // console.c
+void __ape_shim_console_wrotev(int fd, const struct iovec *, int);      // console.c
 
 // Feeds shim/epoll.c's edge-triggered arming. EAGAIN (real or synthesized
 // by the poll gate) re-arms the write side. So does a short write: callers
@@ -45,7 +47,9 @@ static long write_result(int fd, long r, unsigned long want) {
 
 long __ape_shim_write(int fd, const void *buf, unsigned long n) {
     if (__ape_shim_nt_wants_eagain(fd)) return write_result(fd, -1, n);
-    return write_result(fd, write(fd, buf, __ape_shim_nt_clamp(fd, n)), n);
+    long r = write(fd, buf, __ape_shim_nt_clamp(fd, n));
+    if (r > 0) __ape_shim_console_wrote(fd, buf, r);
+    return write_result(fd, r, n);
 }
 
 long __ape_shim_writev(int fd, const struct iovec *iov, int iovcnt) {
@@ -56,11 +60,14 @@ long __ape_shim_writev(int fd, const struct iovec *iov, int iovcnt) {
         // in gated mode, degrade to a short write of the first non-empty
         // slice so the total handed to the blocking NT path stays clamped.
         for (int i = 0; i < iovcnt; i++) {
-            if (iov[i].iov_len)
-                return write_result(
-                    fd, write(fd, iov[i].iov_base, __ape_shim_nt_clamp(fd, iov[i].iov_len)),
-                    total);
+            if (iov[i].iov_len) {
+                long r = write(fd, iov[i].iov_base, __ape_shim_nt_clamp(fd, iov[i].iov_len));
+                if (r > 0) __ape_shim_console_wrote(fd, iov[i].iov_base, r);
+                return write_result(fd, r, total);
+            }
         }
     }
-    return write_result(fd, writev(fd, iov, iovcnt), total);
+    long r = writev(fd, iov, iovcnt);
+    if (r > 0) __ape_shim_console_wrotev(fd, iov, iovcnt);
+    return write_result(fd, r, total);
 }

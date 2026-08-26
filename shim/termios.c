@@ -50,10 +50,15 @@
 // not by termios. Carrying it across the call keeps xterm mouse reporting
 // active no matter how raw-mode toggles and mouse-enable writes are
 // ordered. A no-op on hosts whose tcsetattr goes to the kernel.
+// Afterwards console.c re-decides ENABLE_MOUSE_INPUT: cosmo leaves the
+// startup value (on) in place, which is what turned the wheel into arrow
+// keys for every raw-mode line editor.
+void __ape_shim_console_sync(void); // console.c
 static int tcsetattr_keep_mouse(int fd, int act, const struct termios *t) {
     unsigned mouse = __ttyconf.magic & kTtyXtMouse;
     int rc = tcsetattr(fd, act, t);
     __ttyconf.magic |= mouse;
+    if (rc == 0) __ape_shim_console_sync();
     return rc;
 }
 

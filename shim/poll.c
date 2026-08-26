@@ -23,6 +23,8 @@
 
 #include "tables.h"
 
+void __ape_shim_console_before_poll(const struct pollfd *, unsigned long); // console.c
+
 struct pbit {
     short linux_bit;
     const int16_t *host;
@@ -174,6 +176,7 @@ static int host_ppoll_inner(struct pollfd *fds, unsigned long n,
                             const sigset_t *mask) {
     int zero_timeout = timeout && !timeout->tv_sec && !timeout->tv_nsec;
     int budget = IsWindows() ? polled_ms() : 0;
+    if (IsWindows() && !zero_timeout) __ape_shim_console_before_poll(fds, n);
     if (!budget || !n || zero_timeout)
         return ppoll(fds, n, timeout, mask);
 

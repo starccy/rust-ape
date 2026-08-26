@@ -44,6 +44,7 @@
 
 void __ape_shim_epoll_rearm_in(int fd); // shim/epoll.c
 int __ape_shim_poll(struct pollfd *, unsigned long, int); // shim/poll.c
+void __ape_shim_console_before_wait(int fd);                // shim/console.c
 
 // ---------------------------------------------------------------------------
 // Escape sequences from the NT console arrive one byte per read, so a
@@ -153,6 +154,7 @@ static ssize_t readv_impl(int fd, const struct iovec *iov, int iovlen) {
   } else if (IsMetal()) {
     return sys_readv_metal(fd, iov, iovlen);
   } else if (IsWindows()) {
+    if (g_fds.p[fd].kind == kFdConsole) __ape_shim_console_before_wait(fd);
     ssize_t n = sys_readv_nt(fd, iov, iovlen);
     if (n > 0 && iovlen == 1 && g_fds.p[fd].kind == kFdConsole)
       n = CoalesceConsoleEscape(fd, iov[0].iov_base, iov[0].iov_len, n);
