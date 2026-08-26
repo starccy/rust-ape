@@ -38,10 +38,67 @@
 #include <libc/runtime/stack.h>
 #include <libc/runtime/zipos.internal.h>
 #include <libc/sock/internal.h>
+#include <libc/sock/struct/pollfd.h>
 #include <libc/stdckdint.h>
 #include <libc/sysv/errfuns.h>
 
 void __ape_shim_epoll_rearm_in(int fd); // shim/epoll.c
+int __ape_shim_poll(struct pollfd *, unsigned long, int); // shim/poll.c
+
+// ---------------------------------------------------------------------------
+// Escape sequences from the NT console arrive one byte per read, so a
+// parser fed a lone ESC takes it for the Escape key and stalls on a reply
+// that never assembles. Linux delivers the whole sequence in one read, and
+// the fix is to do the same, waiting briefly after a console read that ends
+// inside an escape sequence and appending the rest to it.
+
+#define ESC_COALESCE_MS 10   // per step; bytes really come ~1ms apart
+#define ESC_COALESCE_MAX 64  // longest sequence worth waiting for
+
+// True when the buffer ends inside an escape sequence: a lone ESC, a CSI
+// without its final byte, an SS3 without its one following byte, or an OSC
+// not yet closed by BEL or ST.
+static bool EndsInsideEscape(const unsigned char *b, size_t n) {
+  size_t i = n;
+  while (i && b[i - 1] != 0x1b)
+    i--;
+  if (!i)
+    return false;  // no ESC at all
+  size_t after = n - i;
+  if (!after)
+    return true;  // lone ESC
+  unsigned char c = b[i];
+  if (c == '[') {
+    for (size_t k = i + 1; k < n; k++)
+      if (b[k] >= 0x40 && b[k] <= 0x7e)
+        return false;  // final byte seen
+    return true;
+  }
+  if (c == 'O')
+    return after < 2;
+  if (c == ']') {
+    for (size_t k = i + 1; k < n; k++)
+      if (b[k] == 0x07)
+        return false;
+    return true;
+  }
+  return false;  // ESC + anything else (alt-key) is complete as is
+}
+
+static ssize_t CoalesceConsoleEscape(int fd, unsigned char *b, size_t cap,
+                                     ssize_t n) {
+  while (n > 0 && (size_t)n < cap && n < ESC_COALESCE_MAX &&
+         EndsInsideEscape(b, (size_t)n)) {
+    struct pollfd p = {fd, 1 /* POLLIN, Linux-coded */, 0};
+    if (__ape_shim_poll(&p, 1, ESC_COALESCE_MS) <= 0 || !(p.revents & 1))
+      break;
+    ssize_t m = sys_readv_nt(fd, &(struct iovec){b + n, cap - (size_t)n}, 1);
+    if (m <= 0)
+      break;
+    n += m;
+  }
+  return n;
+}
 
 static size_t SumIovecBytes(const struct iovec *iov, int iovlen) {
   size_t count = 0;
@@ -96,7 +153,10 @@ static ssize_t readv_impl(int fd, const struct iovec *iov, int iovlen) {
   } else if (IsMetal()) {
     return sys_readv_metal(fd, iov, iovlen);
   } else if (IsWindows()) {
-    return sys_readv_nt(fd, iov, iovlen);
+    ssize_t n = sys_readv_nt(fd, iov, iovlen);
+    if (n > 0 && iovlen == 1 && g_fds.p[fd].kind == kFdConsole)
+      n = CoalesceConsoleEscape(fd, iov[0].iov_base, iov[0].iov_len, n);
+    return n;
   } else {
     return enosys();
   }
