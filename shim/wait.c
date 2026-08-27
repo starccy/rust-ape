@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <stddef.h>
 #include <sys/resource.h>
+#include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #define _COSMO_SOURCE // for libc/dce.h's IsWindows()
@@ -52,6 +53,18 @@ static int wstatus_to_linux(int st) {
     return st; // exited (signal-free) or continued (0xffff)
 }
 
+// cosmo's NT process tracker raises SIGCHLD only when nobody is in wait4
+// at the moment the child exits, so a child reaped by the wait itself
+// never produces one and an installed handler never runs. The signal is
+// raised here after the reap whenever a real handler is installed. A
+// child may then be reported twice, which handlers tolerate on Linux too.
+static void nt_raise_sigchld(void) {
+    struct sigaction sa;
+    if (sigaction(SIGCHLD, NULL, &sa) < 0) return;
+    if (sa.sa_handler == SIG_DFL || sa.sa_handler == SIG_IGN) return;
+    raise(SIGCHLD);
+}
+
 pid_t __ape_shim_wait4(pid_t pid, int *status, int lin_options,
                        struct rusage *rusage) {
     int host_options;
@@ -59,6 +72,8 @@ pid_t __ape_shim_wait4(pid_t pid, int *status, int lin_options,
     int st = 0;
     pid_t rc = wait4(pid, status ? &st : NULL, host_options, rusage);
     if (rc > 0 && status) *status = wstatus_to_linux(st);
+    if (rc > 0 && IsWindows() && (WIFEXITED(st) || WIFSIGNALED(st)))
+        nt_raise_sigchld();
     return rc;
 }
 
