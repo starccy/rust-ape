@@ -168,16 +168,24 @@ diff a/libc/src/unix/linux_like/linux/mod.rs b/libc/src/unix/linux_like/linux/mo
      pub fn sigaltstack(ss: *const stack_t, oss: *mut stack_t) -> c_int;
      pub fn getdtablesize() -> c_int;
      pub fn getgrouplist(
-@@ -3715,6 +3746,9 @@
+@@ -3715,6 +3746,8 @@
          groups: *mut crate::gid_t,
          ngroups: *mut c_int,
      ) -> c_int;
-+    // cosmo: same NT executable-suffix retry as stat (posix_spawnp is
-+    // already covered by the commandv replacement).
++    // cosmo: same NT executable-suffix retry as stat.
 +    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_posix_spawn")]
      pub fn posix_spawn(
          pid: *mut crate::pid_t,
          path: *const c_char,
+@@ -3723,6 +3756,8 @@
+         argv: *const *mut c_char,
+         envp: *const *mut c_char,
+     ) -> c_int;
++    // cosmo: same NT executable-suffix retry as stat.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_posix_spawnp")]
+     pub fn posix_spawnp(
+         pid: *mut crate::pid_t,
+         file: *const c_char,
 diff a/libc/src/unix/linux_like/linux/musl/b64/aarch64/mod.rs b/libc/src/unix/linux_like/linux/musl/b64/aarch64/mod.rs
 --- a/libc/src/unix/linux_like/linux/musl/b64/aarch64/mod.rs
 +++ b/libc/src/unix/linux_like/linux/musl/b64/aarch64/mod.rs
@@ -476,7 +484,16 @@ diff a/libc/src/unix/linux_like/mod.rs b/libc/src/unix/linux_like/mod.rs
      #[cfg(not(target_os = "l4re"))]
      pub fn wait4(
          pid: crate::pid_t,
-@@ -2016,18 +2039,26 @@
+@@ -2005,6 +2028,8 @@
+ 
+     // DIFF(main): changed to `*const *mut` in e77f551de9
+     #[cfg(not(target_os = "l4re"))]
++    // cosmo: same NT executable-suffix retry as stat.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_execvpe")]
+     pub fn execvpe(
+         file: *const c_char,
+         argv: *const *const c_char,
+@@ -2016,18 +2041,26 @@
      pub fn getifaddrs(ifap: *mut *mut crate::ifaddrs) -> c_int;
      #[cfg(not(target_os = "l4re"))]
      pub fn freeifaddrs(ifa: *mut crate::ifaddrs);
@@ -656,16 +673,26 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn access(path: *const c_char, amode: c_int) -> c_int;
      pub fn alarm(seconds: c_uint) -> c_uint;
      pub fn chdir(dir: *const c_char) -> c_int;
-@@ -1096,6 +1133,8 @@
+@@ -1095,12 +1132,18 @@
+     pub fn execlp(file: *const c_char, arg0: *const c_char, ...) -> c_int;
  
      // DIFF(main): changed to `*const *mut` in e77f551de9
++    // cosmo: same NT executable-suffix retry as stat.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_execv")]
      pub fn execv(prog: *const c_char, argv: *const *const c_char) -> c_int;
 +    // cosmo: same NT executable-suffix retry as stat.
 +    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_execve")]
      pub fn execve(
          prog: *const c_char,
          argv: *const *const c_char,
-@@ -1109,6 +1148,8 @@
+         envp: *const *const c_char,
+     ) -> c_int;
++    // cosmo: same NT executable-suffix retry as stat.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_execvp")]
+     pub fn execvp(c: *const c_char, argv: *const *const c_char) -> c_int;
+ 
+     pub fn fork() -> pid_t;
+@@ -1109,6 +1152,8 @@
      pub fn getegid() -> gid_t;
      pub fn geteuid() -> uid_t;
      pub fn getgid() -> gid_t;
@@ -674,7 +701,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn getgroups(ngroups_max: c_int, groups: *mut gid_t) -> c_int;
      #[cfg_attr(target_os = "illumos", link_name = "getloginx")]
      pub fn getlogin() -> *mut c_char;
-@@ -1175,16 +1216,22 @@
+@@ -1175,16 +1220,22 @@
          all(target_os = "macos", target_arch = "x86"),
          link_name = "wait$UNIX2003"
      )]
@@ -697,7 +724,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn write(fd: c_int, buf: *const c_void, count: size_t) -> ssize_t;
      #[cfg_attr(
          all(target_os = "macos", target_arch = "x86"),
-@@ -1208,6 +1255,8 @@
+@@ -1208,6 +1259,8 @@
          all(target_os = "macos", target_arch = "x86"),
          link_name = "kill$UNIX2003"
      )]
@@ -706,7 +733,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn kill(pid: pid_t, sig: c_int) -> c_int;
      #[cfg_attr(
          all(target_os = "macos", target_arch = "x86"),
-@@ -1225,6 +1274,8 @@
+@@ -1225,6 +1278,8 @@
          link_name = "mmap$UNIX2003"
      )]
      #[cfg_attr(gnu_file_offset_bits64, link_name = "mmap64")]
@@ -715,7 +742,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn mmap(
          addr: *mut c_void,
          len: size_t,
-@@ -1257,6 +1308,8 @@
+@@ -1257,6 +1312,8 @@
          link_name = "lstat64"
      )]
      #[cfg_attr(musl_redir_time64, link_name = "__lstat_time64")]
@@ -724,7 +751,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn lstat(path: *const c_char, buf: *mut stat) -> c_int;
  
      #[cfg_attr(
-@@ -1284,6 +1337,8 @@
+@@ -1284,6 +1341,8 @@
      #[cfg_attr(gnu_file_offset_bits64, link_name = "ftruncate64")]
      pub fn ftruncate(fd: c_int, length: off_t) -> c_int;
  
@@ -733,7 +760,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn signal(signum: c_int, handler: sighandler_t) -> sighandler_t;
  
      #[cfg_attr(target_os = "netbsd", link_name = "__getrusage50")]
-@@ -1429,6 +1484,8 @@
+@@ -1429,6 +1488,8 @@
      )]
      #[cfg_attr(target_os = "espidf", link_name = "lwip_getsockopt")]
      #[cfg_attr(gnu_time_bits64, link_name = "__getsockopt64")]
@@ -742,7 +769,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn getsockopt(
          sockfd: c_int,
          level: c_int,
-@@ -1436,6 +1493,8 @@
+@@ -1436,6 +1497,8 @@
          optval: *mut c_void,
          optlen: *mut crate::socklen_t,
      ) -> c_int;
@@ -751,7 +778,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn raise(signum: c_int) -> c_int;
  
      #[cfg_attr(target_os = "netbsd", link_name = "__utimes50")]
-@@ -1454,6 +1513,8 @@
+@@ -1454,6 +1517,8 @@
          link_name = "__xnet_getaddrinfo"
      )]
      #[cfg_attr(target_os = "espidf", link_name = "lwip_getaddrinfo")]
@@ -760,7 +787,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn getaddrinfo(
          node: *const c_char,
          service: *const c_char,
-@@ -1562,12 +1623,16 @@
+@@ -1562,12 +1627,16 @@
          link_name = "send$UNIX2003"
      )]
      #[cfg_attr(target_os = "espidf", link_name = "lwip_send")]
@@ -777,7 +804,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn recv(socket: c_int, buf: *mut c_void, len: size_t, flags: c_int) -> ssize_t;
      #[cfg_attr(
          all(target_os = "macos", target_arch = "x86"),
-@@ -1579,6 +1644,8 @@
+@@ -1579,6 +1648,8 @@
          all(target_os = "macos", target_arch = "x86"),
          link_name = "poll$UNIX2003"
      )]
@@ -786,7 +813,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn poll(fds: *mut pollfd, nfds: nfds_t, timeout: c_int) -> c_int;
      #[cfg_attr(
          all(target_os = "macos", target_arch = "x86_64"),
-@@ -1618,15 +1685,23 @@
+@@ -1618,15 +1689,23 @@
      #[cfg_attr(target_os = "netbsd", link_name = "__sigemptyset14")]
      pub fn sigemptyset(set: *mut sigset_t) -> c_int;
      #[cfg_attr(target_os = "netbsd", link_name = "__sigaddset14")]
@@ -810,7 +837,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn sigprocmask(how: c_int, set: *const sigset_t, oldset: *mut sigset_t) -> c_int;
      #[cfg_attr(target_os = "netbsd", link_name = "__sigpending14")]
      pub fn sigpending(set: *mut sigset_t) -> c_int;
-@@ -1634,6 +1709,8 @@
+@@ -1634,6 +1713,8 @@
      #[cfg_attr(target_os = "solaris", link_name = "__sysconf_xpg7")]
      pub fn sysconf(name: c_int) -> c_long;
  
@@ -819,7 +846,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn mkfifo(path: *const c_char, mode: mode_t) -> c_int;
  
      #[cfg_attr(gnu_file_offset_bits64, link_name = "fseeko64")]
-@@ -1745,6 +1822,7 @@
+@@ -1745,6 +1826,7 @@
          ),
          link_name = "cfgetispeed@GLIBC_2.16"
      )]
@@ -827,7 +854,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn cfgetispeed(termios: *const crate::termios) -> crate::speed_t;
      #[cfg_attr(
          all(target_os = "linux", target_env = "gnu", target_arch = "arm"),
-@@ -1846,6 +1924,7 @@
+@@ -1846,6 +1928,7 @@
          ),
          link_name = "cfgetospeed@GLIBC_2.16"
      )]
@@ -835,7 +862,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn cfgetospeed(termios: *const crate::termios) -> crate::speed_t;
      #[cfg_attr(
          all(target_os = "linux", target_env = "gnu", target_arch = "arm"),
-@@ -1947,6 +2026,7 @@
+@@ -1947,6 +2030,7 @@
          ),
          link_name = "cfsetispeed@GLIBC_2.16"
      )]
@@ -843,7 +870,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn cfsetispeed(termios: *mut crate::termios, speed: crate::speed_t) -> c_int;
      #[cfg_attr(
          all(target_os = "linux", target_env = "gnu", target_arch = "arm"),
-@@ -2048,6 +2128,7 @@
+@@ -2048,6 +2132,7 @@
          ),
          link_name = "cfsetospeed@GLIBC_2.16"
      )]
@@ -851,7 +878,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn cfsetospeed(termios: *mut crate::termios, speed: crate::speed_t) -> c_int;
      #[cfg_attr(
          all(
-@@ -2067,6 +2148,7 @@
+@@ -2067,6 +2152,7 @@
          all(target_os = "linux", target_env = "gnu", target_arch = "sparc64"),
          link_name = "tcgetattr@GLIBC_2.2"
      )]
@@ -859,7 +886,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn tcgetattr(fd: c_int, termios: *mut crate::termios) -> c_int;
      #[cfg_attr(
          all(
-@@ -2086,8 +2168,11 @@
+@@ -2086,8 +2172,11 @@
          all(target_os = "linux", target_env = "gnu", target_arch = "sparc64"),
          link_name = "tcsetattr@GLIBC_2.2"
      )]
@@ -871,7 +898,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn tcflush(fd: c_int, action: c_int) -> c_int;
      pub fn tcgetsid(fd: c_int) -> crate::pid_t;
      pub fn tcsendbreak(fd: c_int, duration: c_int) -> c_int;
-@@ -2306,6 +2391,8 @@
+@@ -2306,6 +2395,8 @@
              pub fn open_memstream(ptr: *mut *mut c_char, sizeloc: *mut size_t) -> *mut FILE;
              pub fn atexit(cb: extern "C" fn()) -> c_int;
              #[cfg_attr(target_os = "netbsd", link_name = "__sigaction14")]
@@ -880,7 +907,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
              pub fn sigaction(signum: c_int, act: *const sigaction, oldact: *mut sigaction)
                  -> c_int;
              pub fn readlink(path: *const c_char, buf: *mut c_char, bufsz: size_t) -> ssize_t;
-@@ -2339,6 +2426,7 @@
+@@ -2339,6 +2430,7 @@
          }
      } else if #[cfg(not(any(target_os = "solaris", target_os = "illumos",)))] {
          extern "C" {

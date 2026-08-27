@@ -21,7 +21,8 @@
 // marked [rust-ape] below. Every failure sets errno, since upstream
 // leaves it stale on several paths and posix_spawn, which returns errno
 // as its result, then reports success with no child. Win32 errors with
-// no errno counterpart become EACCES.
+// no errno counterpart become EACCES. The interpreter a shebang names
+// also gets suffix.c's executable-suffix retry.
 //
 // Everything else is a faithful copy. Compiled with -D_COSMO_SOURCE by
 // the linker wrapper. Revisit on toolchain upgrade.
@@ -52,8 +53,13 @@
 #include "libc/proc/ntspawn.h"
 #include "libc/stdalign.h"
 #include "libc/str/str.h"
+#include "libc/calls/calls.h"
+#include "libc/calls/struct/stat.h"
+#include "libc/sysv/consts/at.h"
 #include "libc/sysv/errfuns.h"
 #ifdef __x86_64__
+
+int __ape_shim_exe_fallback(int, const char *, char *);
 
 __msabi extern typeof(CloseHandle) *const __imp_CloseHandle;
 
@@ -153,7 +159,16 @@ static textwindows int ntspawn2(struct NtSpawnArgs *a, struct SpawnBlock *sb) {
     sb->cmdline[i++] = ' ';
     sb->cmdline[i] = 0;
     // setup the true executable path
-    if (__mkntpathath(a->dirhand, argv[0], 0, sb->path) == -1)
+    // [rust-ape] the shebang interpreter gets the same executable-suffix
+    // retry as exec itself
+    const char *interp = argv[0];
+    char magic[PATH_MAX];
+    struct stat st;
+    if ((interp[0] == '/' || a->dirhand == AT_FDCWD) &&
+        fstatat(AT_FDCWD, interp, &st, 0) == -1 &&
+        __ape_shim_exe_fallback(AT_FDCWD, interp, magic))
+      interp = magic;
+    if (__mkntpathath(a->dirhand, interp, 0, sb->path) == -1)
       return -1;
   } else {
     // it's something else
