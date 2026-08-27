@@ -79,3 +79,8 @@ int *__ape_shim_errno_location(void) {
 int __ape_shim_strerror_r(int linux_errno, char *buf, size_t buflen) {
     return strerror_r(linux_to_host(linux_errno), buf, buflen);
 }
+
+// Same for strerror, which os.strerror and OSError messages go through.
+char *__ape_shim_strerror(int linux_errno) {
+    return strerror(linux_to_host(linux_errno));
+}
