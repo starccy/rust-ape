@@ -20,6 +20,7 @@
 // Derived from cosmopolitan libc/calls/commandv.c,
 // Copyright 2020 Justine Alexandra Roberts Tunney, ISC license.
 
+// cflags: -D_COSMO_SOURCE
 #include <stdbool.h>
 #include "libc/calls/calls.h"
 #include "libc/calls/struct/stat.h"

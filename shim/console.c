@@ -13,6 +13,7 @@
 // and tcsetattr, and on the way into read/poll. The scanner keeps its
 // state across writes, since a sequence may straddle two write calls.
 
+// cflags: -D_COSMO_SOURCE
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>

@@ -149,16 +149,15 @@ no Mac to debug on and can only go by what GitHub Actions reports.
 | jemalloc as the global allocator | clean | works, but writes `Error in munmap(): Operation not supported` to stderr, because NT cannot release part of a mapping | clean |
 | SQLite writers contending | real locks, ~25ms for 1000 inserts across 4 threads | emulated locks, ~3.1s for the same | untested |
 | runtime CPU feature detection | works | `AT_HWCAP` reads 0 on arm64, so dispatch falls back to scalar | same on arm64 |
-| `std::env::current_exe` | the loader, not you | fails, there is no `/proc/self/exe` | the loader, not you |
+| `std::env::current_exe` | the loader, not you | works: the emulated `/proc/self/exe` answers with the real program path | the loader, not you |
 
 ### Problems you can work around
 
 #### APE-specific APIs
 
-Where `ape::` and `std::` overlap, prefer `ape::`. For example,
-`std::env::current_exe()` returns the APE loader rather than your program,
-and on Windows it fails outright looking for `/proc/self/exe`;
-`ape::program_executable_name()` handles both.
+Where `ape::` and `std::` overlap, prefer `ape::`. For example, on Linux and
+macOS `std::env::current_exe()` returns the APE loader rather than your
+program.
 
 #### Async
 

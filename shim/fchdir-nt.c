@@ -20,6 +20,7 @@
 // Derived from cosmopolitan libc/calls/fchdir-nt.c,
 // Copyright 2023 Justine Alexandra Roberts Tunney, ISC license.
 
+// cflags: -D_COSMO_SOURCE
 #include <stdbool.h>
 #include "libc/calls/calls.h"
 #include "libc/calls/internal.h"

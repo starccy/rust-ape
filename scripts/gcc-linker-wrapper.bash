@@ -50,22 +50,28 @@ if [ "$tiny" = 1 ]; then
     mode="-tiny"
 fi
 
-for shim_src in "$SDK_ROOT"/shim/*.c; do
-    shim_obj="$SDK_ROOT/generated/shim-$(basename "$shim_src" .c)-$ARCH$mode.o"
+shopt -s globstar nullglob
+shim_hdrs=("$SDK_ROOT"/shim/**/*.h)
+for shim_src in "$SDK_ROOT"/shim/**/*.c; do
+    # subdirectory sources keep their directory in the cache name
+    # (procfs/core/tree.c -> shim-procfs-core-tree-...) so basenames cannot collide
+    rel=${shim_src#"$SDK_ROOT"/shim/}
+    rel=${rel%.c}
+    shim_obj="$SDK_ROOT/generated/shim-${rel//\//-}-$ARCH$mode.o"
     stale=0
     # a regenerated tables.h must rebuild every object, not just edited .c files
-    for dep in "$shim_src" "$SDK_ROOT"/shim/*.h; do
+    for dep in "$shim_src" "${shim_hdrs[@]}"; do
         [ ! -f "$shim_obj" ] || [ "$dep" -nt "$shim_obj" ] && stale=1
     done
     if [ "$stale" = 1 ]; then
         tmp=$(mktemp "$shim_obj.XXXXXX")
-        # These replace cosmo-internal compilation units and need the
-        # _COSMO_SOURCE-gated macros live before the -include'd
-        # normalize.inc, which only a command-line define can arrange.
-        # SYSDEBUG=1 keeps their STRACE/DATATRACE lines alive (the SDK
-        # headers default it to 0, but libc.a was built with 1, so without
-        # it a replaced member silently vanishes from --strace output).
-        extra=
+        # A unit replacing a cosmo-internal compilation unit declares its
+        # own flags on a "// cflags:" line, since _COSMO_SOURCE must be
+        # live before the -include'd normalize.inc and only a command-line
+        # define can arrange that. SYSDEBUG=1 keeps its STRACE lines
+        # alive the way libc.a was built; the tiny runtime never prints
+        # them and skips the dead code.
+        extra=$(sed -n 's|^// cflags: ||p' "$shim_src")
         case "$shim_src" in
             */dlmalloc.c)
                 # the allocator is built the way upstream builds it:
@@ -73,16 +79,12 @@ for shim_src in "$SDK_ROOT"/shim/*.c; do
                 # malloc reached from any context never touches vector state
                 extra="-D_COSMO_SOURCE -ffreestanding -fdata-sections -ffunction-sections"
                 if [ "$tiny" = 0 ]; then
-                    extra="$extra -DSYSDEBUG=1 -O3 -mgeneral-regs-only"
-                fi ;;
-            */fork-nt.c|*/close-nt.c|*/ntspawn.c|*/ntaccesscheck.c|*/dirstream.c|*/commandv.c|*/console.c|*/fchdir-nt.c|*/ftruncate-nt.c|*/proc.c|*/mkntpath.c|*/mkntpathat.c|*/read.c|*/readlinkat-nt.c|*/realpath.c)
-                extra="-D_COSMO_SOURCE"
-                # the tiny runtime never prints strace lines, so leave
-                # SYSDEBUG at its default 0 there and skip the dead code
-                if [ "$tiny" = 0 ]; then
-                    extra="$extra -DSYSDEBUG=1"
+                    extra="$extra -O3 -mgeneral-regs-only"
                 fi ;;
         esac
+        if [ "$tiny" = 0 ] && [[ "$extra" == *_COSMO_SOURCE* ]]; then
+            extra="$extra -DSYSDEBUG=1"
+        fi
         if [ "$tiny" = 1 ]; then
             extra="$extra -mtiny"
         fi

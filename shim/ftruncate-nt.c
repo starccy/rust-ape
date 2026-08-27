@@ -23,6 +23,7 @@
 // Derived from cosmopolitan libc/calls/ftruncate-nt.c,
 // Copyright 2020 Justine Alexandra Roberts Tunney, ISC license.
 
+// cflags: -D_COSMO_SOURCE
 #include <stdbool.h>  // [rust-ape] cosmo's own build has C23 bool
 #include "libc/calls/syscall-nt.internal.h"
 #include "libc/calls/syscall_support-nt.internal.h"

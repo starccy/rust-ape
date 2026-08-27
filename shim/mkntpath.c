@@ -32,9 +32,11 @@
 // dirfd-relative, /tmp remap) sees the re-rooted path. Everything else
 // is a faithful copy of upstream. Compiled with -D_COSMO_SOURCE by the
 // linker wrapper. Revisit on toolchain upgrade.
+// cflags: -D_COSMO_SOURCE
 #include <stdbool.h>  // [rust-ape] cosmo's own build has C23 bool
 #include "libc/calls/syscall_support-nt.internal.h"
 #include "libc/dce.h"
+
 #include "libc/intrin/kprintf.h"
 #include "libc/intrin/strace.h"
 #include "libc/macros.h"
@@ -42,6 +44,9 @@
 #include "libc/str/str.h"
 #include "libc/sysv/consts/o.h"
 #include "libc/sysv/errfuns.h"
+
+// [rust-ape] shim/procfs/core/
+int __ape_shim_procfs_rewrite(const char *, char *, unsigned long);
 
 static inline bool IsSlash(char c) {
   return c == '/' || c == '\\';
@@ -127,6 +132,16 @@ textwindows int __mkntpath2(const char *path,
 
   if (!path) {
     return efault();
+  }
+
+  // [rust-ape] /proc, which NT does not have and shim/procfs/ emulates by
+  // materializing a skeleton under the temp directory. Done here because
+  // this is the one place every path-taking call on NT converts its path,
+  // so open, stat, opendir and the rest all reach the tree without each
+  // needing to know about it.
+  char procbuf[600];
+  if (__ape_shim_procfs_rewrite(path, procbuf, sizeof procbuf)) {
+    path = procbuf;
   }
 
   // [rust-ape] last absolute win32 segment wins: an "X:" drive marker

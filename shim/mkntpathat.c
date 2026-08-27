@@ -29,6 +29,7 @@
 // defined before the compiler's -include of normalize.inc, so the linker
 // wrapper compiles this one file with -D_COSMO_SOURCE (an in-file define
 // would come too late).
+// cflags: -D_COSMO_SOURCE
 #include <stdbool.h>
 #include <libc/calls/internal.h>
 #include <libc/calls/syscall_support-nt.internal.h>
@@ -38,6 +39,10 @@
 #include <libc/str/str.h>
 #include <libc/sysv/consts/at.h>
 #include <libc/sysv/errfuns.h>
+
+// [rust-ape] shim/procfs/core/: a dirfd-relative access that lands inside
+// the materialized /proc tree refreshes what it is about to touch.
+void __ape_shim_procfs_relative(const char16_t *, unsigned long);
 
 static int IsAlpha(int c) {
   return ('A' <= c && c <= 'Z') || ('a' <= c && c <= 'z');
@@ -98,6 +103,7 @@ static textwindows int __mkntpathath_impl(int64_t dirhand, const char *path,
       }
     }
 
+    __ape_shim_procfs_relative(file, n); // [rust-ape]
     return n;
   } else {
     filelen = __normntpath(file, filelen);

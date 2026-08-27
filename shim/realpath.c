@@ -36,6 +36,7 @@
 // at all. Everything else is a faithful copy of upstream (which is
 // musl's realpath). Compiled with -D_COSMO_SOURCE by the linker
 // wrapper. Revisit on toolchain upgrade.
+// cflags: -D_COSMO_SOURCE
 #include "libc/assert.h"
 #include "libc/calls/calls.h"
 #include "libc/dce.h"

@@ -9,6 +9,7 @@
 // All Linux values come from tables.h, generated out of the vendored libc
 // crate by `cargo xtask gen-shim` and cross-checked at build time.
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -16,6 +17,7 @@
 
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <sys/stat.h>
@@ -50,6 +52,21 @@ static const int shim_no_at_empty_path = 0;
 void __ape_shim_epoll_note_dup(int oldfd, int newfd);
 void __ape_shim_epoll_note_pipe(int rfd, int wfd);
 void __ape_shim_epoll_note_new_fd(int fd);
+
+// shim/procfs/core/: a read of a /proc content file on NT is answered with
+// a generated-on-open descriptor; -2 means "not mine", including everywhere
+// but Windows. Takes host-coded flags, so it runs after the translation.
+int __ape_shim_procfs_open(const char *path, int hostflags);
+void __ape_shim_procfs_track(int fd, const char *vpath);
+bool __ape_shim_procfs_join(int dirfd, const char *rel, char *out,
+                            unsigned long outsz);
+void __ape_shim_procfs_rewind(int fd);
+void __ape_shim_procfs_list(const char *vpath);
+void __ape_shim_procfs_list_fd(int fd);
+unsigned __ape_shim_procfs_link_mode(const char *vpath);
+void __ape_shim_procfs_fix_dirent(int fd, struct dirent *e);
+long __ape_shim_procfs_readlinkat(int dirfd, const char *path, char *buf,
+                                  unsigned long bufsiz);
 
 #define LIN_O_ACCMODE 0x03 // O_RDONLY/O_WRONLY/O_RDWR, same on every platform
 
@@ -181,7 +198,11 @@ int __ape_shim_open(const char *path, int lin, ...) {
         mode = va_arg(ap, unsigned);
         va_end(ap);
     }
-    int fd = open(path, host, mode);
+    int fd = __ape_shim_procfs_open(path, host);
+    if (fd == -2) {
+        fd = open(path, host, mode);
+        if (fd >= 0) __ape_shim_procfs_track(fd, path);
+    }
     if (fd >= 0) __ape_shim_epoll_note_new_fd(fd);
     return fd;
 }
@@ -196,9 +217,53 @@ int __ape_shim_openat(int dirfd, const char *path, int lin, ...) {
         mode = va_arg(ap, unsigned);
         va_end(ap);
     }
-    int fd = openat(at_fdcwd(dirfd), path, host, mode);
+    // A relative name through a directory descriptor of the /proc tree
+    // is the same virtual path spelled differently (shim/procfs/core/).
+    char joined[300];
+    const char *vpath = 0;
+    if (path && path[0] == '/') {
+        vpath = path;
+    } else if (dirfd != SHIM_LIN_AT_FDCWD &&
+               __ape_shim_procfs_join(dirfd, path, joined, sizeof joined)) {
+        vpath = joined;
+    }
+    int fd = vpath ? __ape_shim_procfs_open(vpath, host) : -2;
+    if (fd == -2) {
+        fd = openat(at_fdcwd(dirfd), path, host, mode);
+        if (fd >= 0 && vpath) __ape_shim_procfs_track(fd, vpath);
+    }
     if (fd >= 0) __ape_shim_epoll_note_new_fd(fd);
     return fd;
+}
+
+// whence is 0/1/2 on both sides (SEEK_DATA/SEEK_HOLE too). A rewind of a
+// /proc content descriptor regenerates it first (shim/procfs/core/).
+off_t __ape_shim_lseek(int fd, off_t off, int whence) {
+    if (off == 0 && whence == SEEK_SET) __ape_shim_procfs_rewind(fd);
+    return lseek(fd, off, whence);
+}
+
+// Listing a /proc process directory: the emulated tree materializes its
+// entries lazily, so a reader about to enumerate one gets the full set
+// first (shim/procfs/core/). Programs that read by name never pass here.
+DIR *__ape_shim_opendir(const char *path) {
+    bool proc = path && path[0] == '/' && !strncmp(path, "/proc", 5);
+    if (proc) __ape_shim_procfs_list(path);
+    DIR *d = opendir(path);
+    // remembered so readdir can mark the link entries (see below)
+    if (d && proc) __ape_shim_procfs_track(dirfd(d), path);
+    return d;
+}
+
+struct dirent *__ape_shim_readdir(DIR *d) {
+    struct dirent *e = readdir(d);
+    if (e) __ape_shim_procfs_fix_dirent(dirfd(d), e);
+    return e;
+}
+
+DIR *__ape_shim_fdopendir(int fd) {
+    __ape_shim_procfs_list_fd(fd);
+    return fdopendir(fd);
 }
 
 int __ape_shim_pipe2(int fds[2], int lin) {
@@ -293,6 +358,65 @@ static int lstat_must_follow(const char *p) {
 }
 
 
+// A successful no-follow stat of one of the /proc tree's links: the disk
+// placeholder is a plain file, the answer must be a symlink (size 0, as the
+// kernel reports them). `path` is absolute or relative to a tracked dirfd.
+static void procfs_link_stat(int dirfd, const char *path, struct stat *st) {
+    char joined[PATH_MAX];
+    const char *vpath = 0;
+    if (path[0] == '/') {
+        vpath = path;
+    } else if (__ape_shim_procfs_join(dirfd, path, joined, sizeof joined)) {
+        vpath = joined;
+    }
+    if (!vpath || strncmp(vpath, "/proc", 5)) return;
+    unsigned mode = __ape_shim_procfs_link_mode(vpath);
+    if (!mode) return;
+    st->st_mode = S_IFLNK | mode;
+    st->st_size = 0;
+    st->st_nlink = 1;
+}
+
+// The following stat of one of those links: what the target is. The host
+// followed nothing (the placeholder is a plain file), so the answer is
+// built here: exe/cwd/root and self stat their target path; a descriptor
+// link is the descriptor (ours: fstat it; another process's: a socket).
+static void procfs_follow_stat(int dirfd, const char *path, struct stat *st) {
+    char joined[PATH_MAX];
+    const char *vpath = 0;
+    if (path[0] == '/') {
+        vpath = path;
+    } else if (__ape_shim_procfs_join(dirfd, path, joined, sizeof joined)) {
+        vpath = joined;
+    }
+    if (!vpath || strncmp(vpath, "/proc", 5)) return;
+    if (!__ape_shim_procfs_link_mode(vpath)) return;
+    char target[PATH_MAX];
+    long n = __ape_shim_procfs_readlinkat(AT_FDCWD, vpath, target,
+                                          sizeof target - 1);
+    if (n <= 0) return;
+    target[n] = 0;
+    struct stat t;
+    if (target[0] == '/') {
+        if (!stat(target, &t)) *st = t;
+    } else if (target[0] >= '0' && target[0] <= '9' && !strchr(vpath + 6, '/')) {
+        // /proc/self -> "<pid>"
+        char dir[64];
+        snprintf(dir, sizeof dir, "/proc/%s", target);
+        if (!stat(dir, &t)) *st = t;
+    } else {
+        // fd/<n> -> "pipe:[..]" / "socket:[..]" / "anon_inode:..."
+        const char *fdpart = strstr(vpath, "/fd/");
+        int fd = fdpart ? atoi(fdpart + 4) : -1;
+        if (fd >= 0 && !strncmp(vpath, "/proc/self/", 11) && !fstat(fd, &t)) {
+            *st = t;
+        } else {
+            st->st_mode = S_IFSOCK | 0777;
+            st->st_size = 0;
+        }
+    }
+}
+
 int __ape_shim_fstatat(int dirfd, const char *path, struct stat *st, int lin) {
     int host = 0;
     // Cosmo rejects an empty path before ever looking at AT_EMPTY_PATH, so
@@ -316,6 +440,12 @@ int __ape_shim_fstatat(int dirfd, const char *path, struct stat *st, int lin) {
         if (__ape_shim_exe_fallback(at_fdcwd(dirfd), path, buf))
             rc = fstatat(at_fdcwd(dirfd), buf, st, host);
     }
+    if (rc == 0 && path) {
+        if (host & AT_SYMLINK_NOFOLLOW)
+            procfs_link_stat(dirfd, path, st);
+        else
+            procfs_follow_stat(dirfd, path, st);
+    }
     return rc;
 }
 
@@ -327,6 +457,7 @@ int __ape_shim_stat(const char *path, struct stat *st) {
         char buf[PATH_MAX];
         if (__ape_shim_exe_fallback(AT_FDCWD, path, buf)) rc = stat(buf, st);
     }
+    if (rc == 0 && path) procfs_follow_stat(SHIM_LIN_AT_FDCWD, path, st);
     return rc;
 }
 
@@ -337,6 +468,7 @@ int __ape_shim_lstat(const char *path, struct stat *st) {
         char buf[PATH_MAX];
         if (__ape_shim_exe_fallback(AT_FDCWD, path, buf)) rc = lstat(buf, st);
     }
+    if (rc == 0 && path) procfs_link_stat(SHIM_LIN_AT_FDCWD, path, st);
     return rc;
 }
 

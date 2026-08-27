@@ -13,11 +13,14 @@ tok='__ape_shim_[A-Za-z0-9_]+[*#]?'
 
 syms() { grep -hoE "$tok" "$@" 2>/dev/null | grep -v '[*#]$' | sort -u || true; }
 
-for f in "$root"/shim/*.c "$root"/shim/*.h; do
-    syms "$f" | sed "s|\$|\t$(basename "$f")|"
+shopt -s globstar
+srcs=("$root"/shim/**/*.[ch])
+
+for f in "${srcs[@]}"; do
+    syms "$f" | sed "s|\$|\t${f#"$root"/shim/}|"
 done | sort -u > "$work/pairs"
 
-grep -h 'static' "$root"/shim/*.c "$root"/shim/*.h | syms /dev/stdin > "$work/static"
+grep -h 'static' "${srcs[@]}" | syms /dev/stdin > "$work/static"
 
 grep -h '^+' "$root"/patches/*.patch | syms /dev/stdin > "$work/patched"
 

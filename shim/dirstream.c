@@ -25,6 +25,7 @@
 //
 // Everything else is a faithful copy. Compiled with -D_COSMO_SOURCE by
 // the linker wrapper. Revisit on toolchain upgrade.
+// cflags: -D_COSMO_SOURCE
 #include <stdbool.h>  // [rust-ape] cosmo's own build has C23 bool
 #include "libc/assert.h"
 #include "libc/calls/calls.h"

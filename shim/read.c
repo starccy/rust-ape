@@ -22,8 +22,10 @@
 // before the compiler's -include of normalize.inc, so the linker wrapper
 // compiles this file with -D_COSMO_SOURCE (an in-file define would come too
 // late).
+// cflags: -D_COSMO_SOURCE
 #include <stdbool.h>
 #include <stdint.h>
+#include <sys/stat.h>
 #include <libc/calls/calls.h>
 #include <libc/calls/cp.internal.h>
 #include <libc/calls/internal.h>
@@ -158,6 +160,13 @@ static ssize_t readv_impl(int fd, const struct iovec *iov, int iovlen) {
     ssize_t n = sys_readv_nt(fd, iov, iovlen);
     if (n > 0 && iovlen == 1 && g_fds.p[fd].kind == kFdConsole)
       n = CoalesceConsoleEscape(fd, iov[0].iov_base, iov[0].iov_len, n);
+    // [rust-ape] ReadFile on a directory handle fails ERROR_INVALID_FUNCTION,
+    // which cosmo reports as EINVAL; Linux says EISDIR (cat /proc/x/cwd)
+    if (n == -1 && errno == EINVAL && g_fds.p[fd].kind == kFdFile) {
+      struct stat st;
+      if (!fstat(fd, &st) && S_ISDIR(st.st_mode)) return eisdir();
+      errno = EINVAL;
+    }
     return n;
   } else {
     return enosys();
