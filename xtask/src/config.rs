@@ -46,8 +46,6 @@ fn parse_nightly_date(channel: &str) -> Option<&str> {
 /// Crates needing a patch, as (name, version); patches live in patches/<name>.patch.
 /// libc must match what std depends on in library/Cargo.lock
 pub const PATCHED_CRATES: &[(&str, &str)] = &[
-    ("async-io", "2.6.0"),
-    ("async-process", "2.5.0"),
     ("errno", "0.3.14"),
     ("libc", "0.2.189"),
 ];

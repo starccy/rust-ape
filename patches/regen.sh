@@ -11,7 +11,7 @@
 # the old patch is left alone and this exits non-zero.
 #
 #   ./patches/regen.sh              # everything vendor/.stamps knows about
-#   ./patches/regen.sh async-io     # just one
+#   ./patches/regen.sh errno        # just one
 #
 set -euo pipefail
 

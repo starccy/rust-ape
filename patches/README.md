@@ -9,8 +9,6 @@ Current patched list:
 
 | Crate | Version |
 | --- | --- |
-| async-io | 2.6.0 |
-| async-process | 2.5.0 |
 | errno | 0.3.14 |
 | libc | 0.2.189 |
 
@@ -28,7 +26,7 @@ regenerate:
 
 ```sh
 ./patches/regen.sh              # every patch
-./patches/regen.sh async-io     # just one
+./patches/regen.sh errno        # just one
 ```
 
 It diffs `vendor/` against a pristine upstream copy (rust-src from your rustup

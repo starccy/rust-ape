@@ -8,8 +8,7 @@ publish = false
 
 [dependencies]
 ape = { path = "../ape" }
-# Pulls in async-io, async-process and polling, so building these examples
-# exercises those three patches.
+# Pulls in async-io, async-process and polling
 smol = "2"
 # Pulls in getrandom.
 rand = "0.10.2"
@@ -71,7 +70,5 @@ jiff = { version = "0.2.35", features = ["tzdb-bundle-always"] }
 zip = { version = "8.6.0", default-features = false }
 
 [patch.crates-io]
-async-io = { path = "../vendor/patches/async-io" }
-async-process = { path = "../vendor/patches/async-process" }
 errno = { path = "../vendor/patches/errno" }
 libc = { path = "../vendor/patches/libc" }

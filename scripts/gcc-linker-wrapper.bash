@@ -30,12 +30,6 @@ done
 args+=("-Wl,--defsym,__isoc23_strtol=strtol")
 args+=("-Wl,--defsym,__isoc23_sscanf=sscanf")
 
-# std's pidfd.rs references waitid and cosmo has no such symbol, so anything
-# built against this std fails to link unless --gc-sections happens to drop it.
-# Alias it to cosmo's enosys; pidfd is unusable here anyway, so this only ever
-# has to satisfy the linker.
-args+=("-Wl,--defsym,waitid=enosys")
-
 # In the default runtime the backtrace symbol loader yoinks zipos (it reads
 # /zip/.symtab.*), so /zip support comes along for free. The tiny runtime has
 # no such loader and --gc-sections throws zipos out, which also leaves the

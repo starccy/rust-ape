@@ -227,12 +227,6 @@ library, like openssl-sys, which will find none for this target.
 
 What follows is only what has been hit so far, not a complete inventory.
 
-smol's async-process is disabled. Its reaper wants pidfd or waitid and cosmo
-has neither everywhere, so `async-process.patch` turns the driver off.
-Synchronous `std::process::Command` is fine, pipes included, and tokio's
-reaper goes through SIGCHLD instead and does work; `tokio_process.rs` covers
-that one.
-
 The epoll behind mio is not the real thing off Linux, and two of the gaps are
 inherent to building it on `poll()`. `EPOLLET` is accepted and ignored, so
 every registration behaves as level-triggered: mio asks for edge triggering
@@ -293,7 +287,6 @@ dependency tree (`cargo tree`) against this table before investing time:
 | If it involves | Verdict |
 | --- | --- |
 | tokio, or anything else on mio | :white_check_mark: mio picks epoll on this target and `shim/epoll.c` provides it. Its waker is still forced onto a pipe, since cosmo has no eventfd |
-| smol's async-process | :x: its reaper is disabled here. `tokio::process` and sync `std::process::Command` both work |
 | `-sys` crates that link a prebuilt system library | :x: no such library exists for this target |
 | rustls on its default aws-lc-rs backend | :x: aws-lc-sys guards a whole `.S` file on `__linux__`, which cosmocc undefines, and the object comes out with no symbol table. Switch to the ring backend, whose asm is guarded on `__ELF__` |
 | zstd, anywhere it reaches zstd-sys | :warning: same `__linux__` guard, on `huf_decompress_amd64.S`. Its `no_asm` feature takes the C path and links fine |

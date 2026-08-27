@@ -23,27 +23,6 @@ diff a/library/Cargo.toml b/library/Cargo.toml
  # See comments in `library/rustc-std-workspace-core/README.md` for what's going on here
  rustc-std-workspace-core = { path = 'rustc-std-workspace-core' }
  rustc-std-workspace-alloc = { path = 'rustc-std-workspace-alloc' }
-diff a/library/std/src/sys/fd/unix.rs b/library/std/src/sys/fd/unix.rs
---- a/library/std/src/sys/fd/unix.rs
-+++ b/library/std/src/sys/fd/unix.rs
-@@ -615,16 +615,7 @@
-         Ok(())
-     }
- 
--    #[cfg(target_os = "linux")]
--    pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
--        unsafe {
--            let v = nonblocking as libc::c_int;
--            cvt(libc::ioctl(self.as_raw_fd(), libc::FIONBIO, &v))?;
--            Ok(())
--        }
--    }
--
--    #[cfg(not(target_os = "linux"))]
-+    // cosmo: no ioctl FIONBIO (ENOTSUP), so take the fcntl path everywhere.
-     pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
-         unsafe {
-             let previous = cvt(libc::fcntl(self.as_raw_fd(), libc::F_GETFL))?;
 diff a/library/std/src/sys/io/error/unix.rs b/library/std/src/sys/io/error/unix.rs
 --- a/library/std/src/sys/io/error/unix.rs
 +++ b/library/std/src/sys/io/error/unix.rs
@@ -129,33 +108,6 @@ diff a/library/std/src/sys/io/kernel_copy/mod.rs b/library/std/src/sys/io/kernel
 +{
 +    Ok(CopyState::Fallback(0))
  }
-diff a/library/std/src/sys/net/connection/socket/unix.rs b/library/std/src/sys/net/connection/socket/unix.rs
---- a/library/std/src/sys/net/connection/socket/unix.rs
-+++ b/library/std/src/sys/net/connection/socket/unix.rs
-@@ -591,22 +591,8 @@
-         Ok(local_creds_persistent != 0)
-     }
- 
--    #[cfg(not(any(target_os = "solaris", target_os = "illumos", target_os = "vita")))]
-+    // cosmo: same FIONBIO problem as FileDesc, so borrow its fcntl path.
-     pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
--        let mut nonblocking = nonblocking as libc::c_int;
--        cvt(unsafe { libc::ioctl(self.as_raw_fd(), libc::FIONBIO, &mut nonblocking) }).map(drop)
--    }
--
--    #[cfg(target_os = "vita")]
--    pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
--        let option = nonblocking as libc::c_int;
--        unsafe { setsockopt(self, libc::SOL_SOCKET, libc::SO_NONBLOCK, option) }
--    }
--
--    #[cfg(any(target_os = "solaris", target_os = "illumos"))]
--    pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
--        // FIONBIO is inadequate for sockets on illumos/Solaris, so use the
--        // fcntl(F_[GS]ETFL)-based method provided by FileDesc instead.
-         self.0.set_nonblocking(nonblocking)
-     }
- 
 diff a/library/std/src/sys/process/unix/unix.rs b/library/std/src/sys/process/unix/unix.rs
 --- a/library/std/src/sys/process/unix/unix.rs
 +++ b/library/std/src/sys/process/unix/unix.rs

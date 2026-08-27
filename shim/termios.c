@@ -32,6 +32,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
 #include <termios.h>
@@ -335,10 +336,9 @@ void __ape_shim_cfmakeraw(struct lin_termios *lt) {
 //
 // The request codes are musl-coded. tty-config requests reroute through
 // tcgetattr/tcsetattr (rustix's path: TCGETS2, falling back to TCGETS);
-// winsize/FIONREAD forward with the code translated. Anything else is
+// winsize/FIONREAD forward with the code translated; FIONBIO becomes the
+// fcntl(F_SETFL) dance cosmo itself recommends for it. Anything else is
 // ENOTTY, which is what a kernel answers for an ioctl the target can't do.
-// (FIONBIO stays unsupported on purpose; the std patches route
-// set_nonblocking through fcntl instead.)
 
 static int tio_get(int fd, void *arg, bool two) {
     struct termios t;
@@ -400,6 +400,13 @@ int __ape_shim_ioctl(int fd, int lin_req, ...) {
         return ioctl(fd, TIOCSWINSZ, arg);
     if (lin_req == SHIM_LIN_FIONREAD && FIONREAD)
         return ioctl(fd, FIONREAD, arg); // int* both sides
+    if (lin_req == SHIM_LIN_FIONBIO) {
+        int flags = fcntl(fd, F_GETFL);
+        if (flags < 0) return -1;
+        int want = *(const int *)arg ? (flags | O_NONBLOCK) : (flags & ~O_NONBLOCK);
+        if (want == flags) return 0;
+        return fcntl(fd, F_SETFL, want);
+    }
 
     // Session and job control, which is what a pty child does between fork
     // and exec: setsid, then claim the slave as its controlling terminal.

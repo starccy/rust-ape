@@ -474,7 +474,19 @@ diff a/libc/src/unix/linux_like/mod.rs b/libc/src/unix/linux_like/mod.rs
      pub fn utimensat(
          dirfd: c_int,
          path: *const c_char,
-@@ -1993,6 +2013,9 @@
+@@ -1958,7 +1978,11 @@
+     #[cfg(not(target_os = "l4re"))]
+     pub fn ptsname_r(fd: c_int, buf: *mut c_char, buflen: size_t) -> c_int;
+     pub fn clearenv() -> c_int;
++    // cosmo: no waitid at all. The shim issues the raw syscall on Linux and
++    // builds it out of wait4 elsewhere, so it takes Linux-coded idtype and
++    // options and fills a Linux-coded siginfo.
+     #[cfg(not(target_os = "l4re"))]
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_waitid")]
+     pub fn waitid(
+         idtype: idtype_t,
+         id: id_t,
+@@ -1993,6 +2017,9 @@
      #[cfg(not(target_os = "l4re"))]
      pub fn setresuid(ruid: crate::uid_t, euid: crate::uid_t, suid: crate::uid_t) -> c_int;
      #[cfg_attr(any(gnu_time_bits64, musl_redir_time64), link_name = "__wait4_time64")]
@@ -484,7 +496,7 @@ diff a/libc/src/unix/linux_like/mod.rs b/libc/src/unix/linux_like/mod.rs
      #[cfg(not(target_os = "l4re"))]
      pub fn wait4(
          pid: crate::pid_t,
-@@ -2005,6 +2028,8 @@
+@@ -2005,6 +2032,8 @@
  
      // DIFF(main): changed to `*const *mut` in e77f551de9
      #[cfg(not(target_os = "l4re"))]
@@ -493,7 +505,7 @@ diff a/libc/src/unix/linux_like/mod.rs b/libc/src/unix/linux_like/mod.rs
      pub fn execvpe(
          file: *const c_char,
          argv: *const *const c_char,
-@@ -2016,18 +2041,26 @@
+@@ -2016,18 +2045,26 @@
      pub fn getifaddrs(ifap: *mut *mut crate::ifaddrs) -> c_int;
      #[cfg(not(target_os = "l4re"))]
      pub fn freeifaddrs(ifa: *mut crate::ifaddrs);

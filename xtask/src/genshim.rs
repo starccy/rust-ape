@@ -369,6 +369,13 @@ const SINGLES: &[&str] = &[
     "R_OK", "W_OK", "X_OK",
     "UTIME_NOW", "UTIME_OMIT",
     "WNOHANG", "WUNTRACED", "WCONTINUED",
+    // waitid: idtypes, the extra option bits and the si_code values it
+    // reports; the shim builds these by hand off Linux and passes them
+    // straight to the kernel there.
+    "WEXITED", "WSTOPPED", "WNOWAIT", "SYS_waitid",
+    "P_ALL", "P_PID", "P_PGID", "P_PIDFD",
+    "CLD_EXITED", "CLD_KILLED", "CLD_DUMPED", "CLD_TRAPPED", "CLD_STOPPED",
+    "CLD_CONTINUED",
     "SOCK_CLOEXEC", "SOCK_NONBLOCK", "MAP_STACK",
     "SIG_BLOCK", "SIG_UNBLOCK", "SIG_SETMASK", "SO_ERROR",
     "SOL_SOCKET", "IPPROTO_IP", "IPPROTO_TCP", "IPPROTO_IPV6", "IPPROTO_UDP",
@@ -378,6 +385,8 @@ const SINGLES: &[&str] = &[
     // (kernel ABI numbers; on musl Ioctl is c_int so the *2 family is
     // negative), plus the musl-side baud fields of c_cflag.
     "TCGETS", "TCSETS", "TCSETSW", "TCSETSF",
+    // FIONBIO is rerouted through fcntl, so only its Linux value is needed.
+    "FIONBIO",
     "TCGETS2", "TCSETS2", "TCSETSW2", "TCSETSF2",
     "BOTHER", "CBAUD", "CBAUDEX",
     // Job-control ioctl requests the shim reroutes to tcgetpgrp/tcsetpgrp/
@@ -490,8 +499,11 @@ fn classify_cosmo(root: &Path, names: &[(&str, &str)]) -> Result<HashMap<String,
 }
 
 /// All `pub const NAME: ty = expr;` in one file, expression text unevaluated.
-fn scrape_consts(path: &Path, out: &mut HashMap<String, String>) {
-    let Ok(text) = fs::read_to_string(path) else { return };
+fn scrape_consts(path: &Path, out: &mut HashMap<String, String>) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let text = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
     for line in text.lines() {
         let t = line.trim();
         let Some(rest) = t.strip_prefix("pub const ") else { continue };
@@ -501,6 +513,7 @@ fn scrape_consts(path: &Path, out: &mut HashMap<String, String>) {
         // first definition wins: files are scanned most-specific first
         out.entry(name.trim().to_string()).or_insert_with(|| expr.trim().to_string());
     }
+    Ok(())
 }
 
 /// Evaluate an extracted expression: integer literals (0x/0o/decimal, with _
@@ -566,7 +579,7 @@ pub fn run(args: &GenShimArgs) -> Result<()> {
     for &arch in ARCHES {
         let mut consts = HashMap::new();
         for p in libc_search_paths(&root, arch) {
-            scrape_consts(&p, &mut consts);
+            scrape_consts(&p, &mut consts)?;
         }
         if consts.is_empty() {
             bail!("no constants scraped for {arch}; is vendor/patches/libc populated?");
