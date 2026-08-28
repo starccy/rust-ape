@@ -207,6 +207,15 @@ fn direct(rep: &mut Report) {
         if !exe.is_absolute() {
             return Err(format!("exe {} is not absolute", exe.display()));
         }
+        // under the ape loader the kernel's answer is the loader; the shim
+        // must hand back the program instead
+        let leaf = exe.file_name().unwrap_or_default().to_string_lossy();
+        if leaf.starts_with(".ape-") || exe == Path::new("/usr/bin/ape") {
+            return Err(format!("exe {} is the ape loader", exe.display()));
+        }
+        if fs::canonicalize(std::env::current_exe().map_err(|e| e.to_string())?).ok() != fs::canonicalize(&exe).ok() {
+            return Err(format!("current_exe disagrees with exe link {}", exe.display()));
+        }
         let cwd = e("readlink cwd", fs::read_link("/proc/self/cwd"))?;
         let real = e("current_dir", std::env::current_dir())?;
         let canon = |p: &Path| fs::canonicalize(p).map(|x| x.to_string_lossy().to_lowercase());

@@ -31,11 +31,50 @@
 #include "libc/runtime/runtime.h"
 #include "libc/runtime/zipos.internal.h"
 #include "libc/stdio/sysparam.h"
+#include "libc/str/str.h"
 #include "libc/sysv/errfuns.h"
 
 // [rust-ape] shim/procfs/core/: link text for anything /proc-shaped it
 // owns, or negative for a read that is not its business.
 long __ape_shim_procfs_readlinkat(int, const char *, char *, unsigned long);
+
+// [rust-ape] Whether an absolute path names this process's own exe link.
+static bool IsOwnExeLink(const char *path) {
+  if (strncmp(path, "/proc/", 6))
+    return false;
+  path += 6;
+  if (!strncmp(path, "self/", 5)) {
+    path += 5;
+  } else {
+    int pid = getpid();
+    char num[12], *q = num + sizeof(num);
+    *--q = 0;
+    do
+      *--q = '0' + pid % 10;
+    while ((pid /= 10));
+    size_t n = strlen(q);
+    if (strncmp(path, q, n) || path[n] != '/')
+      return false;
+    path += n + 1;
+  }
+  return !strcmp(path, "exe");
+}
+
+// [rust-ape] Whether link text names the ape loader rather than a program,
+// the same spelling cosmo's own executable-name lookup rejects.
+static bool IsApeLoader(const char *s, size_t n) {
+  if (n == 12 && !memcmp(s, "/usr/bin/ape", 12))
+    return true;
+  const char *b = s + n;
+  while (b > s && b[-1] != '/')
+    b--;
+  if (s + n - b < 6 || memcmp(b, ".ape-", 5))
+    return false;
+  for (b += 5; b < s + n; b++)
+    if (!(*b >= '0' && *b <= '9') && *b != '.')
+      return false;
+  return true;
+}
 
 ssize_t readlinkat(int dirfd, const char *path, char *buf, size_t bufsiz) {
   char mybuf[1];
@@ -66,6 +105,22 @@ ssize_t readlinkat(int dirfd, const char *path, char *buf, size_t bufsiz) {
     bytes = einval();
   } else if (!IsWindows()) {
     bytes = sys_readlinkat(dirfd, path, buf, bufsiz);
+    // [rust-ape] On Linux the kernel names the file it exec'd, which is the
+    // ape loader when an APE is run through one. A program locating
+    // itself this way (Rust's current_exe) would re-exec, self-update or
+    // find its resources next to the loader, so answer with the program
+    // the loader ran instead, which cosmo already knows.
+    if (IsLinux() && bytes > 0 && IsOwnExeLink(path) &&
+        IsApeLoader(buf, bytes)) {
+      const char *exe = GetProgramExecutableName();
+      size_t n = strlen(exe);
+      if (n && *exe == '/' && !IsApeLoader(exe, n)) {
+        if (n > bufsiz)
+          n = bufsiz;
+        memcpy(buf, exe, n);
+        bytes = n;
+      }
+    }
   } else {
     bytes = sys_readlinkat_nt(dirfd, path, buf, bufsiz);
   }
