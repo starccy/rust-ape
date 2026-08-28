@@ -91,6 +91,7 @@ fn main() {
         Ok(j.display().to_string())
     })());
     rep.check("current-exe", (|| {
+        // todo: sim /proc on MacOS
         let p = e("current_exe", std::env::current_exe())?;
         e("stat current_exe", fs::metadata(&p))?;
         Ok(p.display().to_string())

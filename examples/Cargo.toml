@@ -68,6 +68,10 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock", "s
 # linux, so it would leave Windows with nothing.
 jiff = { version = "0.2.35", features = ["tzdb-bundle-always"] }
 zip = { version = "8.6.0", default-features = false }
+# proc_sysinfo. Its linux backend reads /proc and /sys, which is what
+# shim/procfs/ emulates on other platforms. The example is that emulation's
+# acceptance test in-tree.
+sysinfo = "0.39"
 
 [patch.crates-io]
 errno = { path = "../vendor/patches/errno" }

@@ -280,7 +280,9 @@ static void gen_diskstats(struct pfs_buf *b) {
 }
 
 static void gen_mounts(struct pfs_buf *b) {
+    pfs_printf(b, "rootfs / rootfs rw 0 0\n");
     pfs_printf(b, "proc /proc proc rw 0 0\n");
+    pfs_printf(b, "sysfs /sys sysfs rw 0 0\n");
     uint32_t drives = GetLogicalDrives();
     for (int i = 0; i < 26; i++) {
         if (!(drives & 1u << i)) continue;
