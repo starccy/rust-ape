@@ -25,17 +25,18 @@
 │  SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                      │
 │                                                                              │
 ╚─────────────────────────────────────────────────────────────────────────────*/
-// [rust-ape] realpath, replacing cosmo 4.0.2's libc.a(realpath.o) to
-// make canonicalize() work on NT network shares. Two edits, both gated
-// on IsWindows() and marked [rust-ape] below: a leading "//" is kept as
-// two slashes (musl's POSIX reading, which upstream swapped for glibc's
-// collapse -- but //server/share is the only unix spelling of a UNC
-// path, and it already round-trips through __mkntpath2), and the server
-// and share components are taken without readlink(), since neither can
-// be opened on its own. Needs shim/readlinkat-nt.c's EINVAL fix to work
-// at all. Everything else is a faithful copy of upstream (which is
-// musl's realpath). Compiled with -D_COSMO_SOURCE by the linker
-// wrapper. Revisit on toolchain upgrade.
+// [rust-ape] realpath, replacing cosmo 4.0.2's libc.a(realpath.o) so
+// canonicalize() works on NT network shares. Three edits, gated on
+// IsWindows() and marked [rust-ape] below: a leading "//" survives,
+// since //server/share is the only unix spelling of a UNC path; the
+// server and share components skip readlink(), as neither can be opened
+// on its own; and a relative path is joined onto the cwd before the
+// walk, because NT keeps the cwd in the spelling it was entered with,
+// symlinks unresolved. Needs shim/readlinkat-nt.c's EINVAL fix.
+// Everything else is a faithful copy of upstream (musl's realpath).
+// Compiled with -D_COSMO_SOURCE by the linker wrapper. Revisit on
+// toolchain upgrade.
+
 // cflags: -D_COSMO_SOURCE
 #include "libc/assert.h"
 #include "libc/calls/calls.h"
@@ -51,6 +52,9 @@
 __static_yoink("musl_libc_notice");
 
 #define SYMLOOP_MAX 40
+
+/* [rust-ape] shim/mkntpath.c */
+int __ape_shim_unc_collapsed(const char *);
 
 // clang-format off
 
@@ -132,6 +136,34 @@ char *realpath(const char *filename, char *resolved)
 		    (!output[2] || output[2] == '/')) {
 			output[1] = output[0];
 			output[0] = '/';
+		}
+
+		/* [rust-ape] a share path whose leading "//" unix path code
+		 * collapsed to "/" gets its second slash back, so the walk
+		 * below sees the //server/share form it knows (mkntpath.c
+		 * keeps the list of shares). */
+		if (__ape_shim_unc_collapsed(output)) {
+			if (i + 1 >= PATH_MAX)
+				goto toolong;
+			memmove(output + 1, output, i + 1);
+			output[0] = '/';
+		}
+
+		/* [rust-ape] resolve the cwd along with the path, since NT
+		 * hands it out as spelled, links and all. */
+		if (output[0] != '/') {
+			char cwd[PATH_MAX];
+			size_t n;
+			if (__getcwd(cwd, sizeof cwd) == -1)
+				return 0;
+			n = strlen(cwd);
+			if (n && cwd[n-1] == '/')
+				n--;
+			if (n + 1 + i + 1 > PATH_MAX)
+				goto toolong;
+			memmove(output + n + 1, output, i + 1);
+			memcpy(output, cwd, n);
+			output[n] = '/';
 		}
 
 		filename = output;

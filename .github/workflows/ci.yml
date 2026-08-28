@@ -175,3 +175,46 @@ jobs:
           "=== summary"
           $summary
           exit $fail
+
+      # The unc_* examples only exercise their UNC cases when the cwd is a
+      # \\server\share path.
+      - name: Run the unc examples on a share
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $unc = "\\localhost\apeci"
+          New-Item -ItemType Directory -Force C:\srv\share | Out-Null
+          New-SmbShare -Name apeci -Path C:\srv\share -FullAccess Everyone | Out-Null
+          New-Item -ItemType SymbolicLink -Path C:\srv\share-link -Target $unc | Out-Null
+          Copy-Item ape\unc_*.com $unc\
+          $env:RUST_APE_UNC_LINK = "/C/srv/share-link"
+          $strace = if ("${{ inputs.strace }}" -eq "true") { @("--strace") } else { @() }
+          $fail = 0
+          foreach ($b in Get-ChildItem $unc\*.com) {
+            $o = New-TemporaryFile
+            $e = New-TemporaryFile
+            $extra = @{}
+            if ($strace) { $extra["ArgumentList"] = $strace }
+            $p = Start-Process -FilePath $b.FullName -WorkingDirectory $unc `
+                 -PassThru -NoNewWindow @extra `
+                 -RedirectStandardOutput $o -RedirectStandardError $e
+            if ($p.WaitForExit(60000)) {
+              if ($p.ExitCode -eq 0) { $status = "ok" }
+              else { $status = "FAILED (exit $($p.ExitCode))"; $fail = 1 }
+            } else {
+              $p.Kill()
+              $p.WaitForExit()
+              $status = "TIMED OUT after 60s"
+              $fail = 1
+            }
+            "::group::$($b.Name) on $unc - $status"
+            Get-Content $o -ErrorAction SilentlyContinue
+            if ((Get-Item $e -ErrorAction SilentlyContinue).Length -gt 0) {
+              "--- stderr"
+              if ($strace) { Get-Content $e -Tail 200 } else { Get-Content $e }
+            }
+            "::endgroup::"
+            if ($status -ne "ok") { "::error title=$($b.Name) (UNC)::$status" }
+            Remove-Item $o, $e -Force -ErrorAction SilentlyContinue
+          }
+          exit $fail

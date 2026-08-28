@@ -35,7 +35,10 @@ fn main() {
     fs::write(&marked, b"x").expect("write");
     fs::set_permissions(&marked, fs::Permissions::from_mode(0o755)).expect("chmod");
     let exe = std::path::PathBuf::from(std::env::args_os().next().expect("argv[0]"));
-    assert!(exe.components().count() > 1, "run this by path, so argv[0] names the binary");
+    // cosmo leaves a `\\server\share\x` argv[0] in win32 spelling (it never
+    // rewrites `\\`-prefixed arguments), which unix Path sees as one component.
+    let by_path = exe.components().count() > 1 || exe.to_string_lossy().starts_with("\\\\");
+    assert!(by_path, "run this by path, so argv[0] names the binary");
 
     access(&data, libc::F_OK).expect("F_OK on an existing file");
     println!("access F_OK ok");

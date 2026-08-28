@@ -55,6 +55,7 @@
 #include "libc/nt/struct/win32finddata.h"
 #include "libc/runtime/zipos.internal.h"
 #include "libc/str/str.h"
+#include "libc/str/tab.h"  // [rust-ape]
 #include "libc/sysv/consts/dt.h"
 #include "libc/sysv/consts/f.h"
 #include "libc/sysv/consts/o.h"
@@ -64,6 +65,9 @@
 #include "libc/thread/thread.h"
 #include "libc/thread/tls.h"
 #include "libc/zip.h"
+
+// [rust-ape] shim/cosmosdrive.c
+char __ape_shim_cosmos_drive(void);
 
 /**
  * @fileoverview Directory Streams for Linux+Mac+Windows+FreeBSD+OpenBSD.
@@ -103,6 +107,8 @@ struct dirstream {
     };
     struct {
       bool isdone;
+      bool isroot;       // [rust-ape] the cosmos drive root
+      uint32_t drives;   // [rust-ape] drive letters still to synthesize
       struct NtWin32FindData windata;
       char16_t name16[PATH_MAX];
       uint32_t name16len;
@@ -166,6 +172,18 @@ static textwindows dontinline int fdopendir_nt(DIR *res, int fd) {
   if (res->name16len + 2 + 1 > ARRAYLEN(res->name16)) {
     return enametoolong();
   }
+  // [rust-ape] the root of the cosmos drive is what "/" names, and unix
+  // expects every drive to hang off "/"; master lists the drive letters
+  // there, so an `ls /` shows them
+  if (res->name16len == 7 && res->name16[0] == '\\' &&
+      res->name16[1] == '\\' && res->name16[2] == '?' &&
+      res->name16[3] == '\\' && res->name16[5] == ':' &&
+      res->name16[6] == '\\' &&
+      kToLower[res->name16[4] & 255] ==
+          kToLower[__ape_shim_cosmos_drive() & 255]) {
+    res->isroot = true;
+    res->drives = GetLogicalDrives();
+  }
   if (res->name16len > 1 && res->name16[res->name16len - 1] != u'\\') {
     res->name16[res->name16len++] = u'\\';
   }
@@ -205,6 +223,33 @@ TryAgain:
     dir->isdone = !FindNextFile(dir->hand, &dir->windata);
   }
   if (dir->isdone) {
+    // [rust-ape] synthesize drive letters for the cosmos drive root, the
+    // way master does; a drive that cannot be opened is left out
+    struct NtByHandleFileInformation wst;
+    while (dir->drives) {
+      int index = __builtin_ctz(dir->drives);
+      dir->drives &= ~(1u << index);
+      int c = 'A' + index;
+      char16_t dp[4] = {c, ':', '\\'};
+      int64_t fh = CreateFile(
+          dp, kNtFileReadAttributes,
+          kNtFileShareRead | kNtFileShareWrite | kNtFileShareDelete, 0,
+          kNtOpenExisting, kNtFileAttributeNormal | kNtFileFlagBackupSemantics,
+          0);
+      if (fh == -1)
+        continue;
+      bool32 ok = GetFileInformationByHandle(fh, &wst);
+      CloseHandle(fh);
+      if (!ok)
+        continue;
+      bzero(&dir->ent, sizeof(dir->ent));
+      dir->ent.d_off = dir->tell++;
+      dir->ent.d_name[0] = c;
+      dir->ent.d_name[1] = 0;
+      dir->ent.d_type = DT_DIR;
+      dir->ent.d_ino = (uint64_t)wst.nFileIndexHigh << 32 | wst.nFileIndexLow;
+      return &dir->ent;
+    }
     return NULL;
   }
 
@@ -653,6 +698,8 @@ void rewinddir(DIR *dir) {
       dir->tell = 0;
     }
   } else {
+    if (dir->isroot)
+      dir->drives = GetLogicalDrives();  // [rust-ape]
     FindClose(dir->hand);
     if ((dir->hand = FindFirstFile(dir->name16, &dir->windata)) != -1) {
       dir->isdone = false;
@@ -692,6 +739,8 @@ void seekdir(DIR *dir, long tell) {
   } else {
     dir->tell = 0;
     dir->isdone = false;
+    if (dir->isroot)
+      dir->drives = GetLogicalDrives();  // [rust-ape]
     FindClose(dir->hand);
     if ((dir->hand = FindFirstFile(dir->name16, &dir->windata)) != -1) {
       for (; dir->tell < tell; ++dir->tell) {
