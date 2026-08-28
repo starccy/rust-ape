@@ -31,6 +31,7 @@
 #include "libc/calls/state.internal.h"
 #include "libc/calls/struct/sigset.internal.h"
 #include "libc/calls/syscall_support-nt.internal.h"
+#include "libc/intrin/kprintf.h"
 #include "libc/intrin/strace.h"
 #include "libc/nt/createfile.h"
 #include "libc/nt/enum/accessmask.h"
@@ -233,7 +234,16 @@ static textwindows int ntspawn2(struct NtSpawnArgs *a, struct SpawnBlock *sb) {
         } else if (GetLastError() == kNtErrorInvalidName) {
           enoent();
         } else {
-          __winerr();  // [rust-ape] every failure carries an errno
+          // [rust-ape] every failure carries an errno
+          // fixme: print a debug information for catching a EBADF bug
+          if (GetLastError() == kNtErrorInvalidHandle ||
+              GetLastError() == kNtErrorInvalidParameter)
+            kprintf("[rust-ape] ntspawn: CreateProcess win32=%u handles=%u "
+                    "stdio=%ld,%ld,%ld parent=%ld\n",
+                    GetLastError(), a->dwExplicitHandleCount,
+                    a->lpStartupInfo->hStdInput, a->lpStartupInfo->hStdOutput,
+                    a->lpStartupInfo->hStdError, a->opt_hParentProcess);
+          __winerr();
         }
       }
       rc = __fix_enotdir(rc, sb->path);
