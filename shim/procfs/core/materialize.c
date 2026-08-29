@@ -139,13 +139,12 @@ static struct pidslot *slot_of(uint32_t pid) {
     return oldest;
 }
 
-// Threads, only for a caller that actually walks /proc/<pid>/task. The
-// tree is a skeleton: content is never read from it (the open interception
-// answers task/<tid>/<file> with the process-wide file), so the entries are
-// empty placeholders and the tree is only touched when the thread id set
-// changes, and then by adding and removing the ids that differ. Monitors
-// walk task/ for every process on every refresh, so a rebuild per visit
-// costs thousands of file operations per second.
+// Threads, only for a caller that stats something under /proc/<pid>/task
+// (a listing never comes here; virtdir.c serves it from memory). The tree is
+// a skeleton of bare directories: content is never read from it (the open
+// interception answers task/<tid>/<file> with the process-wide file), and
+// the tree is only touched when the thread id set changes, and then by
+// adding and removing the ids that differ.
 static uint64_t tid_set_digest(const uint32_t *tids, int n) {
     // order independent, so a snapshot listing threads differently is not
     // a change
@@ -192,15 +191,9 @@ static void materialize_task(struct pidslot *s, uint32_t pid,
             closedir(dp);
         }
     }
-    static const char *const names[] = {"stat", "status", "io"};
     for (int k = 0; k < nt; k++) {
         snprintf(path, sizeof path, "%s/task/%u", dir, tids[k]);
-        if (mkdir(path, 0755) && errno == EEXIST) continue;
-        for (int i = 0; i < 3; i++) {
-            snprintf(path, sizeof path, "%s/task/%u/%s", dir, tids[k],
-                     names[i]);
-            pc_write_file(path, "", 0);
-        }
+        mkdir(path, 0755);
     }
 }
 

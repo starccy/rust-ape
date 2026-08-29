@@ -60,7 +60,9 @@ int __ape_shim_procfs_open(const char *path, int hostflags);
 void __ape_shim_procfs_track(int fd, const char *vpath);
 bool __ape_shim_procfs_join(int dirfd, const char *rel, char *out,
                             unsigned long outsz);
-void __ape_shim_procfs_rewind(int fd);
+long __ape_shim_procfs_memfd_lseek(int fd, long off, int whence);
+int __ape_shim_procfs_memfd_fcntl(int fd, int cmd, int arg);
+int __ape_shim_procfs_memfd_fstat(int fd, struct stat *st);
 void __ape_shim_procfs_list(const char *vpath);
 void __ape_shim_procfs_list_fd(int fd);
 unsigned __ape_shim_procfs_link_mode(const char *vpath);
@@ -236,21 +238,26 @@ int __ape_shim_openat(int dirfd, const char *path, int lin, ...) {
     return fd;
 }
 
-// whence is 0/1/2 on both sides (SEEK_DATA/SEEK_HOLE too). A rewind of a
-// /proc content descriptor regenerates it first (shim/procfs/core/).
+// whence is 0/1/2 on both sides (SEEK_DATA/SEEK_HOLE too). A /proc content
+// descriptor lives in memory and seeks there; its rewind regenerates the
+// text (shim/procfs/core/).
 off_t __ape_shim_lseek(int fd, off_t off, int whence) {
-    if (off == 0 && whence == SEEK_SET) __ape_shim_procfs_rewind(fd);
+    long r = __ape_shim_procfs_memfd_lseek(fd, off, whence);
+    if (r != -2) return r;
     return lseek(fd, off, whence);
 }
 
-// Listing a /proc process directory: the emulated tree materializes its
-// entries lazily, so a reader about to enumerate one gets the full set
-// first (shim/procfs/core/). Programs that read by name never pass here.
+// A /proc content descriptor has no handle behind it; its stat is answered
+// from the text (shim/procfs/core/).
+int __ape_shim_fstat(int fd, struct stat *st) {
+    int r = __ape_shim_procfs_memfd_fstat(fd, st);
+    if (r != -2) return r;
+    return fstat(fd, st);
+}
+
 DIR *__ape_shim_opendir(const char *path) {
     bool proc = path && path[0] == '/' && !strncmp(path, "/proc", 5);
-    if (proc) __ape_shim_procfs_list(path);
     DIR *d = opendir(path);
-    // remembered so readdir can mark the link entries (see below)
     if (d && proc) __ape_shim_procfs_track(dirfd(d), path);
     return d;
 }
@@ -283,6 +290,10 @@ int __ape_shim_fcntl(int fd, int cmd, ...) {
     void *parg = va_arg(ap, void *); // widest read; reinterpreted per cmd
     va_end(ap);
     int iarg = (int)(long)parg;
+
+    // a /proc content descriptor has no handle; its flags live in the shim
+    int mr = __ape_shim_procfs_memfd_fcntl(fd, cmd, iarg);
+    if (mr != -2) return mr;
 
     switch (cmd) {
         case 0: { // F_DUPFD

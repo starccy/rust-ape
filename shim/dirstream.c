@@ -57,6 +57,7 @@
 #include "libc/str/str.h"
 #include "libc/str/tab.h"  // [rust-ape]
 #include "libc/sysv/consts/dt.h"
+#include "procfs/procfs.h"  // [rust-ape] listings served from memory
 #include "libc/sysv/consts/f.h"
 #include "libc/sysv/consts/o.h"
 #include "libc/sysv/consts/s.h"
@@ -87,6 +88,7 @@ int sys_getdents(unsigned, void *, unsigned, long *);
 struct dirstream {
   int fd;
   bool iszip;
+  bool isvirt;  // [rust-ape] an emulated /proc listing, no descriptor
   long tell;
   int64_t hand;
   pthread_mutex_t lock;
@@ -105,6 +107,11 @@ struct dirstream {
       unsigned buf_end;
       uint64_t buf[4096];
     };
+    struct {  // [rust-ape]
+      struct pfs_virtent *ents;
+      int count;
+      int idx;
+    } virt;
     struct {
       bool isdone;
       bool isroot;       // [rust-ape] the cosmos drive root
@@ -436,6 +443,28 @@ DIR *opendir(const char *name) {
     errno = rc;
     return 0;
   }
+  // [rust-ape] a directory of the emulated /proc tree is listed from
+  // memory
+  if (IsWindows()) {
+    struct pfs_virtent *ents;
+    int n = __ape_shim_procfs_virtual_dir(name, &ents);
+    if (n >= 0) {
+      DIR *d = calloc(1, sizeof(*d));
+      if (!d) {
+        free(ents);
+        return 0;
+      }
+      d->fd = __ape_shim_procfs_memfd_dir(name);
+      d->isvirt = true;
+      d->virt.ents = ents;
+      d->virt.count = n;
+      return d;
+    }
+    if (n == -2) {
+      enoent();
+      return 0;
+    }
+  }
   int fd;
   if ((fd = open(name, O_RDONLY | O_DIRECTORY | O_NOCTTY | O_CLOEXEC)) == -1) {
     return 0;
@@ -575,8 +604,25 @@ static struct dirent *readdir_unix(DIR *dir) {
   return ent;
 }
 
+// [rust-ape]
+static struct dirent *readdir_virt(DIR *dir) {
+  if (dir->virt.idx >= dir->virt.count)
+    return 0;
+  struct pfs_virtent *e = &dir->virt.ents[dir->virt.idx++];
+  dir->tell = dir->virt.idx;
+  bzero(&dir->ent, sizeof(dir->ent));
+  dir->ent.d_ino = dir->virt.idx;
+  dir->ent.d_off = dir->tell;
+  dir->ent.d_reclen = sizeof(dir->ent);
+  dir->ent.d_type = e->type;
+  strcpy(dir->ent.d_name, e->name);
+  return &dir->ent;
+}
+
 static struct dirent *readdir_impl(DIR *dir) {
-  if (dir->iszip) {
+  if (dir->isvirt) {
+    return readdir_virt(dir);
+  } else if (dir->iszip) {
     return readdir_zipos(dir);
   } else if (IsWindows()) {
     return readdir_nt(dir);
@@ -652,10 +698,13 @@ int closedir(DIR *dir) {
     if (dir->iszip) {
       critbit0_clear(&dir->zip.found);
     }
+    if (dir->isvirt) {
+      free(dir->virt.ents);  // [rust-ape]
+    }
     if (dir->fd != -1) {
       rc |= close(dir->fd);
     }
-    if (IsWindows() && !dir->iszip) {
+    if (IsWindows() && !dir->iszip && !dir->isvirt) {
       if (!FindClose(dir->hand)) {
         rc = __winerr();
       }
@@ -688,7 +737,10 @@ int dirfd(DIR *dir) {
  */
 void rewinddir(DIR *dir) {
   lockdir(dir);
-  if (dir->iszip) {
+  if (dir->isvirt) {  // [rust-ape]
+    dir->virt.idx = 0;
+    dir->tell = 0;
+  } else if (dir->iszip) {
     critbit0_clear(&dir->zip.found);
     dir->tell = 0;
     dir->zip.offset = GetZipCdirOffset(dir->zip.zipos->cdir);
@@ -716,7 +768,10 @@ void rewinddir(DIR *dir) {
  */
 void seekdir(DIR *dir, long tell) {
   lockdir(dir);
-  if (dir->iszip) {
+  if (dir->isvirt) {  // [rust-ape]
+    dir->virt.idx = tell < 0 ? 0 : tell > dir->virt.count ? dir->virt.count : (int)tell;
+    dir->tell = dir->virt.idx;
+  } else if (dir->iszip) {
     critbit0_clear(&dir->zip.found);
     dir->tell = 0;
     dir->zip.offset = GetZipCdirOffset(dir->zip.zipos->cdir);

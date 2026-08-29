@@ -19,8 +19,11 @@
 // never takes an fcntl lock does not link the lock machinery
 int sys_fcntl_nt_lock_cleanup(int);
 
-// [rust-ape] shim/procfs/core/ forgets a /proc directory descriptor here
+// [rust-ape] shim/procfs/core/ forgets a /proc directory descriptor here,
+// and frees the text behind a /proc content descriptor, which sits in a
+// reserved slot with no handle
 void __ape_shim_procfs_fd_closed(int);
+int __ape_shim_procfs_memfd_close(int);
 
 // [rust-ape] shim/socket.c drops options parked for a still-connecting socket
 void __ape_shim_nt_sockopt_forget(int);
@@ -47,6 +50,10 @@ textwindows int sys_close_nt(int fd, int fd_for_locks) {
             break;
         case kFdZip:
             return __zipos_close(fd);
+        case kFdReserved: // [rust-ape]
+            if (__ape_shim_procfs_memfd_close(fd) == 0)
+                return 0;
+            break;
         default:
             break;
     }

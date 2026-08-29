@@ -34,6 +34,23 @@ static bool spelled_self(const char *sub) {
     return !strncmp(sub, "self", 4) && (!sub[4] || sub[4] == '/');
 }
 
+// exe, cwd and root of /proc/<pid> and of /proc/<pid>/task/<tid>, where
+// Linux shows the process's own, or 0.
+const char *pc_link_name(const struct node *n) {
+    if (n->kind != K_PID_SUB) return 0;
+    const char *name = n->name;
+    if (!strcmp(name, "task")) {
+        name = strchr(n->rest, '/');
+        if (!name || strchr(name + 1, '/')) return 0;
+        name++;
+    } else if (n->rest[0]) {
+        return 0;
+    }
+    if (!strcmp(name, "exe") || !strcmp(name, "cwd") || !strcmp(name, "root"))
+        return name;
+    return 0;
+}
+
 // ---------------------------------------------------------------------------
 // Entry: every /proc-shaped readlink, from the vendored shim/readlinkat.c.
 // Negative return means "not mine"; the caller falls through to the host.
@@ -51,9 +68,8 @@ static long link_of_node(const struct node *n, const char *sub, char *buf,
         }
     }
     if (n->kind != K_PID_SUB) return -1;
-    if (!n->rest[0] && (!strcmp(n->name, "exe") || !strcmp(n->name, "cwd") ||
-                        !strcmp(n->name, "root")))
-        return pfs_pid_link(n->pid, n->name, buf, bufsiz);
+    const char *link = pc_link_name(n);
+    if (link) return pfs_pid_link(n->pid, link, buf, bufsiz);
     if (!strcmp(n->name, "fd") && n->rest[0] && !strchr(n->rest, '/')) {
         int k = atoi(n->rest);
         if (n->pid == pfs_self_pid()) {
@@ -94,9 +110,7 @@ unsigned __ape_shim_procfs_link_mode(const char *vpath) {
         return *after ? 0 : 0777;
     }
     if (n.kind != K_PID_SUB) return 0;
-    if (!n.rest[0] && (!strcmp(n.name, "exe") || !strcmp(n.name, "cwd") ||
-                       !strcmp(n.name, "root")))
-        return 0777;
+    if (pc_link_name(&n)) return 0777;
     if (!strcmp(n.name, "fd") && n.rest[0] && !strchr(n.rest, '/'))
         return 0700; // lrwx------ on Linux
     return 0;
@@ -114,7 +128,7 @@ void __ape_shim_procfs_fix_dirent(int fd, struct dirent *e) {
     if (!t) return;
     char vpath[PATH_MAX];
     pthread_mutex_lock(&pc_lock);
-    t = pc_track_get(fd, false);
+    t = pc_track_get(fd);
     int len = t ? snprintf(vpath, sizeof vpath, "%s/%s", t->vpath, e->d_name) : 0;
     pthread_mutex_unlock(&pc_lock);
     if (len <= 0 || (size_t)len >= sizeof vpath) return;
@@ -126,7 +140,7 @@ void __ape_shim_procfs_fix_dirent(int fd, struct dirent *e) {
 // it. Answers in the \\?\ namespace, normalized to slashes.
 static bool fd_phys_path(int fd, char *out, size_t cap) {
     if (fd < 0 || (size_t)fd >= g_fds.n) return false;
-    if (g_fds.p[fd].kind == 0) return false;
+    if (g_fds.p[fd].kind != kFdFile) return false;
     char16_t w[600];
     uint32_t len = GetFinalPathNameByHandle(g_fds.p[fd].handle, w, 600, 0);
     if (!len || len >= 600) return false;

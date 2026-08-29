@@ -47,6 +47,7 @@
 void __ape_shim_epoll_rearm_in(int fd); // shim/epoll.c
 int __ape_shim_poll(struct pollfd *, unsigned long, int); // shim/poll.c
 void __ape_shim_console_before_wait(int fd);                // shim/console.c
+long __ape_shim_procfs_memfd_read(int, const struct iovec *, int); // shim/procfs/core/
 
 // ---------------------------------------------------------------------------
 // Escape sequences from the NT console arrive one byte per read, so a
@@ -140,6 +141,11 @@ static ssize_t readv_impl(int fd, const struct iovec *iov, int iovlen) {
       }
       iov = iov2;
     }
+  }
+
+  if (IsWindows()) {
+    ssize_t n = __ape_shim_procfs_memfd_read(fd, iov, iovlen);
+    if (n != -2) return n;
   }
 
   if (fd < g_fds.n && g_fds.p[fd].kind == kFdZip) {

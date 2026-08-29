@@ -7,13 +7,19 @@
 //   1. Opening a content file for reading, whether open("/proc/123/stat")
 //      or openat(dirfd, "stat") through a directory descriptor we handed
 //      out, is intercepted in shim/open.c before the host sees it. The
-//      generator runs now, its output goes into a delete-on-close scratch
-//      file, and the caller gets that descriptor, rewound. Fresh at every
-//      open, regenerated in place by lseek(fd, 0, SEEK_SET) for readers
-//      that keep it open, gone at close. Directory descriptors of
-//      the tree are remembered by fd (validated against cosmo's handle,
-//      forgotten by shim/close-nt.c) so the relative spelling can be
-//      joined back to its virtual path.
+//      generator runs now and its output stays in memory behind a
+//      descriptor slot cosmo reserved for us; the shim's read, lseek,
+//      fstat and close serve it (open.c). Fresh at every open, regenerated
+//      in place by lseek(fd, 0, SEEK_SET) for readers that keep it open,
+//      gone at close, never on disk. Directory descriptors of the tree are
+//      remembered by fd (validated against cosmo's handle, forgotten by
+//      shim/close-nt.c) so the relative spelling can be joined back to its
+//      virtual path. A memory descriptor answers read, lseek, fstat, fcntl
+//      flags and close; dup and pread are not served, no reader of /proc
+//      does either. Listings of /proc, a process directory, its task/ and
+//      net/ come from memory too (virtdir.c, through the vendored
+//      shim/dirstream.c), so enumerating every thread of every process
+//      costs no directory operation on disk.
 //
 //   2. Everything that walks or stats, opendir("/proc"), stat("/proc/1"),
 //      access() and the like, lands in a materialized skeleton under
@@ -121,13 +127,14 @@ bool pc_gen_sysfs(const char *path, struct pfs_buf *out);
 struct trackfd {
     _Atomic(int) fd; // -1: free
     long handle;
-    bool scratch; // a content descriptor rather than a directory
-    int64_t gen;  // slot generation the content came from, 0 if not a slot file
-    size_t size;  // bytes on the scratch file
     char vpath[200];
 };
 struct trackfd *pc_track_find(int fd);
-struct trackfd *pc_track_get(int fd, bool scratch);
+struct trackfd *pc_track_get(int fd);
 bool pc_gen_node(const struct node *n, struct pfs_buf *b);
+
+// links.c. The link a parsed path names, exe/cwd/root of a process or of
+// one of its threads, or 0.
+const char *pc_link_name(const struct node *n);
 
 #endif
