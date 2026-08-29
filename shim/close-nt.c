@@ -22,6 +22,9 @@ int sys_fcntl_nt_lock_cleanup(int);
 // [rust-ape] shim/procfs/core/ forgets a /proc directory descriptor here
 void __ape_shim_procfs_fd_closed(int);
 
+// [rust-ape] shim/socket.c drops options parked for a still-connecting socket
+void __ape_shim_nt_sockopt_forget(int);
+
 textwindows int sys_close_nt(int fd, int fd_for_locks) {
     if ((unsigned)fd >= g_fds.n)
         return ebadf();
@@ -38,6 +41,7 @@ textwindows int sys_close_nt(int fd, int fd_for_locks) {
             //     FlushFileBuffers(f->handle);
             break;
         case kFdSocket:
+            __ape_shim_nt_sockopt_forget(fd); // [rust-ape]
             if (_weaken(sys_closesocket_nt))
                 return _weaken(sys_closesocket_nt)(f);
             break;

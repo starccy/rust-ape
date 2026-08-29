@@ -21,6 +21,7 @@
 
 int __ape_shim_nt_gated(int fd);                            // socket.c
 int __ape_shim_nt_wants_eagain(int fd);                     // socket.c
+void __ape_shim_nt_sockopt_replay(int fd);                  // socket.c
 unsigned long __ape_shim_nt_clamp(int fd, unsigned long n); // socket.c
 void __ape_shim_epoll_rearm_out(int fd);                    // epoll.c
 void __ape_shim_epoll_hint_pipe_write(int fd);              // epoll.c
@@ -46,6 +47,7 @@ static long write_result(int fd, long r, unsigned long want) {
 }
 
 long __ape_shim_write(int fd, const void *buf, unsigned long n) {
+    __ape_shim_nt_sockopt_replay(fd);
     if (__ape_shim_nt_wants_eagain(fd)) return write_result(fd, -1, n);
     long r = write(fd, buf, __ape_shim_nt_clamp(fd, n));
     if (r > 0) __ape_shim_console_wrote(fd, buf, r);
@@ -53,6 +55,7 @@ long __ape_shim_write(int fd, const void *buf, unsigned long n) {
 }
 
 long __ape_shim_writev(int fd, const struct iovec *iov, int iovcnt) {
+    __ape_shim_nt_sockopt_replay(fd);
     if (__ape_shim_nt_wants_eagain(fd)) return write_result(fd, -1, 1);
     unsigned long total = 0;
     for (int i = 0; i < iovcnt; i++) total += iov[i].iov_len;

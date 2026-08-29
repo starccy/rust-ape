@@ -34,6 +34,10 @@
 #include <uchar.h>
 #include <unistd.h>
 #include <libc/dce.h>
+#include <pthread.h>
+#include <stdbool.h> // cosmo's own build has C23 bool
+#include <libc/calls/internal.h>
+#include <libc/intrin/fds.h>
 #include <libc/sysv/consts/af.h>
 #include <libc/sysv/consts/sock.h>
 #include <libc/sysv/consts/so.h>
@@ -429,6 +433,92 @@ static void sockopt_to_host(int *level, int *name) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Socket options set while a nonblocking connect is still in flight.
+//
+// Linux accepts them and they take effect once the connection is up.
+// WinSock refuses several (TCP_NODELAY, SO_KEEPALIVE and SO_REUSEADDR among
+// them) with EINVAL until the handshake completes, and cosmo only learns the
+// handshake completed when connect() is called again, so nothing in the
+// runtime can retry on the program's behalf. Such requests are parked here
+// and replayed before the socket's first send, the earliest point at which
+// they could matter. Only int-sized values are parked, which covers every
+// option WinSock refuses in this state. Entries die with the fd.
+
+struct deferred_opt { int fd, level, name, val; };
+#define DEFER_MAX 32
+static struct deferred_opt g_defer[DEFER_MAX] = { [0 ... DEFER_MAX - 1] = { .fd = -1 } };
+static int g_defer_n; // fast path: sends look no further while this is zero
+static pthread_mutex_t g_defer_lock = PTHREAD_MUTEX_INITIALIZER;
+
+static int sock_is_connecting(int fd) {
+    if ((unsigned)fd >= g_fds.n) return 0;
+    struct Fd *f = g_fds.p + fd;
+    return f->kind == kFdSocket && f->connecting == 1;
+}
+
+static int defer_sockopt(int fd, int level, int name, int val) {
+    int ok = 0;
+    pthread_mutex_lock(&g_defer_lock);
+    int slot = -1;
+    for (int i = 0; i < DEFER_MAX; i++) {
+        struct deferred_opt *d = &g_defer[i];
+        if (d->fd == fd && d->level == level && d->name == name) { slot = i; break; }
+        if (slot < 0 && d->fd == -1) slot = i;
+    }
+    if (slot >= 0) {
+        if (g_defer[slot].fd == -1) g_defer_n++;
+        g_defer[slot] = (struct deferred_opt){ fd, level, name, val };
+        ok = 1;
+    }
+    pthread_mutex_unlock(&g_defer_lock);
+    return ok;
+}
+
+// Retries every parked option on fd. One that still gets EINVAL stays
+// parked, since the handshake is then still in flight and the send that
+// follows will not go through either.
+void __ape_shim_nt_sockopt_replay(int fd) {
+    if (!g_defer_n) return;
+    pthread_mutex_lock(&g_defer_lock);
+    for (int i = 0; i < DEFER_MAX; i++) {
+        struct deferred_opt *d = &g_defer[i];
+        if (d->fd != fd) continue;
+        int e = errno;
+        if (setsockopt(fd, d->level, d->name, &d->val, sizeof(d->val)) == 0 ||
+            errno != EINVAL) {
+            d->fd = -1;
+            g_defer_n--;
+        }
+        errno = e;
+    }
+    pthread_mutex_unlock(&g_defer_lock);
+}
+
+void __ape_shim_nt_sockopt_forget(int fd) {
+    if (!g_defer_n) return;
+    pthread_mutex_lock(&g_defer_lock);
+    for (int i = 0; i < DEFER_MAX; i++)
+        if (g_defer[i].fd == fd) { g_defer[i].fd = -1; g_defer_n--; }
+    pthread_mutex_unlock(&g_defer_lock);
+}
+
+static int deferred_lookup(int fd, int level, int name, int *val) {
+    int found = 0;
+    if (!g_defer_n) return 0;
+    pthread_mutex_lock(&g_defer_lock);
+    for (int i = 0; i < DEFER_MAX; i++) {
+        struct deferred_opt *d = &g_defer[i];
+        if (d->fd == fd && d->level == level && d->name == name) {
+            *val = d->val;
+            found = 1;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_defer_lock);
+    return found;
+}
+
 int __ape_shim_setsockopt(int fd, int level, int name, const void *val, unsigned len) {
     // SO_REUSEPORT has no Windows equivalent (cosmo publishes it as 0 there,
     // which the NT layer rejects with ENOPROTOOPT), and WinSock's
@@ -442,12 +532,24 @@ int __ape_shim_setsockopt(int fd, int level, int name, const void *val, unsigned
     // and refusing would abort a capture that does work.
     if (__ape_shim_packet_sockopt(fd, level)) return 0;
     sockopt_to_host(&level, &name);
-    return setsockopt(fd, level, name, val, len);
+    int r = setsockopt(fd, level, name, val, len);
+    if (r == -1 && errno == EINVAL && IsWindows() && val && len == sizeof(int) &&
+        sock_is_connecting(fd)) {
+        if (defer_sockopt(fd, level, name, *(const int *)val)) return 0;
+        errno = EINVAL;
+    }
+    return r;
 }
 
 int __ape_shim_getsockopt(int fd, int level, int name, void *val, unsigned *len) {
     int lin_level = level, lin_name = name;
     sockopt_to_host(&level, &name);
+    int parked;
+    if (val && len && *len >= sizeof(int) && deferred_lookup(fd, level, name, &parked)) {
+        *(int *)val = parked;
+        *len = sizeof(int);
+        return 0;
+    }
     int r = getsockopt(fd, level, name, val, len);
     // SO_ERROR's payload IS an errno, in host coding; hand back the Linux one
     // so raw_os_error comparisons in take_error()/connect_timeout() stay true.
@@ -528,6 +630,7 @@ unsigned long __ape_shim_nt_clamp(int fd, unsigned long n) {
 }
 
 long __ape_shim_send(int fd, const void *buf, unsigned long n, int flags) {
+    __ape_shim_nt_sockopt_replay(fd);
     if (__ape_shim_nt_wants_eagain(fd)) return send_result(fd, -1, n);
     int host = msg_to_host(flags);
     unsigned long len = __ape_shim_nt_clamp(fd, n);
@@ -539,6 +642,7 @@ long __ape_shim_send(int fd, const void *buf, unsigned long n, int flags) {
 long __ape_shim_sendto(int fd, const void *buf, unsigned long n, int flags,
                        const void *addr, unsigned alen) {
     struct fam_copy tmp;
+    __ape_shim_nt_sockopt_replay(fd);
     if (__ape_shim_nt_wants_eagain(fd)) return send_result(fd, -1, n);
     int host = msg_to_host(flags);
     unsigned long len = __ape_shim_nt_clamp(fd, n);
@@ -695,6 +799,7 @@ static unsigned long msg_total(const struct msghdr *msg) {
 
 long __ape_shim_sendmsg(int fd, const struct msghdr *msg, int flags) {
     unsigned long want = msg_total(msg);
+    __ape_shim_nt_sockopt_replay(fd);
     if (__ape_shim_nt_wants_eagain(fd)) return send_result(fd, -1, want);
     if (!msg) {
         int host = msg_to_host(flags);
