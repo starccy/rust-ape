@@ -21,6 +21,8 @@
 #include <stddef.h>
 #include <string.h>
 
+#include <libc/nt/errors.h>
+
 #include "tables.h"
 
 struct map {
@@ -39,6 +41,8 @@ int __ape_shim_errno_host_to_linux(int host) {
     if (!host) return 0;
     for (size_t i = 0; i < NERRNOS; i++)
         if (*kErrnos[i].host == host) return kErrnos[i].linux_val;
+    // some win32 code which unmapped in upstream cosmo
+    if (host == kNtErrorSymlinkClassDisabled) return SHIM_LIN_EACCES;
     return host; // no Linux name for this: pass through raw
 }
 
