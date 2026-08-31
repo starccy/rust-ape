@@ -64,17 +64,28 @@ jobs:
           retention-days: 30
           if-no-files-found: error
 
+      # Detached so the connection string can be published as an artifact
+      # below; the post step then keeps the job alive while the session
+      # is in use.
       - name: ssh session
         if: inputs.ssh
+        id: upterm
         uses: owenthereal/action-upterm@v1
         with:
           limit-access-to-actor: true
           wait-timeout-minutes: 30
+          detached: true
+
+      # Lets the connection string be fetched with gh while the job runs,
+      # instead of digging through live web logs. Files produced during
+      # the session come back over scp, no closing artifact needed.
+      - name: Publish ssh command
+        if: inputs.ssh
+        run: printf '%s\n' "${{ steps.upterm.outputs.ssh-command }}" | tee ssh-command.txt
 
       - uses: actions/upload-artifact@v7
-        if: always() && inputs.ssh
+        if: inputs.ssh
         with:
-          name: fixtures-final
-          path: fixtures/
-          retention-days: 30
-          if-no-files-found: warn
+          name: ssh-command
+          path: ssh-command.txt
+          retention-days: 1
