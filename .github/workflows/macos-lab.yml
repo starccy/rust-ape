@@ -1,0 +1,79 @@
+# Temporary Apple Silicon environment for the macOS procfs work
+name: macos-lab
+
+on:
+  workflow_dispatch:
+    inputs:
+      ssh:
+        description: "Open a tmate ssh session on the mac after the dump"
+        type: boolean
+        default: true
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build (linux)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/cache@v6
+        with:
+          path: cache
+          key: cosmocc-lab-${{ hashFiles('xtask/src/config.rs') }}
+
+      - name: Build macos-probe.com
+        run: |
+          ver=$(sed -n 's/.*COSMOCC_VERSION[^"]*"\([^"]*\)".*/\1/p' xtask/src/config.rs | head -1)
+          mkdir -p cache
+          zip="cache/cosmocc-$ver.zip"
+          [ -f "$zip" ] || curl -fsSL -o "$zip" "https://cosmo.zip/pub/cosmocc/cosmocc-$ver.zip"
+          unzip -q "$zip" -d /tmp/cosmocc
+          /tmp/cosmocc/bin/cosmocc -O2 -Wall -D_COSMO_SOURCE -o macos-probe.com scripts/macos-probe.c
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos-probe
+          path: macos-probe.com
+          retention-days: 7
+          if-no-files-found: error
+
+  lab:
+    name: lab (macos-arm64)
+    needs: build
+    runs-on: macos-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: macos-probe
+
+      - name: Dump fixtures
+        run: |
+          chmod +x macos-probe.com
+          ./macos-probe.com fixtures
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: fixtures
+          path: fixtures/
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: ssh session
+        if: inputs.ssh
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
+
+      - uses: actions/upload-artifact@v7
+        if: always() && inputs.ssh
+        with:
+          name: fixtures-final
+          path: fixtures/
+          retention-days: 30
+          if-no-files-found: warn
