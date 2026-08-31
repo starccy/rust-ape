@@ -165,7 +165,8 @@ int main(int argc, char *argv[]) {
       free(big);
     }
     if (pidpath) {
-      int rc = pidpath(me, buf, sizeof(buf));
+      // XNU rejects buffers larger than PROC_PIDPATHINFO_MAXSIZE.
+      int rc = pidpath(me, buf, 4096);
       record("self_pidpath", buf, rc, "proc_pidpath");
     }
     if (procname) {
