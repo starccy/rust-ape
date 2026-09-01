@@ -343,29 +343,48 @@ static void gen_environ(struct pfs_buf *b, uint32_t pid) {
         // until the double NUL or the mapping ends
         if (!read_mem(h, params + 0x3f0, &size, 8) || size > (1u << 20))
             size = 1u << 20;
+        
         static char16_t page[2048]; // guarded by the caller's lock
         uint64_t off = 0;
+        char16_t carry = 0; // high surrogate a page edge split
+        bool bound = true;  // at a string boundary, block start or past a NUL
         bool done = false;
         while (!done && off < size) {
             size_t want = sizeof page;
             if (size - off < want) want = (size_t)(size - off);
             if (!read_mem(h, env + off, page, want)) break;
             size_t nw = want / 2, i = 0;
+            if (carry) {
+                if (nw && page[0] >= 0xdc00 && page[0] < 0xe000) {
+                    char16_t pair[2] = {carry, page[0]};
+                    put_utf8(b, pair, 2);
+                    i = 1;
+                } else {
+                    put_utf8(b, &carry, 1);
+                }
+                carry = 0;
+            }
             while (i < nw) {
+                if (!page[i]) {
+                    if (bound) { done = true; break; } // double NUL: the end
+                    pfs_put(b, "", 1);
+                    bound = true;
+                    i++;
+                    continue;
+                }
                 size_t j = i;
                 while (j < nw && page[j]) j++;
-                if (j == i) { done = true; break; } // empty string: the end
-                if (j == nw && off + want < size) {
-                    // a string straddles the page: restart it next round
-                    break;
-                }
-                put_utf8(b, page + i, (int)(j - i));
-                pfs_put(b, "", 1);
-                i = j + 1;
+                size_t end = j;
+                if (j == nw && page[j - 1] >= 0xd800 && page[j - 1] < 0xdc00)
+                    carry = page[--end];
+                put_utf8(b, page + i, (int)(end - i));
+                bound = false;
+                i = j;
             }
-            if (i == 0 && !done) break; // one string longer than a page
-            off += i * 2;
+            off += want;
         }
+        if (carry) put_utf8(b, &carry, 1);
+        if (!done && !bound) pfs_put(b, "", 1); // terminate a truncated tail
     }
     CloseHandle(h);
 }
