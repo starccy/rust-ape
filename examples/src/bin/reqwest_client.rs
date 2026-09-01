@@ -26,7 +26,7 @@ use tokio::net::{TcpListener, TcpStream};
 
 const SITES: [&str; 4] = [
     "https://example.com/",
-    "https://www.cloudflare.com/",
+    "https://www.google.com/",
     "https://github.com/",
     "https://www.rust-lang.org/",
 ];
