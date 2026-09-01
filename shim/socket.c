@@ -541,6 +541,30 @@ int __ape_shim_setsockopt(int fd, int level, int name, const void *val, unsigned
     return r;
 }
 
+// BSD-derived kernels answer a boolean option with their own flag bit
+// (on XNU TCP_NODELAY reads back as 4 and SO_KEEPALIVE as 8); Linux
+// answers 0 or 1, and callers compare against 1.
+static int sockopt_is_boolean(int lin_level, int lin_name) {
+    if (lin_level == SHIM_LIN_SOL_SOCKET)
+        switch (lin_name) {
+            case SHIM_LIN_SO_REUSEADDR:
+            case SHIM_LIN_SO_DONTROUTE:
+            case SHIM_LIN_SO_BROADCAST:
+            case SHIM_LIN_SO_KEEPALIVE:
+            case SHIM_LIN_SO_OOBINLINE:
+            case SHIM_LIN_SO_REUSEPORT:
+            case SHIM_LIN_SO_ACCEPTCONN:
+                return 1;
+        }
+    if (lin_level == SHIM_LIN_IPPROTO_TCP)
+        switch (lin_name) {
+            case SHIM_LIN_TCP_NODELAY:
+            case SHIM_LIN_TCP_CORK:
+                return 1;
+        }
+    return 0;
+}
+
 int __ape_shim_getsockopt(int fd, int level, int name, void *val, unsigned *len) {
     int lin_level = level, lin_name = name;
     sockopt_to_host(&level, &name);
@@ -557,6 +581,10 @@ int __ape_shim_getsockopt(int fd, int level, int name, void *val, unsigned *len)
     if (r == 0 && lin_level == SHIM_LIN_SOL_SOCKET && lin_name == SHIM_LIN_SO_ERROR &&
         val && len && *len >= sizeof(int)) {
         *(int *)val = __ape_shim_errno_host_to_linux(*(int *)val);
+    }
+    if (r == 0 && IsBsd() && val && len && *len == sizeof(int) &&
+        sockopt_is_boolean(lin_level, lin_name)) {
+        *(int *)val = !!*(int *)val;
     }
     return r;
 }
