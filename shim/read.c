@@ -143,7 +143,7 @@ static ssize_t readv_impl(int fd, const struct iovec *iov, int iovlen) {
     }
   }
 
-  if (IsWindows()) {
+  if (IsWindows() || IsXnuSilicon()) {
     ssize_t n = __ape_shim_procfs_memfd_read(fd, iov, iovlen);
     if (n != -2) return n;
   }

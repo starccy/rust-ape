@@ -363,6 +363,23 @@ DIR *fdopendir(int fd) {
 
   // on unix, file descriptor isn't required to be tracked
   dir->fd = fd;
+
+  // [rust-ape] a descriptor of the emulated /proc tree (a memory one on
+  // Apple Silicon) lists from memory too
+  if (!__isfdkind(fd, kFdZip)) {
+    char vpath[256];
+    if (__ape_shim_procfs_fd_vpath(fd, vpath, sizeof(vpath))) {
+      struct pfs_virtent *ents;
+      int n = __ape_shim_procfs_virtual_dir(vpath, &ents);
+      if (n >= 0) {
+        dir->isvirt = true;
+        dir->virt.ents = ents;
+        dir->virt.count = n;
+        return dir;
+      }
+    }
+  }
+
   if (!__isfdkind(fd, kFdZip)) {
     if (IsWindows()) {
       if (!fdopendir_nt(dir, fd)) {
@@ -445,7 +462,7 @@ DIR *opendir(const char *name) {
   }
   // [rust-ape] a directory of the emulated /proc tree is listed from
   // memory
-  if (IsWindows()) {
+  if (IsWindows() || IsXnuSilicon()) {
     struct pfs_virtent *ents;
     int n = __ape_shim_procfs_virtual_dir(name, &ents);
     if (n >= 0) {

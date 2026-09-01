@@ -30,6 +30,7 @@
 #include <libc/runtime/runtime.h>
 
 #include "procfs.h"
+#include "xnu.h"
 
 extern char **environ;
 
@@ -510,6 +511,7 @@ static void gen_mountinfo(struct pfs_buf *b) {
 }
 
 bool pfs_gen_pid_file(struct pfs_buf *b, uint32_t pid, const char *name) {
+    if (IsXnuSilicon()) return pfs_xnu_gen_pid_file(b, pid, name);
     const struct pfs_proc *p = pfs_proc_find(pid);
     if (!p) return false;
 
@@ -537,6 +539,7 @@ bool pfs_gen_pid_file(struct pfs_buf *b, uint32_t pid, const char *name) {
 
 bool pfs_gen_pid_volatile(uint32_t pid, struct pfs_buf out[4],
                           uint64_t *starttime) {
+    if (IsXnuSilicon()) return pfs_xnu_gen_pid_volatile(pid, out, starttime);
     const struct pfs_proc *p = pfs_proc_find(pid);
     if (!p) return false;
     struct pidfacts f;
@@ -556,6 +559,7 @@ typedef bool32 (__msabi *QueryImageF)(int64_t, uint32_t, char16_t *,
                                       uint32_t *);
 
 long pfs_pid_link(uint32_t pid, const char *name, char *buf, size_t n) {
+    if (IsXnuSilicon()) return pfs_xnu_pid_link(pid, name, buf, n);
     if (!strcmp(name, "root")) { // no chroot to see through here
         if (n < 1) return -1;
         buf[0] = '/';

@@ -3,9 +3,9 @@
 //! did. The files are read directly first, in every spelling procfs-style
 //! crates use, then the sysinfo crate is asked what a monitor asks.
 //!
-//! Linux has the real thing and Windows the emulation in shim/procfs/, so
-//! both must pass every case. A host with no /proc at all (macOS) skips
-//! the matrix.
+//! Linux has the real thing; Windows and Apple Silicon macOS run the
+//! emulation in shim/procfs/, so all three must pass every case. The BSDs
+//! have no /proc, real or emulated, and skip the matrix.
 
 use std::ffi::CString;
 use std::fs;
@@ -14,22 +14,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::path::Path;
 
 use sysinfo::{Networks, Pid, ProcessRefreshKind, ProcessesToUpdate, System};
-
-struct Report {
-    failed: Vec<String>,
-}
-
-impl Report {
-    fn check(&mut self, name: &str, r: Result<String, String>) {
-        match r {
-            Ok(info) => println!("PASS {name}: {info}"),
-            Err(e) => {
-                println!("FAIL {name}: {e}");
-                self.failed.push(name.to_string());
-            }
-        }
-    }
-}
+use rust_ape_examples::Report;
 
 fn e<T>(what: &str, r: Result<T, std::io::Error>) -> Result<T, String> {
     r.map_err(|err| format!("{what}: {err}"))
@@ -474,21 +459,14 @@ fn with_sysinfo(rep: &mut Report) {
 }
 
 fn main() {
-    let mut rep = Report { failed: Vec::new() };
+    let mut rep = Report::new();
 
-    if ape::is_xnu() || ape::is_bsd() {
-        // todo: no /proc here yet, emulated or otherwise (unc_paths tracks the
-        // one std call that suffers, current_exe)
+    if ape::is_bsd() {
         println!("SKIP /proc matrix: this host has no /proc");
     } else {
         direct(&mut rep);
         with_sysinfo(&mut rep);
     }
 
-    if rep.failed.is_empty() {
-        println!("proc sysinfo ok");
-    } else {
-        println!("FAILED: {}", rep.failed.join(", "));
-        std::process::exit(1);
-    }
+    rep.finish("proc sysinfo ok");
 }

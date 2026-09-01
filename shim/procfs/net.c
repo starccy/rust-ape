@@ -19,6 +19,7 @@
 #include <libc/nt/thunk/msabi.h> // __msabi
 
 #include "procfs.h"
+#include "xnu.h"
 
 #define NET_REFRESH_MS 250
 #define MAX_ROWS 4096
@@ -201,6 +202,7 @@ static void emit_addr(struct pfs_buf *b, const uint8_t *a, int family) {
 static bool gen_net_dev(struct pfs_buf *b);
 
 bool pfs_gen_net_file(struct pfs_buf *b, const char *name) {
+    if (IsXnuSilicon()) return pfs_xnu_gen_net_file(b, name);
     uint8_t proto, family;
     if (!strcmp(name, "dev")) return gen_net_dev(b);
     if (!strcmp(name, "unix")) // header only: NT cannot enumerate these
@@ -235,6 +237,7 @@ bool pfs_gen_net_file(struct pfs_buf *b, const char *name) {
 }
 
 int pfs_net_fds_of(uint32_t pid, uint64_t *inodes, int cap) {
+    if (IsXnuSilicon()) return 0; // no socket table source wired up yet
     pthread_mutex_lock(&g_net_lock);
     net_refresh_locked();
     int n = 0;
@@ -291,6 +294,7 @@ static void if_name(char *out, const uint16_t *friendly) {
 }
 
 int pfs_net_ifstats(struct pfs_ifstat *out, int cap) {
+    if (IsXnuSilicon()) return pfs_xnu_ifstats(out, cap);
     static GetIfTable2F table2;
     static FreeMibTableF freetab;
     if (!table2) {

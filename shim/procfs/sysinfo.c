@@ -27,6 +27,7 @@
 #include <libc/nt/systeminfo.h>
 
 #include "procfs.h"
+#include "xnu.h"
 
 const char *const pfs_top_files[] = {
     "meminfo", "uptime",      "stat",   "loadavg",   "cpuinfo", "version",
@@ -313,6 +314,7 @@ static void gen_cmdline(struct pfs_buf *b) {
 }
 
 bool pfs_gen_top_file(struct pfs_buf *b, const char *name) {
+    if (IsXnuSilicon()) return pfs_xnu_gen_top_file(b, name);
     if (!strcmp(name, "meminfo")) return gen_meminfo(b), true;
     if (!strcmp(name, "uptime")) return gen_uptime(b), true;
     if (!strcmp(name, "stat")) return gen_stat(b), true;

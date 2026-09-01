@@ -57,6 +57,18 @@
 
 #include "../procfs.h"
 
+// The hosts this carrier serves: NT, and Apple Silicon macOS, where it
+// stays entirely in memory (the disk skeleton and its path rewrites are
+// NT-only). Every user includes libc/dce.h already.
+#define PC_HOSTED() (IsWindows() || IsXnuSilicon())
+
+// Cross-file entry points also used inside the carrier.
+bool __ape_shim_procfs_join(int dirfd, const char *rel, char *out,
+                            unsigned long outsz);
+unsigned __ape_shim_procfs_link_mode(const char *vpath);
+long __ape_shim_procfs_readlinkat(int dirfd, const char *path, char *buf,
+                                  unsigned long bufsiz);
+
 #define ROOT_LIST_MS 1000 // pid-directory sync under /proc
 #define PID_DIR_MS 200    // one process's directory contents
 #define NET_MS 250        // the materialized net/* files

@@ -69,6 +69,8 @@ unsigned __ape_shim_procfs_link_mode(const char *vpath);
 void __ape_shim_procfs_fix_dirent(int fd, struct dirent *e);
 long __ape_shim_procfs_readlinkat(int dirfd, const char *path, char *buf,
                                   unsigned long bufsiz);
+int __ape_shim_procfs_vstat(int dirfd, const char *path, struct stat *st,
+                            int nofollow);
 
 #define LIN_O_ACCMODE 0x03 // O_RDONLY/O_WRONLY/O_RDWR, same on every platform
 
@@ -445,6 +447,10 @@ int __ape_shim_fstatat(int dirfd, const char *path, struct stat *st, int lin) {
     if (lin) return errno = EINVAL, -1;
     if ((host & AT_SYMLINK_NOFOLLOW) && lstat_must_follow(path))
         host &= ~AT_SYMLINK_NOFOLLOW;
+    // Apple Silicon: the emulated tree has nothing on disk to stat
+    int vr = __ape_shim_procfs_vstat(at_fdcwd(dirfd), path, st,
+                                     !!(host & AT_SYMLINK_NOFOLLOW));
+    if (vr != -2) return vr;
     int rc = fstatat(at_fdcwd(dirfd), path, st, host);
     if (rc < 0 && errno == ENOENT) {
         char buf[PATH_MAX];
@@ -463,6 +469,8 @@ int __ape_shim_fstatat(int dirfd, const char *path, struct stat *st, int lin) {
 // stat/lstat carry no constants to translate; they are here only for the
 // suffix retry (std's fs::metadata is how fish sizes up a candidate).
 int __ape_shim_stat(const char *path, struct stat *st) {
+    int vr = __ape_shim_procfs_vstat(AT_FDCWD, path, st, 0);
+    if (vr != -2) return vr;
     int rc = stat(path, st);
     if (rc < 0 && errno == ENOENT) {
         char buf[PATH_MAX];
@@ -474,6 +482,8 @@ int __ape_shim_stat(const char *path, struct stat *st) {
 
 int __ape_shim_lstat(const char *path, struct stat *st) {
     if (lstat_must_follow(path)) return __ape_shim_stat(path, st);
+    int vr = __ape_shim_procfs_vstat(AT_FDCWD, path, st, 1);
+    if (vr != -2) return vr;
     int rc = lstat(path, st);
     if (rc < 0 && errno == ENOENT) {
         char buf[PATH_MAX];
@@ -509,9 +519,22 @@ static int amode_to_host(int lin, int *out) {
     return 0;
 }
 
+// The virtual tree's answer to the access family: everything readable,
+// nothing writable, absent things absent. -2 is not ours.
+static int procfs_vaccess(int dirfd, const char *path, int host) {
+    struct stat st;
+    int vr = __ape_shim_procfs_vstat(dirfd, path, &st, 0);
+    if (vr == -2) return -2;
+    if (vr < 0) return -1;
+    if (host & W_OK) return errno = EACCES, -1;
+    return 0;
+}
+
 int __ape_shim_access(const char *path, int amode) {
     int host;
     if (amode_to_host(amode, &host) < 0) return -1;
+    int vr = procfs_vaccess(AT_FDCWD, path, host);
+    if (vr != -2) return vr;
     int rc = access(path, host);
     if (rc < 0 && errno == ENOENT) {
         char buf[PATH_MAX];
@@ -524,6 +547,8 @@ int __ape_shim_access(const char *path, int amode) {
 int __ape_shim_eaccess(const char *path, int amode) {
     int host;
     if (amode_to_host(amode, &host) < 0) return -1;
+    int vr = procfs_vaccess(AT_FDCWD, path, host);
+    if (vr != -2) return vr;
     int rc = eaccess(path, host);
     if (rc < 0 && errno == ENOENT) {
         char buf[PATH_MAX];
@@ -535,6 +560,8 @@ int __ape_shim_eaccess(const char *path, int amode) {
 int __ape_shim_euidaccess(const char *path, int amode) {
     int host;
     if (amode_to_host(amode, &host) < 0) return -1;
+    int vr = procfs_vaccess(AT_FDCWD, path, host);
+    if (vr != -2) return vr;
     int rc = euidaccess(path, host);
     if (rc < 0 && errno == ENOENT) {
         char buf[PATH_MAX];
@@ -558,6 +585,8 @@ int __ape_shim_faccessat(int dirfd, const char *path, int amode, int lin) {
         return -1;
     if (lin) return errno = EINVAL, -1;
     if (amode_to_host(amode, &hmode) < 0) return -1;
+    int vr = procfs_vaccess(at_fdcwd(dirfd), path, hmode);
+    if (vr != -2) return vr;
     int rc = faccessat(at_fdcwd(dirfd), path, hmode, host);
     if (rc < 0 && errno == ENOENT) {
         char buf[PATH_MAX];

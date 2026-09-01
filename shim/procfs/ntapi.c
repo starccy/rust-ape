@@ -7,6 +7,7 @@
 #define _COSMO_SOURCE // for libc/dce.h's IsWindows()
 
 #include <pthread.h>
+#include <unistd.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -30,6 +31,7 @@
 #include <libc/nt/synchronization.h>
 
 #include "procfs.h"
+#include "xnu.h"
 
 #define PFS_SNAP_MS 200
 #define MAX_PROCS 1024
@@ -87,19 +89,24 @@ static void kernel_identity(void) {
 }
 
 const char *pfs_kernel_sysname(void) {
+    if (IsXnuSilicon()) return pfs_xnu_kernel_sysname();
     kernel_identity();
     return g_uts.sysname[0] ? g_uts.sysname : "Windows";
 }
 const char *pfs_kernel_release(void) {
+    if (IsXnuSilicon()) return pfs_xnu_kernel_release();
     kernel_identity();
     return g_release;
 }
 const char *pfs_kernel_version(void) {
+    if (IsXnuSilicon()) return pfs_xnu_kernel_version();
     kernel_identity();
     return g_uts.version;
 }
 
 uint32_t pfs_self_pid(void) {
+    // the NT identity trouble does not exist here, getpid is the truth
+    if (IsXnuSilicon()) return (uint32_t)getpid();
     return GetCurrentProcessId();
 }
 
@@ -271,6 +278,7 @@ static void snap_refresh_locked(void) {
 }
 
 int pfs_procs(const struct pfs_proc **out) {
+    if (IsXnuSilicon()) return pfs_xnu_procs(out);
     pthread_mutex_lock(&g_snap_lock);
     snap_refresh_locked();
     pthread_mutex_unlock(&g_snap_lock);
@@ -286,7 +294,8 @@ const struct pfs_proc *pfs_proc_find(uint32_t pid) {
     return 0;
 }
 
-int pfs_threads_of(uint32_t pid, uint32_t *out, int cap) {
+int pfs_threads_of(uint32_t pid, uint64_t *out, int cap) {
+    if (IsXnuSilicon()) return pfs_xnu_threads(pid, out, cap);
     pthread_mutex_lock(&g_snap_lock);
     snap_refresh_locked();
     int n = 0;
@@ -315,6 +324,9 @@ uint64_t pfs_now_filetime(void) {
 }
 
 uint64_t pfs_boot_filetime(void) {
+    // the epoch-shifted spelling keeps the shared consumers oblivious
+    if (IsXnuSilicon())
+        return (pfs_xnu_boottime() + 11644473600ull) * 10000000;
     static uint64_t boot;
     if (!boot) boot = pfs_now_filetime() - GetTickCount64() * 10000;
     return boot;

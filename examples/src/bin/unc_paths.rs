@@ -9,22 +9,7 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
-
-struct Report {
-    failed: Vec<String>,
-}
-
-impl Report {
-    fn check(&mut self, name: &str, r: Result<String, String>) {
-        match r {
-            Ok(info) => println!("PASS {name}: {info}"),
-            Err(e) => {
-                println!("FAIL {name}: {e}");
-                self.failed.push(name.to_string());
-            }
-        }
-    }
-}
+use rust_ape_examples::Report;
 
 fn collapse(p: &Path) -> PathBuf {
     let mut r = PathBuf::new();
@@ -62,7 +47,7 @@ fn main() {
         println!("{}", std::env::current_dir().expect("cwd").display());
         return;
     }
-    let mut rep = Report { failed: Vec::new() };
+    let mut rep = Report::new();
     let cwd = fs::canonicalize(".").and_then(|c| {
         std::env::set_current_dir(&c)?;
         std::env::current_dir()
@@ -455,11 +440,6 @@ fn main() {
     }
 
     let _ = fs::remove_dir_all(&base);
-    if rep.failed.is_empty() {
-        println!("all path cases ok");
-    } else {
-        println!("FAILED: {}", rep.failed.join(", "));
-        std::process::exit(1);
-    }
+    rep.finish("all path cases ok");
 }
 

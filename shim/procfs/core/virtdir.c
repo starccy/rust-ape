@@ -18,6 +18,7 @@
 #include <libc/dce.h>
 
 #include "core.h"
+#include "../xnu.h"
 
 struct list {
     struct pfs_virtent *p;
@@ -45,6 +46,12 @@ static void add(struct list *l, const char *name, unsigned char type) {
 static void add_num(struct list *l, uint32_t v) {
     char name[16];
     snprintf(name, sizeof name, "%u", v);
+    add(l, name, DT_DIR);
+}
+
+static void add_num64(struct list *l, uint64_t v) {
+    char name[24];
+    snprintf(name, sizeof name, "%llu", (unsigned long long)v);
     add(l, name, DT_DIR);
 }
 
@@ -104,10 +111,10 @@ static int list_node(const struct node *n, struct list *l) {
                 if (!pfs_proc_find(n->pid)) return -2;
                 if (!n->rest[0]) {
                     dots(l);
-                    uint32_t tids[512];
+                    uint64_t tids[512];
                     int nt = pfs_threads_of(n->pid, tids, 512);
                     if (!nt) add_num(l, n->pid);
-                    for (int i = 0; i < nt; i++) add_num(l, tids[i]);
+                    for (int i = 0; i < nt; i++) add_num64(l, tids[i]);
                     return 0;
                 }
                 if (!strchr(n->rest, '/')) {
@@ -121,13 +128,41 @@ static int list_node(const struct node *n, struct list *l) {
                 net_entries(l);
                 return 0;
             }
+            if (!strcmp(n->name, "fd") && !n->rest[0]) {
+                if (!pfs_proc_find(n->pid)) return -2;
+                dots(l);
+                char name[16];
+                static struct pfs_fdent ents[512]; // under pc_lock
+                int nf = n->pid == pfs_self_pid()
+                             ? pfs_self_fds(ents, 512)
+                             : pfs_other_fds(n->pid, ents, 512);
+                if (nf >= 0) {
+                    for (int i = 0; i < nf; i++) {
+                        snprintf(name, sizeof name, "%d", ents[i].fd);
+                        add(l, name, DT_LNK);
+                    }
+                } else {
+                    // NT: only the socket tables see into other processes
+                    uint64_t inodes[256];
+                    nf = pfs_net_fds_of(n->pid, inodes, 256);
+                    for (int i = 0; i < nf; i++) {
+                        snprintf(name, sizeof name, "%d", i);
+                        add(l, name, DT_LNK);
+                    }
+                }
+                return 0;
+            }
             return -1;
         default: return -1;
     }
 }
 
 int __ape_shim_procfs_virtual_dir(const char *path, struct pfs_virtent **out) {
-    if (!IsWindows() || !path || pc_busy) return -1;
+    if (!PC_HOSTED() || !path || pc_busy) return -1;
+    // the unix /sys slices list from memory too; NT's live on disk
+    if (!IsWindows() && !strncmp(path, "/sys", 4) &&
+        (!path[4] || path[4] == '/'))
+        return pfs_xnu_sysfs_list(path, out);
     if (strncmp(path, "/proc", 5) || (path[5] && path[5] != '/')) return -1;
     struct node n;
     pc_parse(path + 5, &n);

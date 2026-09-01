@@ -145,18 +145,18 @@ static struct pidslot *slot_of(uint32_t pid) {
 // interception answers task/<tid>/<file> with the process-wide file), and
 // the tree is only touched when the thread id set changes, and then by
 // adding and removing the ids that differ.
-static uint64_t tid_set_digest(const uint32_t *tids, int n) {
+static uint64_t tid_set_digest(const uint64_t *tids, int n) {
     // order independent, so a snapshot listing threads differently is not
     // a change
     uint64_t h = 0xcbf29ce484222325ull;
     for (int i = 0; i < n; i++) {
-        uint64_t x = (uint64_t)tids[i] * 0x9e3779b97f4a7c15ull;
+        uint64_t x = tids[i] * 0x9e3779b97f4a7c15ull;
         h += x ^ (x >> 29);
     }
     return h ? h : 1;
 }
 
-static bool tid_listed(const uint32_t *tids, int n, uint32_t tid) {
+static bool tid_listed(const uint64_t *tids, int n, uint64_t tid) {
     for (int i = 0; i < n; i++)
         if (tids[i] == tid) return true;
     return false;
@@ -165,7 +165,7 @@ static bool tid_listed(const uint32_t *tids, int n, uint32_t tid) {
 static void materialize_task(struct pidslot *s, uint32_t pid,
                              const char *dir) {
     char path[600];
-    uint32_t tids[512];
+    uint64_t tids[512];
     int nt = pfs_threads_of(pid, tids, 512);
     if (!nt) {
         tids[0] = pid;
@@ -183,16 +183,18 @@ static void materialize_task(struct pidslot *s, uint32_t pid,
         if (dp) {
             for (struct dirent *e; (e = readdir(dp));) {
                 if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
-                uint32_t tid = (uint32_t)strtoul(e->d_name, 0, 10);
+                uint64_t tid = strtoull(e->d_name, 0, 10);
                 if (tid_listed(tids, nt, tid)) continue;
-                snprintf(path, sizeof path, "%s/task/%u", dir, tid);
+                snprintf(path, sizeof path, "%s/task/%llu", dir,
+                         (unsigned long long)tid);
                 pc_rm_rf(path);
             }
             closedir(dp);
         }
     }
     for (int k = 0; k < nt; k++) {
-        snprintf(path, sizeof path, "%s/task/%u", dir, tids[k]);
+        snprintf(path, sizeof path, "%s/task/%llu", dir,
+                 (unsigned long long)tids[k]);
         mkdir(path, 0755);
     }
 }

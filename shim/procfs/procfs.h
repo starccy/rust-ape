@@ -73,9 +73,10 @@ struct pfs_proc {
 int pfs_procs(const struct pfs_proc **out); // returns count
 const struct pfs_proc *pfs_proc_find(uint32_t pid);
 
-// Thread ids of one process, via Thread32First when the host has it;
-// returns 0 when it does not (caller then pretends one thread, the pid).
-int pfs_threads_of(uint32_t pid, uint32_t *out, int cap);
+// Thread ids of one process, via Thread32First on NT and the libproc
+// listing on XNU, whose ids need the full 64 bits; returns 0 when the host
+// cannot say (caller then pretends one thread, the pid).
+int pfs_threads_of(uint32_t pid, uint64_t *out, int cap);
 
 // Time. Jiffies run at sysconf(_SC_CLK_TCK), see pfs_filetime_jiffies.
 uint64_t pfs_filetime_jiffies(uint64_t ft100ns);
@@ -144,6 +145,11 @@ struct pfs_fdent {
 };
 int pfs_self_fds(struct pfs_fdent *out, int cap);
 
+// Another process's descriptors, real fd numbers and link texts, on hosts
+// whose kernel enumerates them (XNU); -1 where none will (NT), and the
+// caller falls back to the socket tables' dense numbering.
+int pfs_other_fds(uint32_t pid, struct pfs_fdent *out, int cap);
+
 // ---------------------------------------------------------------------------
 // sysinfo.c. The top-level files (/proc/meminfo, uptime, stat, ...).
 
@@ -208,5 +214,8 @@ struct pfs_virtent {
 int __ape_shim_procfs_virtual_dir(const char *path, struct pfs_virtent **out);
 // core/open.c. The descriptor behind such a listing, -1 if none could be had.
 int __ape_shim_procfs_memfd_dir(const char *vpath);
+// core/open.c. The virtual path a tracked descriptor of the tree stands
+// for; false when fd is not one of ours.
+bool __ape_shim_procfs_fd_vpath(int fd, char *out, unsigned long n);
 
 #endif // RUST_APE_SHIM_PROCFS_H_

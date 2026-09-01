@@ -22,11 +22,13 @@
 #include <time.h>
 #include <unistd.h>
 #include <libc/calls/internal.h>
+#include <libc/calls/state.internal.h> // __fds_lock
 #include <libc/dce.h>
 #include <libc/nt/files.h>
 #include <libc/runtime/runtime.h>
 
 #include "core.h"
+#include "../xnu.h"
 
 // ---------------------------------------------------------------------------
 // Entry: the open interception in shim/open.c. Content never touches the
@@ -85,6 +87,33 @@ static bool memfd_put(int fd, struct memfd *m) {
     return true;
 }
 
+// A descriptor number for a memory descriptor. On NT a reserved slot is
+// enough, nothing else hands numbers out. On the unix side the kernel
+// does, so the number is claimed from it first (the zipos pattern: dup
+// stderr, or /dev/null when that is closed), then the slot is marked
+// reserved so cosmo leaves it alone and the shim's own entry points
+// recognize it.
+static int claim_slot(void) {
+    if (IsWindows()) return __reservefd(-1);
+    int fd = fcntl(2, F_DUPFD_CLOEXEC, 3);
+    if (fd == -1) fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+    if (fd == -1) return -1;
+    __ensurefds(fd);
+    __fds_lock();
+    memset(&g_fds.p[fd], 0, sizeof g_fds.p[fd]);
+    g_fds.p[fd].kind = kFdReserved;
+    __fds_unlock();
+    return fd;
+}
+
+static void unclaim_slot(int fd) {
+    if (IsWindows()) {
+        __releasefd(fd);
+    } else {
+        close(fd); // releases the slot too
+    }
+}
+
 // Takes the text out of b. Under pc_lock, since the generation stamp is read
 // from the slot the text came from.
 static int memfd_open(struct pfs_buf *b, int hostflags, const char *vpath) {
@@ -100,9 +129,9 @@ static int memfd_open(struct pfs_buf *b, int hostflags, const char *vpath) {
     snprintf(m->vpath, sizeof m->vpath, "%s", vpath);
     memset(b, 0, sizeof *b);
 
-    int fd = __reservefd(-1);
+    int fd = claim_slot();
     if (fd == -1 || !memfd_put(fd, m)) {
-        if (fd != -1) __releasefd(fd);
+        if (fd != -1) unclaim_slot(fd);
         free(m->p);
         free(m);
         return -2;
@@ -137,7 +166,7 @@ static bool gen_vpath(const char *vpath, struct pfs_buf *b) {
     pthread_mutex_lock(&pc_lock);
     pc_busy = 1;
     if (!strncmp(vpath, "/sys/", 5)) {
-        ok = pc_gen_sysfs(vpath, b);
+        ok = IsWindows() ? pc_gen_sysfs(vpath, b) : pfs_xnu_gen_sysfs(b, vpath);
     } else {
         struct node n;
         pc_parse(vpath + 5, &n);
@@ -155,9 +184,10 @@ static bool gen_vpath(const char *vpath, struct pfs_buf *b) {
 // Entry: shim/read.c. -2 when fd is not a memory descriptor.
 long __ape_shim_procfs_memfd_read(int fd, const struct iovec *iov,
                                   int iovlen) {
-    if (!IsWindows()) return -2;
+    if (!PC_HOSTED()) return -2;
     struct memfd *m = memfd_of(fd);
     if (!m) return -2;
+    if (m->dir) return errno = EISDIR, -1;
     size_t done = 0;
     pthread_mutex_lock(&m->lock);
     for (int i = 0; i < iovlen && m->pos < m->n; i++) {
@@ -179,7 +209,7 @@ long __ape_shim_procfs_memfd_read(int fd, const struct iovec *iov,
 // is fixed for a throttle window, so a rewind inside the window that
 // produced the text (sysinfo rewinds right after opening) changes nothing.
 int64_t __ape_shim_procfs_memfd_lseek(int fd, int64_t off, int whence) {
-    if (!IsWindows()) return -2;
+    if (!PC_HOSTED()) return -2;
     struct memfd *m = memfd_of(fd);
     if (!m) return -2;
     if (off == 0 && whence == SEEK_SET && !pc_busy && !m->dir) {
@@ -231,7 +261,7 @@ int64_t __ape_shim_procfs_memfd_lseek(int fd, int64_t off, int whence) {
 
 // Entry: shim/open.c, for fstat. -2 when fd is not a memory descriptor.
 int __ape_shim_procfs_memfd_fstat(int fd, struct stat *st) {
-    if (!IsWindows()) return -2;
+    if (!PC_HOSTED()) return -2;
     struct memfd *m = memfd_of(fd);
     if (!m) return -2;
     memset(st, 0, sizeof *st);
@@ -256,7 +286,7 @@ int __ape_shim_procfs_memfd_fstat(int fd, struct stat *st) {
 // dropping a descriptor, F_GETFL says the file is read-only. The commands
 // come in with the portable numbers, and O_RDONLY is 0 on both sides.
 int __ape_shim_procfs_memfd_fcntl(int fd, int cmd, int arg) {
-    if (!IsWindows()) return -2;
+    if (!PC_HOSTED()) return -2;
     struct memfd *m = memfd_of(fd);
     if (!m) return -2;
     switch (cmd) {
@@ -274,7 +304,7 @@ int __ape_shim_procfs_memfd_fcntl(int fd, int cmd, int arg) {
 // Entry: shim/close-nt.c, from close() on a reserved slot. -2 when fd is
 // not a memory descriptor; the caller releases the slot.
 int __ape_shim_procfs_memfd_close(int fd) {
-    if (!IsWindows()) return -2;
+    if (!PC_HOSTED()) return -2;
     struct memfd *m = memfd_of(fd);
     if (!m) return -2;
     pthread_mutex_lock(&pc_lock);
@@ -310,11 +340,26 @@ bool pc_gen_node(const struct node *n, struct pfs_buf *b) {
     }
 }
 
+static bool is_dir_node(const struct node *n);
+static void track_put(int fd, const char *vpath);
+
 // The virtual answer for a parsed path; -2 when the path is not a content
 // file we generate.
 static int virtual_open(const struct node *n, const char *vpath,
                         int hostflags) {
     if ((hostflags & O_ACCMODE) != O_RDONLY) return -2;
+    // NT opens the tree's directories in the disk skeleton; on the unix
+    // side there is nothing on disk, so they are memory descriptors too,
+    // remembered for the dirfd-relative spellings that come through them.
+    if (!IsWindows() && is_dir_node(n)) {
+        if (n->pid && !pfs_proc_find(n->pid)) return -2; // host says ENOENT
+        int fd = __ape_shim_procfs_memfd_dir(vpath);
+        if (fd < 0) return -2;
+        pthread_mutex_lock(&pc_lock);
+        track_put(fd, vpath);
+        pthread_mutex_unlock(&pc_lock);
+        return fd;
+    }
     if (hostflags & O_DIRECTORY) return -2;
 
     // exe, cwd and root opened for content mean "open the target"
@@ -361,9 +406,16 @@ static bool is_dir_node(const struct node *n) {
 }
 
 int __ape_shim_procfs_open(const char *path, int hostflags) {
-    if (!IsWindows() || !path || pc_busy) return -2;
+    if (!PC_HOSTED() || !path || pc_busy) return -2;
+    // the NT /sys slices live on its disk skeleton; the unix ones are
+    // fully virtual, directories included
     if (!strncmp(path, "/sys/", 5)) {
         if ((hostflags & O_ACCMODE) != O_RDONLY) return -2;
+        if (!IsWindows()) {
+            int k = pfs_xnu_sysfs_kind(path);
+            if (k < 0) return -2;
+            if (k == 1) return __ape_shim_procfs_memfd_dir(path);
+        }
         if (hostflags & O_DIRECTORY) return -2;
         struct pfs_buf b = {0};
         if (!gen_vpath(path, &b)) return -2;
@@ -419,8 +471,12 @@ static void track_put(int fd, const char *vpath) {
 struct trackfd *pc_track_get(int fd) {
     struct trackfd *t = pc_track_find(fd);
     if (!t) return 0;
-    if ((unsigned)fd >= g_fds.n || g_fds.p[fd].kind != kFdFile ||
-        g_fds.p[fd].handle != t->handle)
+    if ((unsigned)fd >= g_fds.n) return 0;
+    // NT's tree descriptors are real files validated by handle; the memory
+    // ones sit in reserved slots holding none.
+    if (g_fds.p[fd].kind == kFdFile
+            ? g_fds.p[fd].handle != t->handle
+            : g_fds.p[fd].kind != kFdReserved || t->handle != 0)
         return 0;
     return t;
 }
@@ -429,14 +485,14 @@ struct trackfd *pc_track_get(int fd) {
 // of its own, so this must not take the lock: the slot is released with a
 // plain atomic store, and a reader that races it re-validates the handle.
 void __ape_shim_procfs_fd_closed(int fd) {
-    if (!IsWindows() || !g_track_init || fd < 0) return;
+    if (!PC_HOSTED() || !g_track_init || fd < 0) return;
     struct trackfd *t = pc_track_find(fd);
     if (t) atomic_store_explicit(&t->fd, -1, memory_order_relaxed);
 }
 
 // Remember `fd` as `vpath` when that names a directory of the tree.
 void __ape_shim_procfs_track(int fd, const char *vpath) {
-    if (!IsWindows() || fd < 0 || !vpath || pc_busy) return;
+    if (!PC_HOSTED() || fd < 0 || !vpath || pc_busy) return;
     if (strncmp(vpath, "/proc", 5) || (vpath[5] && vpath[5] != '/')) return;
     struct node n;
     pc_parse(vpath + 5, &n);
@@ -451,7 +507,7 @@ void __ape_shim_procfs_track(int fd, const char *vpath) {
 // false otherwise. `rel` must be a plain relative name (no leading slash).
 bool __ape_shim_procfs_join(int dirfd, const char *rel, char *out,
                             unsigned long outsz) {
-    if (!IsWindows() || dirfd < 0 || !rel || !rel[0] || rel[0] == '/')
+    if (!PC_HOSTED() || dirfd < 0 || !rel || !rel[0] || rel[0] == '/')
         return false;
     if (pc_busy || !g_track_init) return false;
     bool ok = false;
@@ -486,4 +542,176 @@ void __ape_shim_procfs_list_fd(int fd) {
     if (t) snprintf(vpath, sizeof vpath, "%s", t->vpath);
     pthread_mutex_unlock(&pc_lock);
     if (vpath[0]) __ape_shim_procfs_list(vpath);
+}
+
+// ---------------------------------------------------------------------------
+// stat of a virtual path (Apple Silicon; NT stats its disk skeleton). -2
+// when the path is not the emulation's business, otherwise 0 or -1 with
+// errno, the answer a kernel /proc would have given.
+
+// Whether a parsed path names a content file that exists right now.
+static bool content_exists(const struct node *n) {
+    switch (n->kind) {
+        case K_TOP:
+            for (int i = 0; pfs_top_files[i]; i++)
+                if (!strcmp(pfs_top_files[i], n->name)) return true;
+            return false;
+        case K_NET_FILE:
+            for (int i = 0; pfs_net_files[i]; i++)
+                if (!strcmp(pfs_net_files[i], n->name)) return true;
+            return false;
+        case K_PID_SUB: {
+            if (!pfs_proc_find(n->pid)) return false;
+            const char *file = 0;
+            if (!n->rest[0]) {
+                file = n->name;
+            } else if (!strcmp(n->name, "task")) {
+                const char *f = strchr(n->rest, '/');
+                if (f && !strchr(f + 1, '/')) file = f + 1;
+            } else if (!strcmp(n->name, "net") && !strchr(n->rest, '/')) {
+                for (int i = 0; pfs_net_files[i]; i++)
+                    if (!strcmp(pfs_net_files[i], n->rest)) return true;
+                return false;
+            }
+            if (!file) return false;
+            for (int i = 0; pfs_pid_volatile[i]; i++)
+                if (!strcmp(pfs_pid_volatile[i], file)) return true;
+            for (int i = 0; pfs_pid_stable[i]; i++)
+                if (!strcmp(pfs_pid_stable[i], file)) return true;
+            return false;
+        }
+        default:
+            return false;
+    }
+}
+
+int __ape_shim_procfs_vstat(int dirfd, const char *path, struct stat *st,
+                            int nofollow) {
+    if (IsWindows() || !PC_HOSTED() || !path || pc_busy) return -2;
+    char joined[300];
+    const char *vpath = 0;
+    if (path[0] == '/') {
+        vpath = path;
+    } else if (__ape_shim_procfs_join(dirfd, path, joined, sizeof joined)) {
+        vpath = joined;
+    }
+    if (!vpath) return -2;
+    if (!strncmp(vpath, "/sys", 4) && (!vpath[4] || vpath[4] == '/')) {
+        int k = pfs_xnu_sysfs_kind(vpath);
+        if (k < 0) return errno = ENOENT, -1; // no real /sys on this host
+        memset(st, 0, sizeof *st);
+        st->st_nlink = k == 1 ? 2 : 1;
+        st->st_blksize = 4096;
+        st->st_dev = 0x70726f63;
+        st->st_ino = pc_fnv64(vpath, strlen(vpath), 0xcbf29ce484222325ull) | 1;
+        st->st_mode = k == 1 ? S_IFDIR | 0555 : S_IFREG | 0444;
+        return 0;
+    }
+    if (strncmp(vpath, "/proc", 5) || (vpath[5] && vpath[5] != '/'))
+        return -2;
+
+    memset(st, 0, sizeof *st);
+    st->st_nlink = 1;
+    st->st_blksize = 4096;
+    st->st_dev = 0x70726f63; // "proc"
+    st->st_ino = pc_fnv64(vpath, strlen(vpath), 0xcbf29ce484222325ull) | 1;
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
+    st->st_atim = st->st_mtim = st->st_ctim = now;
+
+    unsigned lmode = __ape_shim_procfs_link_mode(vpath);
+    if (lmode) {
+        if (nofollow) {
+            st->st_mode = S_IFLNK | lmode;
+            return 0;
+        }
+        char target[512];
+        long r = __ape_shim_procfs_readlinkat(AT_FDCWD, vpath, target,
+                                              sizeof target - 1);
+        if (r <= 0) return errno = ENOENT, -1;
+        target[r] = 0;
+        if (target[0] == '/' && target[1]) {
+            struct stat t;
+            if (stat(target, &t)) return -1;
+            *st = t;
+            return 0;
+        }
+        // fd targets that are not paths stat as what they stand for
+        if (!strncmp(target, "socket:", 7)) {
+            st->st_mode = S_IFSOCK | 0777;
+            return 0;
+        }
+        if (!strncmp(target, "pipe:", 5)) {
+            st->st_mode = S_IFIFO | 0600;
+            return 0;
+        }
+        if (!strncmp(target, "anon_inode:", 11)) {
+            st->st_mode = S_IFREG | 0600;
+            return 0;
+        }
+        // "/", or /proc/self's "<pid>": a directory either way
+        st->st_mode = S_IFDIR | 0555;
+        st->st_nlink = 2;
+        return 0;
+    }
+
+    struct node n;
+    pc_parse(vpath + 5, &n);
+    bool dir = false;
+    switch (n.kind) {
+        case K_ROOT:
+        case K_NET_DIR:
+            dir = true;
+            break;
+        case K_PID_DIR:
+            if (!pfs_proc_find(n.pid)) return errno = ENOENT, -1;
+            dir = true;
+            break;
+        case K_PID_SUB:
+            if (!pfs_proc_find(n.pid)) return errno = ENOENT, -1;
+            dir = is_dir_node(&n);
+            break;
+        case K_SYS: {
+            if (!n.rest[0]) {
+                dir = true;
+                break;
+            }
+            struct pfs_buf b = {0};
+            bool file = pfs_gen_sys_file(&b, n.rest);
+            pfs_buf_free(&b);
+            if (file) {
+                st->st_mode = S_IFREG | 0444;
+                return 0;
+            }
+            for (int i = 0; pfs_sys_dirs[i]; i++)
+                if (!strcmp(pfs_sys_dirs[i], n.rest)) dir = true;
+            if (!dir) return errno = ENOENT, -1;
+            break;
+        }
+        default:
+            break;
+    }
+    if (dir) {
+        st->st_mode = S_IFDIR | 0555;
+        st->st_nlink = 2;
+        return 0;
+    }
+    if (!content_exists(&n)) return errno = ENOENT, -1;
+    st->st_mode = S_IFREG | 0444;
+    return 0;
+}
+
+// The virtual path behind a tracked descriptor of the tree, for the
+// vendored dirstream's fdopendir. False when fd is not one of ours.
+bool __ape_shim_procfs_fd_vpath(int fd, char *out, unsigned long n) {
+    if (!PC_HOSTED() || fd < 0 || !g_track_init || pc_busy) return false;
+    bool ok = false;
+    pthread_mutex_lock(&pc_lock);
+    struct trackfd *t = pc_track_get(fd);
+    if (t) {
+        snprintf(out, n, "%s", t->vpath);
+        ok = true;
+    }
+    pthread_mutex_unlock(&pc_lock);
+    return ok;
 }

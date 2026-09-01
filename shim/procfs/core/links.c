@@ -72,9 +72,11 @@ static long link_of_node(const struct node *n, const char *sub, char *buf,
     if (link) return pfs_pid_link(n->pid, link, buf, bufsiz);
     if (!strcmp(n->name, "fd") && n->rest[0] && !strchr(n->rest, '/')) {
         int k = atoi(n->rest);
-        if (n->pid == pfs_self_pid()) {
-            static struct pfs_fdent ents[512]; // single-shot scratch
-            int nfd = pfs_self_fds(ents, 512);
+        static struct pfs_fdent ents[512]; // single-shot scratch
+        int nfd = n->pid == pfs_self_pid()
+                      ? pfs_self_fds(ents, 512)
+                      : pfs_other_fds(n->pid, ents, 512);
+        if (nfd >= 0) {
             for (int i = 0; i < nfd; i++) {
                 if (ents[i].fd != k) continue;
                 int len = snprintf(buf, bufsiz, "%s", ents[i].text);
@@ -82,8 +84,9 @@ static long link_of_node(const struct node *n, const char *sub, char *buf,
             }
             return -1;
         }
+        // NT: only the socket tables see into other processes
         uint64_t inodes[256];
-        int nfd = pfs_net_fds_of(n->pid, inodes, 256);
+        nfd = pfs_net_fds_of(n->pid, inodes, 256);
         if (k < 0 || k >= nfd) return -1;
         int len = snprintf(buf, bufsiz, "socket:[%llu]",
                            (unsigned long long)inodes[k]);
@@ -97,7 +100,7 @@ static long link_of_node(const struct node *n, const char *sub, char *buf,
 // symlink_metadata() see what Linux shows; the placeholder on disk is a
 // plain file. Pure parsing, no NT call, so it costs nothing measurable.
 unsigned __ape_shim_procfs_link_mode(const char *vpath) {
-    if (!IsWindows() || !vpath) return 0;
+    if (!PC_HOSTED() || !vpath) return 0;
     if (strncmp(vpath, "/proc", 5) || (vpath[5] && vpath[5] != '/')) return 0;
     struct node n;
     pc_parse(vpath + 5, &n);
@@ -122,7 +125,7 @@ unsigned __ape_shim_procfs_link_mode(const char *vpath) {
 // those). Only descriptors we track are looked at; a plain scan of the
 // table per entry, no NT call.
 void __ape_shim_procfs_fix_dirent(int fd, struct dirent *e) {
-    if (!IsWindows() || !e || fd < 0 || pc_busy) return;
+    if (!PC_HOSTED() || !e || fd < 0 || pc_busy) return;
     if (e->d_type == DT_LNK) return;
     struct trackfd *t = pc_track_find(fd);
     if (!t) return;
@@ -153,7 +156,7 @@ static bool fd_phys_path(int fd, char *out, size_t cap) {
 
 long __ape_shim_procfs_readlinkat(int dirfd, const char *path, char *buf,
                                   unsigned long bufsiz) {
-    if (!IsWindows() || !bufsiz) return -1;
+    if (!PC_HOSTED() || !bufsiz) return -1;
 
     char marker[64];
     snprintf(marker, sizeof marker, "/rust-ape-proc-%d/", (int)getpid());
@@ -168,8 +171,16 @@ long __ape_shim_procfs_readlinkat(int dirfd, const char *path, char *buf,
     }
 
     if (path && path[0]) {
-        // relative to a dirfd: only interesting when the dirfd sits in our
-        // tree; reconstruct the virtual path and recurse
+        // relative to a directory descriptor the tree handed out
+        char joined[600];
+        if (__ape_shim_procfs_join(dirfd, path, joined, sizeof joined)) {
+            struct node jn;
+            pc_parse(joined + 5, &jn);
+            return link_of_node(&jn, joined + 5, buf, bufsiz);
+        }
+        if (!IsWindows()) return -1;
+        // NT only: a dirfd of the disk skeleton, recognized by its path;
+        // reconstruct the virtual path and recurse
         char phys[600];
         if (!fd_phys_path(dirfd, phys, sizeof phys)) return -1;
         char *hit = strstr(phys, marker);
@@ -182,8 +193,9 @@ long __ape_shim_procfs_readlinkat(int dirfd, const char *path, char *buf,
         return link_of_node(&n, virt + 5, buf, bufsiz);
     }
 
-    // empty path: the descriptor itself. Ours are plain files holding the
-    // link text, so the answer is their contents.
+    // empty path: the descriptor itself. On NT ours are plain files
+    // holding the link text, so the answer is their contents.
+    if (!IsWindows()) return -1;
     char phys[600];
     if (!fd_phys_path(dirfd, phys, sizeof phys)) return -1;
     if (!strstr(phys, marker)) return -1;

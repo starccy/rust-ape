@@ -21,6 +21,7 @@
 #include <libc/nt/files.h>
 
 #include "procfs.h"
+#include "xnu.h"
 
 // The identity the socket tables hash, taken from the descriptor itself.
 // An unconnected or unbound end reads as zeros, which is also how the
@@ -94,6 +95,7 @@ static void file_text(const struct Fd *f, char *out, size_t n) {
 }
 
 int pfs_self_fds(struct pfs_fdent *out, int cap) {
+    if (IsXnuSilicon()) return pfs_xnu_fds_of(pfs_self_pid(), out, cap);
     if (!IsWindows()) return 0;
     int n = 0;
     for (int fd = 0; fd < (int)g_fds.n && n < cap; fd++) {
@@ -119,4 +121,12 @@ int pfs_self_fds(struct pfs_fdent *out, int cap) {
         n++;
     }
     return n;
+}
+
+// Another process's descriptors, where the kernel will enumerate them. NT
+// will not; -1 sends its callers to the socket tables (pfs_net_fds_of),
+// the one cross-process source it has.
+int pfs_other_fds(uint32_t pid, struct pfs_fdent *out, int cap) {
+    if (IsXnuSilicon()) return pfs_xnu_fds_of(pid, out, cap);
+    return -1;
 }
