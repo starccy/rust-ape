@@ -33,6 +33,7 @@
 #include <libc/calls/struct/iovec.internal.h>
 #include <libc/calls/syscall-sysv.internal.h>
 #include <libc/errno.h>
+#include <libc/intrin/nomultics.h>
 #include <libc/intrin/strace.h>
 #include <libc/intrin/weaken.h>
 #include <libc/macros.h>
@@ -47,6 +48,7 @@
 void __ape_shim_epoll_rearm_in(int fd); // shim/epoll.c
 int __ape_shim_poll(struct pollfd *, unsigned long, int); // shim/poll.c
 void __ape_shim_console_before_wait(int fd);                // shim/console.c
+int __ape_shim_console_bracketed_paste(void);               // shim/console.c
 long __ape_shim_procfs_memfd_read(int, const struct iovec *, int); // shim/procfs/core/
 
 // ---------------------------------------------------------------------------
@@ -102,6 +104,77 @@ static ssize_t CoalesceConsoleEscape(int fd, unsigned char *b, size_t cap,
     n += m;
   }
   return n;
+}
+
+// ---------------------------------------------------------------------------
+// Bracketed paste for the NT console. ConPTY forwards a program's \e[?2004h
+// to the outer terminal, which then wraps pasted text in \e[200~ / \e[201~,
+// but conhost drops CSI sequences it cannot map to a key event, so the
+// markers never reach the program and pasted lines are treated as typed
+// input.
+//
+// The wrap is reconstructed here. In raw mode the console driver hands out
+// one keystroke per read, so the rest of a paste is still queued, and a
+// non-empty queue right after a plain-text keystroke is something typing
+// does not produce. The queue is drained into the caller's buffer without
+// blocking, and a gathered run of plain text containing a line break is
+// returned wrapped in the markers. Drain stops at a control sequence, which
+// is returned after the closing marker. An oversized or bursty paste comes
+// back as several wrapped chunks, which pastes identically.
+//
+// Another thread reading the same console could steal queued bytes between
+// the count and the read and block this one; no real program shares a
+// raw-mode stdin.
+
+// A control byte (ESC included) means key or mouse input, not paste content.
+static bool IsPasteText(const unsigned char *b, size_t n, bool *got_break,
+                        bool *got_text) {
+  for (size_t i = 0; i < n; i++) {
+    unsigned char c = b[i];
+    if (c == '\r' || c == '\n') {
+      *got_break = true;
+    } else if (c == '\t' || (c >= 0x20 && c != 0x7f)) {
+      *got_text = true;
+    } else {
+      return false;
+    }
+  }
+  return true;
+}
+
+static ssize_t WrapConsolePaste(int fd, unsigned char *b, size_t cap,
+                                ssize_t n) {
+  bool got_break = false, got_text = false;
+  if (!__ape_shim_console_bracketed_paste() ||
+      !(__ttyconf.magic & kTtyUncanon) || cap < (size_t)n + 12 ||
+      !IsPasteText(b, (size_t)n, &got_break, &got_text))
+    return n;
+
+  // gather the rest of the burst, stopping before a control sequence and
+  // keeping room for the two markers
+  ssize_t text_end = n;
+  while ((size_t)text_end + 12 < cap && CountConsoleInputBytes() > 0) {
+    ssize_t m = sys_readv_nt(
+        fd, &(struct iovec){b + text_end, cap - 12 - (size_t)text_end}, 1);
+    if (m <= 0)
+      break;
+    if (!IsPasteText(b + text_end, (size_t)m, &got_break, &got_text)) {
+      text_end += m;
+      break;
+    }
+    text_end += m;
+    n = text_end;
+  }
+
+  // a lone enter, a single-line burst, or key repeat is typed input; a
+  // burst of text with a line break in it is a paste
+  if (n < 3 || !got_break || !got_text)
+    return text_end;
+  memmove(b + 6, b, text_end);
+  memcpy(b, "\033[200~", 6);
+  memmove(b + 6 + n + 6, b + 6 + n, text_end - n);
+  memcpy(b + 6 + n, "\033[201~", 6);
+  return text_end + 12;
 }
 
 static size_t SumIovecBytes(const struct iovec *iov, int iovlen) {
@@ -164,8 +237,10 @@ static ssize_t readv_impl(int fd, const struct iovec *iov, int iovlen) {
   } else if (IsWindows()) {
     if (g_fds.p[fd].kind == kFdConsole) __ape_shim_console_before_wait(fd);
     ssize_t n = sys_readv_nt(fd, iov, iovlen);
-    if (n > 0 && iovlen == 1 && g_fds.p[fd].kind == kFdConsole)
+    if (n > 0 && iovlen == 1 && g_fds.p[fd].kind == kFdConsole) {
       n = CoalesceConsoleEscape(fd, iov[0].iov_base, iov[0].iov_len, n);
+      n = WrapConsolePaste(fd, iov[0].iov_base, iov[0].iov_len, n);
+    }
     // [rust-ape] ReadFile on a directory handle fails ERROR_INVALID_FUNCTION,
     // which cosmo reports as EINVAL; Linux says EISDIR (cat /proc/x/cwd)
     if (n == -1 && errno == EINVAL && g_fds.p[fd].kind == kFdFile) {

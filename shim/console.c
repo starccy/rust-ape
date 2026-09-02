@@ -28,9 +28,13 @@
 
 static bool altscreen;         // DECSET 1049 / 47 / 1047 active
 static bool altscroll = true;  // DECSET 1007, on by default like xterm
+static bool bracketed;         // DECSET 2004, bracketed paste
 static enum { ASC, ESC, CSI, PRIV } st;
-static unsigned param;
+static unsigned param, params[8], nparams;
 static bool xt_prev;           // kTtyXtMouse as last seen by sync()
+
+// Read by shim/read.c's paste wrapper.
+int __ape_shim_console_bracketed_paste(void) { return bracketed; }
 
 void __ape_shim_console_sync(void) {
     if (!IsWindows()) return;
@@ -52,6 +56,7 @@ static void apply(unsigned x, bool on) {
     switch (x) {
     case 47: case 1047: case 1049: altscreen = on; break;
     case 1007: altscroll = on; break;
+    case 2004: bracketed = on; break;
     default: break;
     }
 }
@@ -67,14 +72,20 @@ static void scan(const unsigned char *p, size_t n) {
             st = c == '[' ? CSI : ASC;
             break;
         case CSI:
-            if (c == '?') { st = PRIV; param = 0; }
+            if (c == '?') { st = PRIV; param = 0; nparams = 0; }
             else if (c >= 0x40 && c <= 0x7e) st = ASC;   // some other CSI final
             // parameter/intermediate bytes of a non-private CSI: stay
             break;
         case PRIV:
             if (c >= '0' && c <= '9') param = param * 10 + (c - '0');
-            else if (c == ';') { param = 0; }  // only the last parameter is examined; the four modes we care about are written alone in practice
-            else if (c == 'h' || c == 'l') { apply(param, c == 'h'); st = ASC; }
+            else if (c == ';') { if (nparams < 8) params[nparams++] = param; param = 0; }
+            else if (c == 'h' || c == 'l') {
+                // programs combine modes in one sequence (e.g. ?1002;1006;2004h),
+                // so every parameter is applied, not just the last
+                if (nparams < 8) params[nparams++] = param;
+                for (unsigned j = 0; j < nparams; j++) apply(params[j], c == 'h');
+                st = ASC;
+            }
             else if (c >= 0x40 && c <= 0x7e) st = ASC;   // other final (e.g. $p, s, r)
             break;
         }
