@@ -1,6 +1,7 @@
-// [rust-ape] sys_recv_nt, replacing cosmo 4.0.2's libc.a(recv-nt.o) for one addition
-// marked [rust-ape] below: a non-blocking receive asks Winsock whether data
-// is queued before it starts anything.
+// [rust-ape] sys_recv_nt, replacing cosmo 4.0.2's libc.a(recv-nt.o) for two
+// additions marked [rust-ape] below: a non-blocking receive asks Winsock
+// whether data is queued before it starts anything, and an end-of-file
+// completion is reported as a zero-byte read rather than a stray errno.
 //
 // Cosmo runs every receive as an overlapped operation and, on a
 // non-blocking socket, cancels it the moment it reports pending. A send
@@ -22,6 +23,8 @@
 #include <stdbool.h>  // cosmo's own build has C23 bool
 #include "libc/calls/internal.h"
 #include "libc/calls/struct/sigset.internal.h"
+#include "libc/errno.h"
+#include "libc/nt/errors.h"
 #include "libc/nt/struct/iovec.h"
 #include "libc/nt/struct/overlapped.h"
 #include "libc/nt/thunk/msabi.h"
@@ -94,6 +97,12 @@ textwindows ssize_t sys_recv_nt(int fd, const struct iovec *iov, size_t iovlen,
   rc = __winsock_block(f->handle, flags & ~_MSG_DONTWAIT, nonblock,
                        f->rcvtimeo, waitmask, sys_recv_nt_start,
                        &(struct RecvArgs){iov, iovlen});
+
+  // [rust-ape] a receive can complete with ERROR_HANDLE_EOF, which cosmo's
+  // errno table doesn't know, so the raw win32 code leaked out as errno and
+  // happened to read as ENOSYS. It means the stream has nothing more to
+  // give, which cosmo already reports as a zero-byte read on files and pipes.
+  if (rc == -1 && errno == kNtErrorHandleEof) rc = 0;
 
   __sig_unblock(waitmask);
 
