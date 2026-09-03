@@ -62,6 +62,8 @@
 #ifdef __x86_64__
 
 int __ape_shim_exe_fallback(int, const char *, char *);
+// [rust-ape] shim/mkntcmdline.c
+size_t __ape_shim_mkntcmdline(char16_t *, char *const[], size_t, bool);
 
 __msabi extern typeof(CloseHandle) *const __imp_CloseHandle;
 
@@ -121,8 +123,14 @@ static textwindows int ntspawn2(struct NtSpawnArgs *a, struct SpawnBlock *sb) {
 
   // handle shebang
   size_t i = 0;  // represents space of sb->cmdline consumed
+  // [rust-ape] an APE child reads unix paths itself, so its arguments are
+  // passed as given; only a native program gets the "/x/" rewrite. A
+  // script's interpreter is not looked at, and is taken for native.
+  bool native = true;
   if (p[0] == 'M' && p[1] == 'Z') {
     // it's a windows executable
+    native = !(got >= 8 && (!memcmp(p, "MZqFpD='", 8) ||
+                            !memcmp(p, "jartsr='", 8)));
   } else if (p[0] == '#' && p[1] == '!') {
     p += 2;
     // make sure we got a complete first line
@@ -178,7 +186,8 @@ static textwindows int ntspawn2(struct NtSpawnArgs *a, struct SpawnBlock *sb) {
   }
 
   // setup arguments and environment
-  if ((i += mkntcmdline(sb->cmdline + i, a->argv, 32767 - i)) >= 32767)
+  if ((i += __ape_shim_mkntcmdline(sb->cmdline + i, a->argv, 32767 - i,
+                                   native)) >= 32767)
     return e2big();
   if (mkntenvblock(sb->envblock, a->envp, a->extravars, sb->envbuf) == -1)
     return -1;

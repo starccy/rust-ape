@@ -134,6 +134,12 @@ static bool DriveExists(int letter) {
   return now & bit;
 }
 
+// [rust-ape] the same test for shim/mkntcmdline.c, so a spawn rewrites
+// "/x/" for a native child only where the child would read it as drive x.
+int __ape_shim_drive_exists(int letter) {
+  return DriveExists(letter);
+}
+
 // [rust-ape] whether any UNC root has been seen, so the relative-path
 // hook can stay free for processes that never touch a share.
 int __ape_shim_unc_any(void) {
