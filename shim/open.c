@@ -96,7 +96,7 @@ static int oflags_to_host(int lin, int *out) {
     lin &= ~LIN_O_ACCMODE;
     lin &= ~SHIM_LIN_O_LARGEFILE; // meaningless with 64-bit off_t
     if ((lin & SHIM_LIN_O_SYNC) == SHIM_LIN_O_SYNC) {
-        if (!O_SYNC) return errno = EOPNOTSUPP, -1;
+        if (unsupported(O_SYNC)) return errno = EOPNOTSUPP, -1;
         host |= O_SYNC;
         lin &= ~SHIM_LIN_O_SYNC;
     }
@@ -138,7 +138,7 @@ static int oflags_to_host(int lin, int *out) {
 // dropped rather than invented.
 static int oflags_to_linux(int host) {
     int lin = host & LIN_O_ACCMODE;
-    if (O_SYNC && (host & O_SYNC) == (int)O_SYNC) {
+    if (!unsupported(O_SYNC) && (host & O_SYNC) == (int)O_SYNC) {
         lin |= SHIM_LIN_O_SYNC;
         host &= ~O_SYNC;
     }

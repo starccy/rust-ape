@@ -56,6 +56,21 @@ fn main() {
     assert_eq!(e.raw_os_error(), Some(libc::EEXIST), "O_EXCL got lost in translation");
     println!("O_CREAT|O_EXCL ok");
 
+    for (name, flag) in [("O_SYNC", libc::O_SYNC), ("O_DSYNC", libc::O_DSYNC)] {
+        let synced = dir.path().join(format!("synced-{name}"));
+        let mut f = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .custom_flags(flag)
+            .open(&synced)
+            .unwrap_or_else(|e| panic!("open with {name}: {e}"));
+        f.write_all(b"durable").unwrap_or_else(|e| panic!("write with {name}: {e}"));
+        drop(f);
+        assert_eq!(fs::read_to_string(&synced).expect("read"), "durable", "{name} lost the write");
+        println!("custom_flags {name} ok");
+    }
+
     // utimensat, whose timespec smuggles UTIME_OMIT (a platform constant) for
     // the field left unset. Wrong sentinel = EINVAL or a clobbered atime.
     let f = File::options().write(true).open(&path).expect("open for times");

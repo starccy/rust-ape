@@ -466,15 +466,17 @@ fn classify_cosmo(root: &Path, names: &[(&str, &str)]) -> Result<HashMap<String,
         // everything and splits on the quotes again.
         let _ = writeln!(probe, "\"{cname}\" {cname}");
     }
-    // /dev/shm: plain tmp directories can hand the compiler ciphertext here
-    let probe_path = Path::new("/dev/shm/rust-ape-genshim-probe.c");
-    fs::write(probe_path, probe)?;
+    
+    let generated = root.join("generated");
+    fs::create_dir_all(&generated)?;
+    let probe_path = generated.join("genshim-probe.c");
+    fs::write(&probe_path, probe)?;
     let out = util::capture(
         std::process::Command::new(root.join("vendor/cosmocc/bin/x86_64-unknown-cosmo-cc"))
             .arg("-E")
-            .arg(probe_path),
+            .arg(&probe_path),
     )?;
-    let _ = fs::remove_file(probe_path);
+    let _ = fs::remove_file(&probe_path);
     let joined: String = out
         .lines()
         .filter(|l| !l.trim_start().starts_with('#'))
