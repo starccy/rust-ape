@@ -274,10 +274,27 @@ fn std_stamp(root: &Path) -> Result<String> {
 
 fn purge_stale_shim_links(root: &Path, project: &Path, profile: &str) -> Result<()> {
     let mut newest = None;
-    for entry in fs::read_dir(root.join("shim"))? {
-        let m = entry?.metadata()?.modified()?;
+    let mut note = |m: std::time::SystemTime| {
         if newest.is_none_or(|n| m > n) {
             newest = Some(m);
+        }
+    };
+    fn walk(dir: &Path, note: &mut impl FnMut(std::time::SystemTime)) -> Result<()> {
+        for entry in fs::read_dir(dir)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                walk(&entry.path(), note)?;
+            } else {
+                note(entry.metadata()?.modified()?);
+            }
+        }
+        Ok(())
+    }
+    walk(&root.join("shim"), &mut note)?;
+    for &(_, arch) in TARGETS {
+        let lib = root.join(format!("vendor/cosmocc/{arch}-linux-cosmo/lib/libcosmo.a"));
+        if let Ok(m) = lib.metadata() {
+            note(m.modified()?);
         }
     }
     let Some(newest) = newest else { return Ok(()) };
