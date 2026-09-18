@@ -1,0 +1,14 @@
+# __ape_shim_* symbols the cosmo fork (~/Projects/cosmopolitan, branch
+# rust-ape) calls through _weaken(). One per line; check-symbols.sh reads
+# this so they don't count as orphans. Keep in sync with the fork.
+__ape_shim_close_hook
+__ape_shim_fork_copy_map
+__ape_shim_ntpath_relative
+__ape_shim_ntpath_rewrite
+__ape_shim_getcwd_hook
+__ape_shim_virtdir_open
+__ape_shim_virtdir_read
+__ape_shim_virtdir_close
+__ape_shim_readlinkat_hook
+__ape_shim_exe_fallback
+__ape_shim_unc_collapsed

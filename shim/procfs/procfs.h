@@ -204,7 +204,7 @@ struct pfs_dmi {
 bool pfs_dmi(struct pfs_dmi *out);
 
 // core/virtdir.c. A listing of the tree served from memory, for the
-// vendored shim/dirstream.c: the entries of `path`, count >= 0 when the path
+// the fork's dirstream.c, through the hooks at the end of core/virtdir.c: the entries of `path`, count >= 0 when the path
 // is a directory listed here, -2 when it is one but absent (a dead pid),
 // -1 when it is not ours. The caller frees the entries.
 struct pfs_virtent {

@@ -1,4 +1,4 @@
-// read/readv for the Linux-personality shim, replacing cosmo 4.0.2's
+// read/readv for the Linux-personality shim, replacing cosmo master's
 // libc.a(read.o) and libc.a(readv.o).
 //
 // Not a bug fix: the forwarding below is upstream's, condensed into the
@@ -24,6 +24,7 @@
 // late).
 // cflags: -D_COSMO_SOURCE
 #include <stdbool.h>
+#include "libc/sysv/pib.h"
 #include <stdint.h>
 #include <sys/stat.h>
 #include <libc/calls/calls.h>
@@ -33,6 +34,7 @@
 #include <libc/calls/struct/iovec.internal.h>
 #include <libc/calls/syscall-sysv.internal.h>
 #include <libc/errno.h>
+#include <libc/intrin/kprintf.h>
 #include <libc/intrin/nomultics.h>
 #include <libc/intrin/strace.h>
 #include <libc/intrin/weaken.h>
@@ -191,6 +193,14 @@ static ssize_t readv_impl(int fd, const struct iovec *iov, int iovlen) {
   if (iovlen < 0)
     return einval();
 
+  if (iovlen) {
+    if (kisdangerous(iov))
+      return efault();
+    for (int i = 0; i < iovlen; ++i)
+      if (iov[i].iov_len && kisdangerous(iov[i].iov_base))
+        return efault();
+  }
+
   // XNU and BSDs will EINVAL if requested bytes exceeds INT_MAX
   // this is inconsistent with Linux which ignores huge requests
   if (!IsLinux()) {
@@ -221,29 +231,29 @@ static ssize_t readv_impl(int fd, const struct iovec *iov, int iovlen) {
     if (n != -2) return n;
   }
 
-  if (fd < g_fds.n && g_fds.p[fd].kind == kFdZip) {
+  if (fd < __get_pib()->fds.n && __get_pib()->fds.p[fd].kind == kFdZip) {
     return _weaken(__zipos_read)(
-        (struct ZiposHandle *)(intptr_t)g_fds.p[fd].handle, iov, iovlen, -1);
+        (struct ZiposHandle *)(intptr_t)__get_pib()->fds.p[fd].handle, iov, iovlen, -1);
   } else if (IsLinux() || IsXnu() || IsFreebsd() || IsOpenbsd() || IsNetbsd()) {
     if (iovlen == 1) {
       return sys_read(fd, iov[0].iov_base, iov[0].iov_len);
     } else {
       return sys_readv(fd, iov, iovlen);
     }
-  } else if (fd >= g_fds.n) {
+  } else if (fd >= __get_pib()->fds.n) {
     return ebadf();
   } else if (IsMetal()) {
     return sys_readv_metal(fd, iov, iovlen);
   } else if (IsWindows()) {
-    if (g_fds.p[fd].kind == kFdConsole) __ape_shim_console_before_wait(fd);
+    if (__get_pib()->fds.p[fd].kind == kFdConsole) __ape_shim_console_before_wait(fd);
     ssize_t n = sys_readv_nt(fd, iov, iovlen);
-    if (n > 0 && iovlen == 1 && g_fds.p[fd].kind == kFdConsole) {
+    if (n > 0 && iovlen == 1 && __get_pib()->fds.p[fd].kind == kFdConsole) {
       n = CoalesceConsoleEscape(fd, iov[0].iov_base, iov[0].iov_len, n);
       n = WrapConsolePaste(fd, iov[0].iov_base, iov[0].iov_len, n);
     }
     // [rust-ape] ReadFile on a directory handle fails ERROR_INVALID_FUNCTION,
     // which cosmo reports as EINVAL; Linux says EISDIR (cat /proc/x/cwd)
-    if (n == -1 && errno == EINVAL && g_fds.p[fd].kind == kFdFile) {
+    if (n == -1 && errno == EINVAL && __get_pib()->fds.p[fd].kind == kFdFile) {
       struct stat st;
       if (!fstat(fd, &st) && S_ISDIR(st.st_mode)) return eisdir();
       errno = EINVAL;
@@ -258,7 +268,9 @@ ssize_t read(int fd, void *buf, size_t size) {
   ssize_t rc;
   BEGIN_CANCELATION_POINT;
   size = MIN(size, 0x7ffff000);
-  if (!buf && size) {
+  if (fd < 0) {
+    rc = ebadf();
+  } else if (size && kisdangerous(buf)) {
     rc = efault();
   } else {
     rc = readv_impl(fd, &(struct iovec){buf, size}, 1);

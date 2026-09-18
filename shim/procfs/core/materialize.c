@@ -568,7 +568,7 @@ void __ape_shim_procfs_list(const char *vpath) {
 }
 
 // ---------------------------------------------------------------------------
-// Entry: shim/mkntpathat.c, with the combined win32 path of a dirfd-relative
+// Entry: shim/ntpath.c, with the combined win32 path of a dirfd-relative
 // access. A caller that holds a directory descriptor into our tree reaches
 // files without ever spelling /proc -- cosmo resolves the descriptor to its
 // real path and joins from there -- so the join result is the one place such

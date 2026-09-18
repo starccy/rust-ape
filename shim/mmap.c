@@ -12,7 +12,7 @@
 // and grow into it with mprotect, but cosmo's NT mmap commits the whole
 // span up front, so big reservations fail with ENOMEM. Here such a mapping
 // only reserves address space and mprotect commits the touched part on
-// demand. The mapping is tagged MAP_APE_RESERVE (mmap.h) so shim/fork-nt.c
+// demand. The mapping is tagged MAP_APE_RESERVE (mmap.h) so shim/fork-reserve.c
 // copies it by real page state instead of recommitting the whole span.
 
 #define _COSMO_SOURCE // for libc/dce.h's IsWindows()

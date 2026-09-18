@@ -186,6 +186,18 @@ diff a/libc/src/unix/linux_like/linux/mod.rs b/libc/src/unix/linux_like/linux/mo
      pub fn posix_spawnp(
          pid: *mut crate::pid_t,
          file: *const c_char,
+@@ -3749,7 +3784,11 @@
+         attr: *mut posix_spawnattr_t,
+         default: *const crate::sigset_t,
+     ) -> c_int;
++    // cosmo: the POSIX_SPAWN_* bits are numbered differently (its
++    // USEVFORK is 1, which is Linux RESETIDS); the shim translates.
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_posix_spawnattr_getflags")]
+     pub fn posix_spawnattr_getflags(attr: *const posix_spawnattr_t, flags: *mut c_short) -> c_int;
++    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_posix_spawnattr_setflags")]
+     pub fn posix_spawnattr_setflags(attr: *mut posix_spawnattr_t, flags: c_short) -> c_int;
+     pub fn posix_spawnattr_getpgroup(
+         attr: *const posix_spawnattr_t,
 diff a/libc/src/unix/linux_like/linux/musl/b64/aarch64/mod.rs b/libc/src/unix/linux_like/linux/musl/b64/aarch64/mod.rs
 --- a/libc/src/unix/linux_like/linux/musl/b64/aarch64/mod.rs
 +++ b/libc/src/unix/linux_like/linux/musl/b64/aarch64/mod.rs

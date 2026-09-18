@@ -1,12 +1,12 @@
 // /proc/self/fd, read out of cosmo's own descriptor table. For any other
-// process only the socket tables say what it holds, but for ourselves g_fds
+// process only the socket tables say what it holds, but for ourselves __get_pib()->fds
 // knows every descriptor, its kind, and its NT handle -- so the entries here
 // carry the real fd numbers and cover files, pipes and devices, not just
 // sockets. A socket's inode is computed from the same identity the table
 // rows hash, so following a socket:[N] link from here lands on the right
 // row of /proc/net/tcp.
 
-#define _COSMO_SOURCE // for g_fds
+#define _COSMO_SOURCE // for __get_pib()->fds
 
 #include <netinet/in.h>
 #include <stdbool.h>
@@ -18,6 +18,7 @@
 #include <libc/calls/internal.h>
 #include <libc/dce.h>
 #include <libc/intrin/fds.h>
+#include <libc/sysv/pib.h>
 #include <libc/nt/files.h>
 
 #include "procfs.h"
@@ -98,8 +99,8 @@ int pfs_self_fds(struct pfs_fdent *out, int cap) {
     if (IsXnuSilicon()) return pfs_xnu_fds_of(pfs_self_pid(), out, cap);
     if (!IsWindows()) return 0;
     int n = 0;
-    for (int fd = 0; fd < (int)g_fds.n && n < cap; fd++) {
-        const struct Fd *f = &g_fds.p[fd];
+    for (int fd = 0; fd < (int)__get_pib()->fds.n && n < cap; fd++) {
+        const struct Fd *f = &__get_pib()->fds.p[fd];
         struct pfs_fdent *e = &out[n];
         switch (f->kind) {
             case kFdFile: file_text(f, e->text, sizeof e->text); break;

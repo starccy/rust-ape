@@ -13,19 +13,20 @@
 //      in place by lseek(fd, 0, SEEK_SET) for readers that keep it open,
 //      gone at close, never on disk. Directory descriptors of the tree are
 //      remembered by fd (validated against cosmo's handle, forgotten by
-//      shim/close-nt.c) so the relative spelling can be joined back to its
+//      shim/fdclose.c) so the relative spelling can be joined back to its
 //      virtual path. A memory descriptor answers read, lseek, fstat, fcntl
 //      flags and close; dup and pread are not served, no reader of /proc
 //      does either. Listings of /proc, a process directory, its task/ and
-//      net/ come from memory too (virtdir.c, through the vendored
-//      shim/dirstream.c), so enumerating every thread of every process
+//      net/ come from memory too (virtdir.c, through the hooks the fork's
+//      dirstream.c calls), so enumerating every thread of every process
 //      costs no directory operation on disk.
 //
 //   2. Everything that walks or stats, opendir("/proc"), stat("/proc/1"),
 //      access() and the like, lands in a materialized skeleton under
 //      <TMP>/rust-ape-proc-<pid>/, reached through one prefix rewrite in
-//      shim/mkntpath.c (and, for dirfd-relative names, the join in
-//      shim/mkntpathat.c). Directories are real; content files are written
+//      shim/ntpath.c (and, for dirfd-relative names, the hook the fork's
+//      mkntpath.c calls after its join). Directories are real; content
+//      files are written
 //      once per process on first access by name and then left alone: they
 //      exist for stat() and for listings, and nobody reads them, since
 //      every read is shape 1. Rewriting them per change would cost a write
@@ -36,7 +37,7 @@
 //   3. Links (exe, cwd, fd/<n>, self) are plain files holding the link
 //      text, because NT can store a symlink but not open one the way
 //      callers name it (O_PATH|O_NOFOLLOW is ELOOP there). The vendored
-//      shim/readlinkat.c routes every /proc-shaped readlink here instead.
+//      the fork's readlinkat() routes every /proc-shaped readlink here instead.
 //
 // The generators live in ../pid.c, ../net.c, ../sysinfo.c and ../sysctl.c
 // and only ever emit into memory; swapping this carrier out does not touch

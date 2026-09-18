@@ -38,6 +38,7 @@
 #include <stdbool.h> // cosmo's own build has C23 bool
 #include <libc/calls/internal.h>
 #include <libc/intrin/fds.h>
+#include <libc/sysv/pib.h>
 #include <libc/sysv/consts/af.h>
 #include <libc/sysv/consts/sock.h>
 #include <libc/sysv/consts/so.h>
@@ -452,8 +453,8 @@ static int g_defer_n; // fast path: sends look no further while this is zero
 static pthread_mutex_t g_defer_lock = PTHREAD_MUTEX_INITIALIZER;
 
 static int sock_is_connecting(int fd) {
-    if ((unsigned)fd >= g_fds.n) return 0;
-    struct Fd *f = g_fds.p + fd;
+    if ((unsigned)fd >= __get_pib()->fds.n) return 0;
+    struct Fd *f = __get_pib()->fds.p + fd;
     return f->kind == kFdSocket && f->connecting == 1;
 }
 

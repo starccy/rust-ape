@@ -1,8 +1,8 @@
 // Listings served from memory (the enumeration half of shape 2). A monitor
 // enumerates /proc and every /proc/<pid>/task on each refresh, and a
 // skeleton on disk made that thousands of directory operations per round.
-// The vendored shim/dirstream.c asks here first when a directory is
-// opened by name, and walks the answer without a descriptor. The disk
+// The fork's dirstream.c asks here first (hooks at the end of this file)
+// when a directory is opened, and walks the answer without a descriptor. The disk
 // skeleton stays for what stats by path.
 
 #define _COSMO_SOURCE // for libc/dce.h's IsWindows()
@@ -176,4 +176,62 @@ int __ape_shim_procfs_virtual_dir(const char *path, struct pfs_virtent **out) {
     }
     *out = l.p;
     return l.n;
+}
+
+// ---------------------------------------------------------------------------
+// The hooks the fork's dirstream.c calls: opendir() by name and fdopendir()
+// by descriptor both ask whether the directory is one of ours, then walk
+// the answer entry by entry.
+
+struct virtdir {
+    struct pfs_virtent *ents;
+    int count;
+};
+
+int __ape_shim_virtdir_open(const char *name, int *fd, void **state) {
+    if (!IsWindows() && !IsXnuSilicon()) return 0;
+    struct pfs_virtent *ents;
+    int n;
+    if (name) {
+        n = __ape_shim_procfs_virtual_dir(name, &ents);
+        if (n == -2) {
+            errno = ENOENT;
+            return -1;
+        }
+    } else {
+        char vpath[256];
+        if (!__ape_shim_procfs_fd_vpath(*fd, vpath, sizeof vpath)) return 0;
+        n = __ape_shim_procfs_virtual_dir(vpath, &ents);
+    }
+    if (n < 0) return 0;
+    struct virtdir *v = malloc(sizeof *v);
+    if (!v) {
+        free(ents);
+        errno = ENOMEM;
+        return -1;
+    }
+    v->ents = ents;
+    v->count = n;
+    *state = v;
+    // std keeps the dirfd of a ReadDir and checks it is open before
+    // dropping it, so a listing opened by name gets a descriptor too
+    if (name) *fd = __ape_shim_procfs_memfd_dir(name);
+    return 1;
+}
+
+int __ape_shim_virtdir_read(void *state, long index, char *name, size_t size,
+                            int *type) {
+    struct virtdir *v = state;
+    if (index < 0 || index >= v->count) return 0;
+    struct pfs_virtent *e = &v->ents[index];
+    if (strlen(e->name) + 1 > size) return 0;
+    strcpy(name, e->name);
+    *type = e->type;
+    return 1;
+}
+
+void __ape_shim_virtdir_close(void *state) {
+    struct virtdir *v = state;
+    free(v->ents);
+    free(v);
 }

@@ -24,6 +24,11 @@ grep -h 'static' "${srcs[@]}" | syms /dev/stdin > "$work/static"
 
 grep -h '^+' "$root"/patches/*.patch | syms /dev/stdin > "$work/patched"
 
+# hooks the cosmo fork calls through _weaken(); no patch or shim file
+# references them, so they'd otherwise look orphaned
+grep -v '^#' "$root/patches/fork-hooks" | sed '/^$/d' | sort -u >> "$work/patched"
+sort -u -o "$work/patched" "$work/patched"
+
 bad=0
 
 orphans=$(awk -F'\t' '

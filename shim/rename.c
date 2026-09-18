@@ -23,8 +23,7 @@
 
 #include "tables.h"
 
-// shim/mkntpathat.c
-int __mkntpathat(int dirfd, const char *path, int flags, char16_t file[]);
+int __mkntpathat(int dirfd, const char *path, char16_t file[]);
 
 // FILE_RENAME_FLAG_*, which cosmo has no names for. They occupy the DWORD
 // that struct NtFileRenameInformation calls Replace -- win32 overlays the
@@ -63,15 +62,15 @@ static int posix_rename_nt(int olddirfd, const char *oldpath, int newdirfd,
     if (!(m = malloc(sizeof(*m)))) return -1;
 
     int rc = -1;
-    if (__mkntpathat(olddirfd, oldpath, 0, m->oldpath16) != -1 &&
-        __mkntpathat(newdirfd, newpath, 0, m->newpath16) != -1) {
+    if (__mkntpathat(olddirfd, oldpath, m->oldpath16) != -1 &&
+        __mkntpathat(newdirfd, newpath, m->newpath16) != -1) {
         // DELETE is the access right a rename needs; BACKUP_SEMANTICS lets
         // the same call open a directory, which rename must also handle.
         int64_t h = CreateFile(
             m->oldpath16, kNtDelete | kNtSynchronize,
             kNtFileShareRead | kNtFileShareWrite | kNtFileShareDelete, NULL,
             kNtOpenExisting, kNtFileFlagBackupSemantics, 0);
-        if (h != kNtInvalidHandleValue) {
+        if (h != -1) {
             size_t n = 0;
             while (m->newpath16[n]) n++;
             m->info.Replace = kNtFileRenameFlagReplaceIfExists |

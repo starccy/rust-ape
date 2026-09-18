@@ -11,6 +11,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <libc/dce.h>
@@ -303,10 +304,36 @@ static int read_ustring(int64_t h, uint64_t addr, char16_t *w, size_t cap) {
     return (int)n;
 }
 
-// "C:\x\y" as "/C/x/y", the shape cosmo spells absolute paths in; a bare
-// drive form is not absolute to a caller with unix Path semantics (fish
-// asserts on exactly that). Returns the byte count written, no terminator.
+// libc/calls/mkunixpath.c: cosmo's own spelling of a win32 path, the one
+// getcwd() and GetProgramExecutableName() answer with
+int __mkunixpath(const char16_t *, char *);
+
+// A win32 path in the shape cosmo spells absolute paths in ("C:\x\y" is
+// "/C/x/y", or "/x/y" when C: is the cosmos drive), so what /proc says
+// about a process compares equal to what that process says about itself.
+// A bare drive form is not absolute to a caller with unix Path semantics
+// (fish asserts on exactly that). Returns the byte count written, no
+// terminator.
 static size_t put_ntpath(char *buf, size_t n, const char16_t *w, size_t len) {
+    // heap, not stack: this runs on whatever thread asks, some with small
+    // stacks, and __mkunixpath wants a PATH_MAX (1024) byte output
+    if (len < 4096) {
+        char16_t *w0 = malloc((len + 1) * sizeof(char16_t));
+        char *u8 = malloc(1024);
+        int m = -1;
+        if (w0 && u8) {
+            memcpy(w0, w, len * sizeof(char16_t));
+            w0[len] = 0;
+            m = __mkunixpath(w0, u8);
+        }
+        if (m >= 0) {
+            if ((size_t)m > n) m = (int)n;
+            memcpy(buf, u8, (size_t)m);
+        }
+        free(w0);
+        free(u8);
+        if (m >= 0) return (size_t)m;
+    }
     size_t k = 0;
     for (size_t i = 0; i < len && k < n; i++)
         buf[k++] = w[i] == '\\' ? '/' : (w[i] < 128 ? (char)w[i] : '_');

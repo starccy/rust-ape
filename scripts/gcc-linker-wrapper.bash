@@ -72,23 +72,14 @@ for shim_src in "$SDK_ROOT"/shim/**/*.c; do
         # alive the way libc.a was built; the tiny runtime never prints
         # them and skips the dead code.
         extra=$(sed -n 's|^// cflags: ||p' "$shim_src")
-        case "$shim_src" in
-            */dlmalloc.c)
-                # the allocator is built the way upstream builds it:
-                # freestanding, -O3, and with general registers only so a
-                # malloc reached from any context never touches vector state
-                extra="-D_COSMO_SOURCE -ffreestanding -fdata-sections -ffunction-sections"
-                if [ "$tiny" = 0 ]; then
-                    extra="$extra -O3 -mgeneral-regs-only"
-                fi ;;
-        esac
         if [ "$tiny" = 0 ] && [[ "$extra" == *_COSMO_SOURCE* ]]; then
             extra="$extra -DSYSDEBUG=1"
         fi
         if [ "$tiny" = 1 ]; then
             extra="$extra -mtiny"
         fi
-        "$COSMO/bin/$ARCH-unknown-cosmo-cc" -c -O2 -fno-stack-protector $extra \
+        "$COSMO/bin/$ARCH-unknown-cosmo-cc" -c -O2 -fno-stack-protector \
+            -ffunction-sections -fdata-sections $extra \
             -o "$tmp" "$shim_src"
         mv -f "$tmp" "$shim_obj"
     fi

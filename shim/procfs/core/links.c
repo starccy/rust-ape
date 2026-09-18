@@ -1,9 +1,11 @@
 // The tree's symlinks (shape 3): plain files on disk holding the link
 // text, answered here for readlink, lstat and readdir.
 
-#define _COSMO_SOURCE // for libc/dce.h's IsWindows() and g_fds
+#define _COSMO_SOURCE // for libc/dce.h's IsWindows() and __get_pib()->fds
 
 #include <dirent.h>
+#include <stdbool.h>  // master headers use C23 bool
+#include "libc/sysv/pib.h"
 #include <errno.h>
 #include <limits.h>
 #include <fcntl.h>
@@ -52,7 +54,7 @@ const char *pc_link_name(const struct node *n) {
 }
 
 // ---------------------------------------------------------------------------
-// Entry: every /proc-shaped readlink, from the vendored shim/readlinkat.c.
+// Entry: every /proc-shaped readlink, from the fork's readlinkat() hook below.
 // Negative return means "not mine"; the caller falls through to the host.
 
 static long link_of_node(const struct node *n, const char *sub, char *buf,
@@ -142,10 +144,10 @@ void __ape_shim_procfs_fix_dirent(int fd, struct dirent *e) {
 // directory name is unique to this process and cannot occur on the way to
 // it. Answers in the \\?\ namespace, normalized to slashes.
 static bool fd_phys_path(int fd, char *out, size_t cap) {
-    if (fd < 0 || (size_t)fd >= g_fds.n) return false;
-    if (g_fds.p[fd].kind != kFdFile) return false;
+    if (fd < 0 || (size_t)fd >= __get_pib()->fds.n) return false;
+    if (__get_pib()->fds.p[fd].kind != kFdFile) return false;
     char16_t w[600];
-    uint32_t len = GetFinalPathNameByHandle(g_fds.p[fd].handle, w, 600, 0);
+    uint32_t len = GetFinalPathNameByHandle(__get_pib()->fds.p[fd].handle, w, 600, 0);
     if (!len || len >= 600) return false;
     size_t k = 0;
     for (uint32_t i = 0; i < len && k < cap - 1; i++)
@@ -204,4 +206,11 @@ long __ape_shim_procfs_readlinkat(int dirfd, const char *path, char *buf,
     long r = read(f, buf, bufsiz);
     close(f);
     return r > 0 ? r : -1;
+}
+
+// The fork's readlinkat() asks here first, in any of the three spellings
+// a /proc link is read by.
+long __ape_shim_readlinkat_hook(int dirfd, const char *path, char *buf,
+                                size_t bufsiz) {
+    return __ape_shim_procfs_readlinkat(dirfd, path, buf, bufsiz);
 }

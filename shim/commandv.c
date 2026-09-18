@@ -1,4 +1,4 @@
-// [rust-ape] commandv (a.k.a. __commandv), replacing cosmo 4.0.2's
+// [rust-ape] commandv (a.k.a. __commandv), replacing cosmo master's
 // libc.a(commandv.o) so $PATH lookup on NT resolves the host's
 // executable suffixes.
 //
