@@ -4,6 +4,7 @@ use crate::util;
 use anyhow::{Context, Result, bail};
 use clap::Args;
 use std::fs;
+use std::path::PathBuf;
 use std::os::unix::fs::PermissionsExt;
 
 #[derive(Args)]
@@ -11,11 +12,14 @@ pub struct SetupArgs {
     /// Ignore stamps and rebuild everything under vendor/
     #[arg(long)]
     pub force: bool,
+    /// Use a locally built toolchain instead of the pinned release zip
+    #[arg(long, env = "RUST_APE_COSMOCC", value_name = "DIR")]
+    pub cosmocc: Option<PathBuf>,
 }
 
 /// setup = restore vendor/ + materialize.
 pub fn run(args: &SetupArgs) -> Result<()> {
-    fetch::run(args.force)?;
+    fetch::run(args.force, args.cosmocc.as_deref())?;
     materialize()?;
     println!("setup done");
     Ok(())
@@ -49,7 +53,7 @@ fn materialize() -> Result<()> {
         // wherever binfmt_misc isn't registered, so route it through sh.
         let ar = root
             .join("vendor/cosmocc/bin")
-            .join(format!("{arch}-unknown-cosmo-ar"));
+            .join(format!("{arch}-linux-cosmo-ar"));
         let ar_shim = generated.join(format!("ar-{arch}.bash"));
         fs::write(
             &ar_shim,

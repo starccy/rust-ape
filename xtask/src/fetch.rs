@@ -16,7 +16,7 @@ struct Dirs {
 
 /// Restores the three parts of vendor/: library, patched crates, cosmocc.
 /// each idempotent on its own stamp
-pub fn run(force: bool) -> Result<()> {
+pub fn run(force: bool, local_cosmocc: Option<&Path>) -> Result<()> {
     let root = util::repo_root();
     let dirs = Dirs {
         patches: root.join("patches"),
@@ -29,7 +29,10 @@ pub fn run(force: bool) -> Result<()> {
     }
     fetch_library(&dirs, force)?;
     fetch_crates(&dirs, force)?;
-    fetch_cosmocc(&dirs, force)?;
+    match local_cosmocc {
+        Some(dir) => link_cosmocc(&dirs, dir)?,
+        None => fetch_cosmocc(&dirs, force)?,
+    }
     println!("ready: {}", dirs.vendor.display());
     Ok(())
 }
@@ -128,6 +131,35 @@ fn fetch_cosmocc(dirs: &Dirs, force: bool) -> Result<()> {
     println!("==> unpacking cosmocc");
     fs::create_dir_all(&dir)?;
     util::run(Command::new("unzip").arg("-q").arg(&zip).arg("-d").arg(&dir))?;
+    write_stamp(&stamp_file, &stamp)?;
+    Ok(())
+}
+
+fn link_cosmocc(dirs: &Dirs, local: &Path) -> Result<()> {
+    let local = local
+        .canonicalize()
+        .with_context(|| format!("no such toolchain directory: {}", local.display()))?;
+    for rel in ["bin/cosmocc", "include/libc", "x86_64-linux-cosmo/lib", "aarch64-linux-cosmo/lib"] {
+        if !local.join(rel).exists() {
+            bail!(
+                "{} does not look like a cosmocc tree (missing {rel}); point --cosmocc at the output of tool/cosmocc/package.sh",
+                local.display()
+            );
+        }
+    }
+    let dir = dirs.vendor.join("cosmocc");
+    let stamp_file = dirs.stamps.join("cosmocc");
+    let stamp = format!("local:{}", local.display());
+    if fs::read_link(&dir).ok().as_deref() == Some(&*local)
+        && up_to_date(&dir, &stamp_file, &stamp)
+    {
+        println!("==> cosmocc already linked to {}", local.display());
+        return Ok(());
+    }
+    rm_rf(&dir)?;
+    fs::create_dir_all(&dirs.vendor)?;
+    std::os::unix::fs::symlink(&local, &dir)?;
+    println!("==> cosmocc -> {}", local.display());
     write_stamp(&stamp_file, &stamp)?;
     Ok(())
 }

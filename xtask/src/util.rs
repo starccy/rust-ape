@@ -131,7 +131,15 @@ pub fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
 }
 
 pub fn rm_rf(path: &Path) -> Result<()> {
-    match fs::remove_dir_all(path) {
+    let is_link = fs::symlink_metadata(path)
+        .map(|m| m.file_type().is_symlink())
+        .unwrap_or(false);
+    let removed = if is_link {
+        fs::remove_file(path)
+    } else {
+        fs::remove_dir_all(path)
+    };
+    match removed {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(e) => Err(e).with_context(|| format!("could not remove {}", path.display())),
