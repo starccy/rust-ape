@@ -1,3 +1,4 @@
+mod audit;
 mod build;
 mod concat;
 mod config;
@@ -28,6 +29,8 @@ enum Cmd {
     Build(build::BuildArgs),
     /// Regenerate shim/tables.h and its compile-time cross-check from vendor/
     GenShim(genshim::GenShimArgs),
+    /// Check libc crate constants and direct libc imports against cosmo
+    Audit(audit::AuditArgs),
 }
 
 fn main() -> Result<()> {
@@ -36,5 +39,6 @@ fn main() -> Result<()> {
         Cmd::Generate(args) => generate::run(&args),
         Cmd::Build(args) => build::run(&args),
         Cmd::GenShim(args) => genshim::run(&args),
+        Cmd::Audit(args) => audit::run(&args),
     }
 }

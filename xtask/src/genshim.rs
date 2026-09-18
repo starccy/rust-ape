@@ -19,7 +19,7 @@ pub struct GenShimArgs {
 const ARCHES: &[&str] = &["x86_64", "aarch64"];
 
 /// Search order inside the libc crate for one arch. most specific first.
-fn libc_search_paths(root: &Path, arch: &str) -> Vec<PathBuf> {
+pub(crate) fn libc_search_paths(root: &Path, arch: &str) -> Vec<PathBuf> {
     let src = root.join("vendor/patches/libc/src");
     [
         format!("unix/linux_like/linux/musl/b64/{arch}/mod.rs"),
@@ -271,7 +271,7 @@ const HEADER_FALLBACKS: &[(&str, &str)] = &[
 /// libc crate name -> cosmo symbol name, where the two worlds disagree.
 /// The C table carries the cosmo name (it takes the symbol's address); the
 /// Rust assert uses the libc name.
-fn cosmo_name(libc_name: &str) -> &str {
+pub(crate) fn cosmo_name(libc_name: &str) -> &str {
     match libc_name {
         "IPV6_ADD_MEMBERSHIP" => "IPV6_JOIN_GROUP",
         "IPV6_DROP_MEMBERSHIP" => "IPV6_LEAVE_GROUP",

@@ -1,0 +1,387 @@
+# Everything decided manually for `cargo xtask audit`.
+
+# What the audit may stop reporting, as name = "why". A trailing * on a
+# name matches a prefix. An entry that no longer silences anything gets a
+# warning, so this list doesn't outlive its reasons.
+
+[allow.const]
+# limits the Rust side only uses as numbers of its own
+PATH_MAX = "buffer sizing on the Rust side; cosmo's own limit (1024) still applies to what it is handed"
+PIPE_BUF = "never passed down"
+BUFSIZ = "never passed down"
+IPPROTO_MAX = "never passed down"
+NCCS = "termios is repacked field by field (SHIM_TCC_TABLE), the array length doesn't cross"
+CPU_SETSIZE = "callers pass the byte size of their own cpu_set_t along"
+SOMAXCONN = "a backlog is a plain number"
+O_ACCMODE = "masks what the fcntl shim returns, which is Linux-coded already"
+MINSIGSTKSZ = "the getauxval shim raises AT_MINSIGSTKSZ to cosmo's floor and std sizes its stack from that"
+SIGSTKSZ = "same"
+PTHREAD_STACK_MIN = "the pthread_attr_setstacksize shim rounds a smaller size up"
+
+# spelled through another name the tables carry
+MAP_ANON = "alias of MAP_ANONYMOUS"
+PF_LOCAL = "alias of AF_UNIX"
+AF_ROUTE = "AF_NETLINK on Linux, which the table carries; XNU's routing socket is another protocol"
+PF_ROUTE = "same"
+AF_PACKET = "kept out of the table on purpose: shim/packet.c emulates it on NT under the Linux number"
+
+# ioctl requests outside the tables never reach cosmo: the shim answers ENOTTY
+"SIOC*" = "refused by the ioctl shim, not passed on"
+"TIOC*" = "refused by the ioctl shim, not passed on"
+FIOASYNC = "refused by the ioctl shim, not passed on"
+
+# values with no counterpart to map to
+MAP_SHARED_VALIDATE = "a mapping type, not a flag; the mmap shim refuses it with EINVAL instead of guessing"
+TCP_INFO = "struct tcp_info is Linux's own; passing the name on would hand back a foreign layout"
+EXTA = "cosmo defines it as B19200, which the baud table carries"
+EXTB = "cosmo defines it as B38400, which the baud table carries"
+_POSIX_VDISABLE = "the termios shim swaps it with 0 in c_cc in both directions"
+SCM_CREDENTIALS = "Linux-only ancillary data; std's use sits behind an unstable feature"
+SCM_TIMESTAMP = "SOL_SOCKET cmsg types other than SCM_RIGHTS pass raw (shim/socket.c); nothing here reads timestamps"
+
+[allow.fn]
+listen = "SOMAXCONN is only ever a number here"
+sched_getaffinity = "takes the caller's own set size in bytes"
+dup3 = "only O_CLOEXEC can be passed, which has Linux's value on every host"
+
+# Which libc functions a family of constants ends up in. The audit uses it
+# two ways: a family with a value that differs on some host needs every
+# function listed redirected into the shim, and a constant whose functions
+# nobody imports is left alone. A name belongs to a family when it starts
+# with one of `prefixes` and with none of `except`.
+
+[[family]]
+prefixes = ["LOCK_"]
+functions = ["flock"]
+
+[[family]]
+prefixes = ["UTIME_"]
+functions = ["utimensat", "futimens"]
+
+[[family]]
+prefixes = [
+    "AT_FDCWD", "AT_SYMLINK_", "AT_REMOVEDIR", "AT_EACCESS", "AT_EMPTY_PATH",
+]
+functions = [
+    "openat", "fstatat", "unlinkat", "linkat", "renameat", "renameat2",
+    "faccessat", "fchmodat", "fchownat", "utimensat", "readlinkat",
+    "symlinkat", "mkdirat", "mknodat", "mkfifoat", "statx", "execveat",
+]
+
+[[family]]
+prefixes = ["O_"]
+except = ["O_ACCMODE"]
+functions = [
+    "open", "openat", "fcntl", "pipe2", "dup3", "mkostemp", "mkostemps",
+    "shm_open", "posix_openpt", "accept4",
+]
+
+[[family]]
+prefixes = ["F_"]
+except = ["F_OK"]
+functions = ["fcntl", "lockf"]
+
+[[family]]
+prefixes = ["CLOCK_"]
+functions = [
+    "clock_gettime", "clock_getres", "clock_settime", "clock_nanosleep",
+    "pthread_condattr_setclock", "pthread_condattr_getclock", "timer_create",
+    "pthread_mutex_clocklock", "pthread_cond_clockwait", "sem_clockwait",
+]
+
+[[family]]
+prefixes = ["POLL"]
+functions = ["poll", "ppoll"]
+
+[[family]]
+prefixes = ["MSG_"]
+functions = [
+    "send", "recv", "sendto", "recvfrom", "sendmsg", "recvmsg", "sendmmsg",
+    "recvmmsg",
+]
+
+[[family]]
+prefixes = ["SOL_", "SO_", "TCP_", "IP_", "IPV6_", "IPPROTO_"]
+functions = [
+    "setsockopt", "getsockopt", "socket", "socketpair", "getaddrinfo",
+]
+
+[[family]]
+prefixes = ["SOCK_"]
+functions = ["socket", "socketpair", "accept4", "getaddrinfo"]
+
+[[family]]
+prefixes = ["AF_", "PF_"]
+functions = [
+    "socket", "socketpair", "bind", "connect", "accept", "accept4",
+    "getsockname", "getpeername", "sendto", "recvfrom", "sendmsg", "recvmsg",
+    "getaddrinfo", "getnameinfo", "inet_pton", "inet_ntop",
+]
+
+[[family]]
+prefixes = ["SHUT_"]
+functions = ["shutdown"]
+
+[[family]]
+prefixes = ["MAP_", "PROT_"]
+functions = ["mmap", "mprotect", "mremap"]
+
+[[family]]
+prefixes = ["MADV_", "POSIX_MADV_"]
+functions = ["madvise", "posix_madvise"]
+
+[[family]]
+prefixes = ["MS_"]
+functions = ["msync", "mount", "umount2"]
+
+[[family]]
+prefixes = ["RB_"]
+functions = ["reboot"]
+
+[[family]]
+prefixes = ["SCM_"]
+functions = ["sendmsg", "recvmsg"]
+
+[[family]]
+prefixes = ["SPLICE_F_"]
+functions = ["splice", "tee", "vmsplice"]
+
+[[family]]
+prefixes = ["LIO_"]
+functions = ["lio_listio"]
+
+[[family]]
+prefixes = ["CPU_SETSIZE"]
+functions = [
+    "sched_setaffinity", "sched_getaffinity", "pthread_setaffinity_np",
+    "pthread_getaffinity_np",
+]
+
+[[family]]
+prefixes = ["SOMAXCONN"]
+functions = ["listen"]
+
+[[family]]
+prefixes = ["IFF_", "SIOC"]
+functions = ["ioctl", "getifaddrs"]
+
+[[family]]
+prefixes = ["MCL_"]
+functions = ["mlockall"]
+
+[[family]]
+prefixes = ["RLIMIT_", "RLIM_"]
+# a count, not something these take
+except = ["RLIM_NLIMITS"]
+functions = ["getrlimit", "setrlimit", "prlimit"]
+
+[[family]]
+prefixes = ["RUSAGE_"]
+functions = ["getrusage"]
+
+[[family]]
+prefixes = ["PRIO_"]
+functions = ["getpriority", "setpriority"]
+
+[[family]]
+prefixes = ["SIG"]
+except = ["SIG_", "SIGSTKSZ", "SIGEV_"]
+functions = [
+    "kill", "raise", "signal", "sigaction", "sigaddset", "sigdelset",
+    "sigismember", "sigwait", "sigtimedwait", "sigwaitinfo", "pthread_kill",
+    "killpg", "sigqueue", "strsignal", "posix_spawnattr_setsigdefault",
+    "posix_spawnattr_setsigmask",
+]
+
+[[family]]
+prefixes = ["SIG_BLOCK", "SIG_UNBLOCK", "SIG_SETMASK"]
+functions = ["sigprocmask", "pthread_sigmask"]
+
+[[family]]
+prefixes = ["SA_"]
+functions = ["sigaction"]
+
+[[family]]
+prefixes = ["SS_", "MINSIGSTKSZ", "SIGSTKSZ"]
+functions = ["sigaltstack"]
+
+[[family]]
+prefixes = [
+    "WNOHANG", "WUNTRACED", "WCONTINUED", "WEXITED", "WSTOPPED", "WNOWAIT",
+]
+functions = ["waitpid", "wait4", "waitid", "wait3"]
+
+[[family]]
+prefixes = ["P_"]
+functions = ["waitid"]
+
+[[family]]
+prefixes = ["POSIX_SPAWN_"]
+functions = ["posix_spawnattr_setflags", "posix_spawnattr_getflags"]
+
+[[family]]
+prefixes = ["SCHED_"]
+functions = [
+    "sched_setscheduler", "sched_getscheduler", "pthread_attr_setschedpolicy",
+    "posix_spawnattr_setschedpolicy",
+]
+
+[[family]]
+prefixes = ["PTHREAD_STACK_MIN"]
+functions = ["pthread_attr_setstacksize"]
+
+[[family]]
+prefixes = ["PTHREAD_"]
+except = ["PTHREAD_STACK_MIN"]
+functions = [
+    "pthread_mutexattr_settype", "pthread_mutexattr_gettype",
+    "pthread_attr_setdetachstate", "pthread_attr_getdetachstate",
+    "pthread_mutexattr_setpshared", "pthread_condattr_setpshared",
+    "pthread_mutexattr_setrobust", "pthread_setcancelstate",
+    "pthread_setcanceltype", "pthread_rwlockattr_setpshared",
+    "pthread_attr_setinheritsched", "pthread_attr_setscope",
+]
+
+[[family]]
+prefixes = ["_SC_"]
+functions = ["sysconf"]
+
+[[family]]
+prefixes = ["_PC_"]
+functions = ["pathconf", "fpathconf"]
+
+[[family]]
+prefixes = ["_CS_"]
+functions = ["confstr"]
+
+[[family]]
+prefixes = ["SEEK_"]
+functions = ["lseek", "fseek", "fseeko", "lseek64"]
+
+[[family]]
+prefixes = ["S_I"]
+functions = [
+    "chmod", "fchmod", "fchmodat", "mkdir", "mkdirat", "mknod", "mknodat",
+    "mkfifo", "umask", "open", "openat", "stat", "fstat", "lstat", "fstatat",
+]
+
+[[family]]
+prefixes = ["R_OK", "W_OK", "X_OK", "F_OK"]
+functions = ["access", "faccessat", "eaccess", "euidaccess"]
+
+[[family]]
+prefixes = [
+    "ICANON", "ECHO", "ISIG", "IEXTEN", "OPOST", "ONLCR", "CS", "CREAD",
+    "CLOCAL", "IX", "ICRNL", "VMIN", "VTIME", "VEOF", "VINTR", "NCCS",
+    "CBAUD",
+]
+functions = [
+    "tcgetattr", "tcsetattr", "cfmakeraw", "cfsetspeed", "cfsetispeed",
+    "cfsetospeed", "cfgetispeed", "cfgetospeed",
+]
+
+[[family]]
+prefixes = ["TCSA"]
+functions = ["tcsetattr"]
+
+[[family]]
+prefixes = ["TCIFLUSH", "TCOFLUSH", "TCIOFLUSH"]
+functions = ["tcflush"]
+
+[[family]]
+prefixes = ["TCOOFF", "TCOON", "TCIOFF", "TCION"]
+functions = ["tcflow"]
+
+[[family]]
+prefixes = ["TIOC", "FIO", "TCGETS", "TCSETS"]
+functions = ["ioctl"]
+
+[[family]]
+prefixes = ["RTLD_"]
+functions = ["dlopen", "dlsym"]
+
+[[family]]
+prefixes = ["EAI_", "AI_", "NI_"]
+functions = ["getaddrinfo", "getnameinfo", "gai_strerror"]
+
+[[family]]
+prefixes = ["LOG_"]
+functions = ["openlog", "syslog", "setlogmask"]
+
+[[family]]
+prefixes = ["LC_"]
+functions = ["setlocale", "newlocale"]
+
+[[family]]
+prefixes = ["ITIMER_"]
+functions = ["setitimer", "getitimer"]
+
+[[family]]
+prefixes = ["TIMER_"]
+functions = ["timer_settime", "clock_nanosleep"]
+
+[[family]]
+prefixes = ["GRND_"]
+functions = ["getrandom"]
+
+[[family]]
+prefixes = ["POSIX_FADV_"]
+functions = ["posix_fadvise"]
+
+[[family]]
+prefixes = ["FALLOC_"]
+functions = ["fallocate"]
+
+[[family]]
+prefixes = ["ST_"]
+functions = ["statvfs", "fstatvfs"]
+
+[[family]]
+prefixes = ["GLOB_"]
+functions = ["glob"]
+
+[[family]]
+prefixes = ["FNM_"]
+functions = ["fnmatch"]
+
+[[family]]
+prefixes = ["REG_"]
+functions = ["regcomp", "regexec"]
+
+[[family]]
+prefixes = ["DT_"]
+functions = ["readdir", "readdir_r", "readdir64"]
+
+[[family]]
+prefixes = ["EPOLL"]
+functions = ["epoll_create1", "epoll_ctl", "epoll_wait", "epoll_pwait"]
+
+[[family]]
+prefixes = ["IN_"]
+functions = ["inotify_init1", "inotify_add_watch"]
+
+[[family]]
+prefixes = ["EFD_"]
+functions = ["eventfd"]
+
+[[family]]
+prefixes = ["MFD_"]
+functions = ["memfd_create"]
+
+[[family]]
+prefixes = ["XATTR_"]
+functions = ["setxattr", "lsetxattr", "fsetxattr"]
+
+[[family]]
+prefixes = ["IPC_", "SHM_"]
+functions = [
+    "shmget", "shmat", "shmctl", "semget", "semctl", "msgget", "msgctl",
+]
+
+[[family]]
+prefixes = ["PTRACE_"]
+functions = ["ptrace"]
+
+[[family]]
+prefixes = ["PR_"]
+functions = ["prctl"]
