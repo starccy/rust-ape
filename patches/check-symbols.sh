@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Verify every __ape_shim_* symbol the shim defines is actually referenced
-# by a link_name redirect in patches/*.patch or by another shim file.
+# by a link_name redirect in patches/*.patch, by another shim file, or by
+# the cosmo fork as a weak hook, and that everything referenced exists.
 
 set -euo pipefail
 
@@ -24,9 +25,12 @@ grep -h 'static' "${srcs[@]}" | syms /dev/stdin > "$work/static"
 
 grep -h '^+' "$root"/patches/*.patch | syms /dev/stdin > "$work/patched"
 
-# hooks the cosmo fork calls through _weaken(); no patch or shim file
-# references them, so they'd otherwise look orphaned
-grep -v '^#' "$root/patches/fork-hooks" | sed '/^$/d' | sort -u >> "$work/patched"
+# hooks the cosmo fork calls through _weaken(). Read those from the cosmo fork's libcosmo.a
+nm=$root/vendor/cosmocc/bin/x86_64-linux-cosmo-nm
+[ -e "$nm" ] || { echo "no vendor/cosmocc; run 'cargo xtask setup' first" >&2; exit 1; }
+for arch in x86_64 aarch64; do
+    sh "$nm" -u "$root/vendor/cosmocc/$arch-linux-cosmo/lib/libcosmo.a" 2>/dev/null
+done | awk '$1 == "w"' | syms /dev/stdin >> "$work/patched"
 sort -u -o "$work/patched" "$work/patched"
 
 bad=0
@@ -52,7 +56,7 @@ fi
 
 ghosts=$(comm -13 <(cut -f1 "$work/pairs" | sort -u) "$work/patched")
 if [ -n "$ghosts" ]; then
-    echo "patches redirect to these symbols but no shim file defines them:"
+    echo "patches or the cosmo fork refer to these symbols but no shim file defines them:"
     echo "$ghosts" | sed 's/^/  /'
     bad=1
 fi
