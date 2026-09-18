@@ -690,9 +690,10 @@ fn cosmo_probe(root: &Path, arch: &str, spelled: &[(String, String)]) -> Result<
     }
     let header_lines = header.lines().count();
 
-    // /dev/shm: plain tmp directories can hand the compiler ciphertext here
-    let src = PathBuf::from(format!("/dev/shm/rust-ape-audit-{arch}.c"));
-    let asm = PathBuf::from(format!("/dev/shm/rust-ape-audit-{arch}.s"));
+    let generated = root.join("generated");
+    fs::create_dir_all(&generated)?;
+    let src = generated.join(format!("audit-probe-{arch}.c"));
+    let asm = generated.join(format!("audit-probe-{arch}.s"));
     let mut result: HashMap<String, Cosmo> = HashMap::new();
     let mut live: Vec<&str> = spelled.iter().map(|(_, c)| c.as_str()).collect();
     live.sort();
