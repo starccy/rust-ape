@@ -42,7 +42,14 @@ SCM_TIMESTAMP = "SOL_SOCKET cmsg types other than SCM_RIGHTS pass raw (shim/sock
 [allow.fn]
 listen = "SOMAXCONN is only ever a number here"
 sched_getaffinity = "takes the caller's own set size in bytes"
-dup3 = "only O_CLOEXEC can be passed, which has Linux's value on every host"
+sched_setaffinity = "same"
+pthread_getaffinity_np = "same"
+pthread_setaffinity_np = "same"
+splice = "cosmo only has it on Linux, where the flags are Linux's own"
+copy_file_range = "cosmo only has it on Linux, and flags has to be 0"
+mount = "MS_* are Linux mount flags; elsewhere mount takes other arguments altogether"
+reboot = "not something a portable program calls; the RB_* values only match on Linux"
+getnetbyaddr = "cosmo's is a stub that returns NULL"
 
 # Which libc functions a family of constants ends up in. The audit uses it
 # two ways: a family with a value that differs on some host needs every
@@ -70,16 +77,22 @@ functions = [
 
 [[family]]
 prefixes = ["O_"]
-except = ["O_ACCMODE"]
+# O_TMPFILE is dealt with by name in shim/open.c, the only place it can go
+except = ["O_ACCMODE", "O_TMPFILE"]
 functions = [
-    "open", "openat", "fcntl", "pipe2", "dup3", "mkostemp", "mkostemps",
-    "shm_open", "posix_openpt", "accept4",
+    "open", "openat", "open64", "openat64", "fcntl", "pipe2", "dup3",
+    "mkostemp", "mkostemps", "shm_open", "posix_openpt", "accept4", "sem_open",
+    "posix_spawn_file_actions_addopen",
 ]
 
 [[family]]
 prefixes = ["F_"]
-except = ["F_OK"]
-functions = ["fcntl", "lockf"]
+except = ["F_OK", "F_LOCK", "F_TLOCK", "F_ULOCK", "F_TEST"]
+functions = ["fcntl"]
+
+[[family]]
+prefixes = ["F_LOCK", "F_TLOCK", "F_ULOCK", "F_TEST"]
+functions = ["lockf"]
 
 [[family]]
 prefixes = ["CLOCK_"]
@@ -115,7 +128,7 @@ prefixes = ["AF_", "PF_"]
 functions = [
     "socket", "socketpair", "bind", "connect", "accept", "accept4",
     "getsockname", "getpeername", "sendto", "recvfrom", "sendmsg", "recvmsg",
-    "getaddrinfo", "getnameinfo", "inet_pton", "inet_ntop",
+    "getaddrinfo", "getnameinfo", "inet_pton", "inet_ntop", "getnetbyaddr",
 ]
 
 [[family]]
@@ -222,8 +235,11 @@ functions = ["posix_spawnattr_setflags", "posix_spawnattr_getflags"]
 [[family]]
 prefixes = ["SCHED_"]
 functions = [
-    "sched_setscheduler", "sched_getscheduler", "pthread_attr_setschedpolicy",
-    "posix_spawnattr_setschedpolicy",
+    "sched_setscheduler", "sched_getscheduler", "sched_get_priority_max",
+    "sched_get_priority_min", "pthread_attr_setschedpolicy",
+    "pthread_attr_getschedpolicy", "pthread_setschedparam",
+    "pthread_getschedparam", "posix_spawnattr_setschedpolicy",
+    "posix_spawnattr_getschedpolicy",
 ]
 
 [[family]]
@@ -231,15 +247,31 @@ prefixes = ["PTHREAD_STACK_MIN"]
 functions = ["pthread_attr_setstacksize"]
 
 [[family]]
-prefixes = ["PTHREAD_"]
-except = ["PTHREAD_STACK_MIN"]
+prefixes = ["PTHREAD_MUTEX_"]
+functions = ["pthread_mutexattr_settype", "pthread_mutexattr_gettype"]
+
+[[family]]
+prefixes = ["PTHREAD_CREATE_"]
+functions = ["pthread_attr_setdetachstate", "pthread_attr_getdetachstate"]
+
+[[family]]
+prefixes = ["PTHREAD_PROCESS_"]
 functions = [
-    "pthread_mutexattr_settype", "pthread_mutexattr_gettype",
-    "pthread_attr_setdetachstate", "pthread_attr_getdetachstate",
-    "pthread_mutexattr_setpshared", "pthread_condattr_setpshared",
+    "pthread_mutexattr_setpshared", "pthread_mutexattr_getpshared",
+    "pthread_condattr_setpshared", "pthread_condattr_getpshared",
+    "pthread_rwlockattr_setpshared", "pthread_rwlockattr_getpshared",
+    "pthread_barrierattr_setpshared",
+]
+
+[[family]]
+prefixes = ["PTHREAD_"]
+except = [
+    "PTHREAD_STACK_MIN", "PTHREAD_MUTEX_", "PTHREAD_CREATE_", "PTHREAD_PROCESS_",
+]
+functions = [
     "pthread_mutexattr_setrobust", "pthread_setcancelstate",
-    "pthread_setcanceltype", "pthread_rwlockattr_setpshared",
-    "pthread_attr_setinheritsched", "pthread_attr_setscope",
+    "pthread_setcanceltype", "pthread_attr_setinheritsched",
+    "pthread_attr_setscope",
 ]
 
 [[family]]
@@ -256,7 +288,24 @@ functions = ["confstr"]
 
 [[family]]
 prefixes = ["SEEK_"]
-functions = ["lseek", "fseek", "fseeko", "lseek64"]
+functions = ["lseek", "lseek64"]
+
+# stdio's fseek only knows these three
+[[family]]
+prefixes = ["SEEK_SET", "SEEK_CUR", "SEEK_END"]
+functions = ["fseek", "fseeko"]
+
+[[family]]
+prefixes = ["_IOFBF", "_IOLBF", "_IONBF"]
+functions = ["setvbuf"]
+
+[[family]]
+prefixes = [
+    "CODESET", "RADIXCHAR", "THOUSEP", "YESEXPR", "NOEXPR", "CRNCYSTR", "ERA",
+    "ALT_DIGITS", "D_T_FMT", "D_FMT", "T_FMT", "AM_STR", "PM_STR", "DAY_",
+    "ABDAY_", "MON_", "ABMON_",
+]
+functions = ["nl_langinfo", "nl_langinfo_l"]
 
 [[family]]
 prefixes = ["S_I"]
@@ -346,7 +395,7 @@ functions = ["fnmatch"]
 
 [[family]]
 prefixes = ["REG_"]
-functions = ["regcomp", "regexec"]
+functions = ["regcomp", "regexec", "regerror"]
 
 [[family]]
 prefixes = ["DT_"]

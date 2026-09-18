@@ -74,5 +74,4 @@ zip = { version = "8.6.0", default-features = false }
 sysinfo = "0.39"
 
 [patch.crates-io]
-errno = { path = "../vendor/patches/errno" }
 libc = { path = "../vendor/patches/libc" }

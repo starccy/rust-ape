@@ -1,15 +1,12 @@
-// The signal half of the Linux-personality shim. Three translations:
-// signal numbers and sa_flags are cosmo runtime constants where platforms
-// diverge, and struct sigaction's layouts differ outright, so it is
-// repacked field by field in both directions.
+// The signal half of the Linux-personality shim. sa_flags are cosmo
+// runtime constants and struct sigaction's layouts differ outright, so it
+// is repacked field by field in both directions. Signal numbers are
+// Linux's on both sides.
 //
-// Handlers are wrapped in a trampoline so signum (and si_signo/si_errno)
-// arrive Linux-coded; the ucontext_t argument passes through untranslated.
+// Handlers are wrapped in a trampoline that puts the interrupted thread's
+// errno back; siginfo_t and ucontext_t pass through as they are.
 //
-// Conventions: bits inside a sigset_t are HOST-numbered (the accessors
-// translate at the boundary) and only the low 64 bits are meaningful; the
-// real-time range (SIGRTMIN+n) has no constants to extract and passes
-// through raw.
+// Only the low 64 bits of a sigset_t are meaningful.
 
 #include <errno.h>
 #include <signal.h>
@@ -29,33 +26,6 @@
 
 #include "tables.h"
 
-int __ape_shim_errno_host_to_linux(int); // errno.c
-
-struct smap {
-    int lin;
-    const int *host;
-};
-
-#define X(name, lin) { lin, &name },
-static const struct smap kSigs[] = { SHIM_SIG_TABLE(X) };
-#undef X
-#define NSIGS (sizeof(kSigs) / sizeof(kSigs[0]))
-
-static int sig_to_host(int lin) {
-    for (size_t i = 0; i < NSIGS; i++)
-        if (kSigs[i].lin == lin) return *kSigs[i].host;
-    return lin; // universal or unknown: pass through
-}
-
-static int sig_to_linux(int host) {
-    for (size_t i = 0; i < NSIGS; i++)
-        if (*kSigs[i].host == host) return kSigs[i].lin;
-    return host;
-}
-
-int __ape_shim_signum_to_linux(int host) {
-    return sig_to_linux(host);
-}
 
 // ---------------------------------------------------------------------------
 // struct sigaction, musl's shape. Verified against the libc crate: b64
@@ -85,7 +55,7 @@ static int sa_flags_to_linux(uint64_t host) {
 }
 
 // ---------------------------------------------------------------------------
-// Handler trampolines. Slot table is indexed by HOST signum; cosmo supports
+// Handler trampolines. Slot table is indexed by signum; cosmo supports
 // 1..64. The table is committed before the sigaction() call so a signal
 // arriving mid-install never finds a trampoline without a user handler.
 #define SHIM_MAXSIG 65
@@ -101,7 +71,7 @@ static void tramp1(int hostsig) {
     void (*h)(int) = (hostsig > 0 && hostsig < SHIM_MAXSIG) ? g_h1[hostsig] : 0;
     if (!h) return;
     int saved = errno; // shield the interrupted thread's errno protocol
-    h(sig_to_linux(hostsig));
+    h(hostsig);
     errno = saved;
 }
 
@@ -110,19 +80,15 @@ static void tramp3(int hostsig, siginfo_t *si, void *ctx) {
         (hostsig > 0 && hostsig < SHIM_MAXSIG) ? g_h3[hostsig] : 0;
     if (!h) return;
     int saved = errno;
-    if (si) {
-        // cosmo's siginfo_t is Linux-ABI-shaped (si_addr/si_pid/si_status all
-        // at the musl offsets); only the coded values need help.
-        si->si_signo = sig_to_linux(si->si_signo);
-        if (si->si_errno) si->si_errno = __ape_shim_errno_host_to_linux(si->si_errno);
-    }
-    h(sig_to_linux(hostsig), si, ctx);
+    // cosmo's siginfo_t is Linux-ABI-shaped (si_addr/si_pid/si_status all
+    // at the musl offsets)
+    h(hostsig, si, ctx);
     errno = saved;
 }
 
 int __ape_shim_sigaction(int lin_sig, const struct lin_sigaction *lin_act,
                          struct lin_sigaction *lin_old) {
-    int hostsig = sig_to_host(lin_sig);
+    int hostsig = lin_sig; // same numbers on both sides
     int slot = hostsig > 0 && hostsig < SHIM_MAXSIG;
 
     // Snapshot for oldact reporting and for rollback on failure.
@@ -167,14 +133,6 @@ int __ape_shim_sigaction(int lin_sig, const struct lin_sigaction *lin_act,
         lin_old->restorer = 0;
     }
     return 0;
-}
-
-int __ape_shim_kill(int pid, int sig) {
-    return kill(pid, sig_to_host(sig));
-}
-
-int __ape_shim_raise(int sig) {
-    return raise(sig_to_host(sig));
 }
 
 void (*__ape_shim_signal(int sig, void (*handler)(int)))(int) {
@@ -357,29 +315,6 @@ int __ape_shim_pthread_sigmask(int how, const struct lin_sigset *set, struct lin
     sigset_t hold;
     int r = pthread_sigmask(set ? h : SIG_SETMASK, (const sigset_t *)set, old ? &hold : NULL);
     if (r == 0 && old) write_back_set(old, hold);
-    return r;
-}
-
-int __ape_shim_sigaddset(sigset_t *set, int sig) {
-    return sigaddset(set, sig_to_host(sig));
-}
-
-int __ape_shim_sigdelset(sigset_t *set, int sig) {
-    return sigdelset(set, sig_to_host(sig));
-}
-
-int __ape_shim_sigismember(const sigset_t *set, int sig) {
-    return sigismember(set, sig_to_host(sig));
-}
-
-// ---------------------------------------------------------------------------
-// sigwait: only the signal numbers need translating.
-
-int __ape_shim_sigwait(const struct lin_sigset *set, int *sig) {
-    sigset_t hset = (sigset_t)set->val[0]; // host-numbered, low word only
-    int hsig = 0;
-    int r = sigwait(&hset, &hsig);
-    if (r == 0 && sig) *sig = sig_to_linux(hsig);
     return r;
 }
 

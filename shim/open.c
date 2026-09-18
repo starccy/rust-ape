@@ -20,6 +20,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <sys/file.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #define _COSMO_SOURCE // for libc/dce.h's IsLinux()/IsWindows()
@@ -29,6 +30,7 @@ int eaccess(const char *, int);
 int euidaccess(const char *, int);
 #include <libc/dce.h>
 #include <libc/sysv/consts/at.h>
+#include <libc/sysv/consts/seek.h>
 
 // Newer cosmocc (recognizable by its Linux-coded _O_TMPFILE macro) dropped
 // the Linux-only AT_EMPTY_PATH outright; older versions declare it extern
@@ -74,21 +76,13 @@ int __ape_shim_procfs_vstat(int dirfd, const char *path, struct stat *st,
 
 #define LIN_O_ACCMODE 0x03 // O_RDONLY/O_WRONLY/O_RDWR, same on every platform
 
-struct oflag {
-    int linux_bit;
-    const unsigned *host; // cosmo's runtime constant
-    bool droppable;       // hint: drop when unsupported instead of failing
-};
-
-// cosmo may publish an unsupported flag as 0 or ~0; treat both as unsupported.
-static bool unsupported(unsigned host_bit) {
-    return host_bit == 0 || host_bit == (unsigned)-1;
-}
-
-#define X(name, lin, drop) { lin, &name, drop },
-static const struct oflag kOflags[] = { SHIM_OFLAG_TABLE(X) };
-#undef X
-#define NOFLAGS (sizeof(kOflags) / sizeof(kOflags[0]))
+// Every flag cosmo knows has Linux's value, on both architectures, so the
+// known bits cross as they are. O_SYNC, O_TMPFILE and O_LARGEFILE are dealt
+// with separately below.
+#define OFLAGS_KNOWN                                                        \
+    (O_CREAT | O_EXCL | O_TRUNC | O_APPEND | O_NONBLOCK | O_CLOEXEC |       \
+     O_DIRECTORY | O_NOFOLLOW | _O_PATH | O_DSYNC | O_NOCTTY | O_DIRECT |   \
+     O_NOATIME)
 
 // Linux flags -> host flags. Returns 0, or -1 with errno set.
 static int oflags_to_host(int lin, int *out) {
@@ -96,7 +90,7 @@ static int oflags_to_host(int lin, int *out) {
     lin &= ~LIN_O_ACCMODE;
     lin &= ~SHIM_LIN_O_LARGEFILE; // meaningless with 64-bit off_t
     if ((lin & SHIM_LIN_O_SYNC) == SHIM_LIN_O_SYNC) {
-        if (unsupported(O_SYNC)) return errno = EOPNOTSUPP, -1;
+        if (!O_SYNC) return errno = EOPNOTSUPP, -1;
         host |= O_SYNC;
         lin &= ~SHIM_LIN_O_SYNC;
     }
@@ -120,15 +114,8 @@ static int oflags_to_host(int lin, int *out) {
 #endif
         lin &= ~SHIM_LIN_O_TMPFILE;
     }
-    for (size_t i = 0; i < NOFLAGS; i++) {
-        if (!(lin & kOflags[i].linux_bit)) continue;
-        lin &= ~kOflags[i].linux_bit;
-        if (!unsupported(*kOflags[i].host)) {
-            host |= *kOflags[i].host;
-        } else if (!kOflags[i].droppable) {
-            return errno = EOPNOTSUPP, -1;
-        }
-    }
+    host |= lin & OFLAGS_KNOWN;
+    lin &= ~OFLAGS_KNOWN;
     if (lin) return errno = EINVAL, -1; // bits we don't know about
     *out = host;
     return 0;
@@ -138,15 +125,11 @@ static int oflags_to_host(int lin, int *out) {
 // dropped rather than invented.
 static int oflags_to_linux(int host) {
     int lin = host & LIN_O_ACCMODE;
-    if (!unsupported(O_SYNC) && (host & O_SYNC) == (int)O_SYNC) {
+    if (O_SYNC && (host & O_SYNC) == (int)O_SYNC) {
         lin |= SHIM_LIN_O_SYNC;
         host &= ~O_SYNC;
     }
-    for (size_t i = 0; i < NOFLAGS; i++) {
-        unsigned h = *kOflags[i].host;
-        if (!unsupported(h) && (host & h) == (int)h) lin |= kOflags[i].linux_bit;
-    }
-    return lin;
+    return lin | (host & OFLAGS_KNOWN);
 }
 
 static int at_fdcwd(int dirfd) {
@@ -196,7 +179,7 @@ int __ape_shim_open(const char *path, int lin, ...) {
     int host;
     if (oflags_to_host(lin, &host) < 0) return -1;
     unsigned mode = 0;
-    if ((lin & SHIM_LIN_O_CREAT) || (lin & SHIM_LIN_O_TMPFILE) == SHIM_LIN_O_TMPFILE) {
+    if ((lin & O_CREAT) || (lin & SHIM_LIN_O_TMPFILE) == SHIM_LIN_O_TMPFILE) {
         va_list ap;
         va_start(ap, lin);
         mode = va_arg(ap, unsigned);
@@ -215,7 +198,7 @@ int __ape_shim_openat(int dirfd, const char *path, int lin, ...) {
     int host;
     if (oflags_to_host(lin, &host) < 0) return -1;
     unsigned mode = 0;
-    if ((lin & SHIM_LIN_O_CREAT) || (lin & SHIM_LIN_O_TMPFILE) == SHIM_LIN_O_TMPFILE) {
+    if ((lin & O_CREAT) || (lin & SHIM_LIN_O_TMPFILE) == SHIM_LIN_O_TMPFILE) {
         va_list ap;
         va_start(ap, lin);
         mode = va_arg(ap, unsigned);
@@ -240,12 +223,15 @@ int __ape_shim_openat(int dirfd, const char *path, int lin, ...) {
     return fd;
 }
 
-// whence is 0/1/2 on both sides (SEEK_DATA/SEEK_HOLE too). A /proc content
-// descriptor lives in memory and seeks there; its rewind regenerates the
-// text (shim/procfs/core/).
+// SEEK_SET/CUR/END are 0/1/2 on both sides. SEEK_DATA and SEEK_HOLE are
+// runtime constants (XNU has them the other way round, NT not at all). A
+// /proc content descriptor lives in memory and seeks there; its rewind
+// regenerates the text (shim/procfs/core/).
 off_t __ape_shim_lseek(int fd, off_t off, int whence) {
     long r = __ape_shim_procfs_memfd_lseek(fd, off, whence);
     if (r != -2) return r;
+    if (whence == SHIM_LIN_SEEK_DATA) whence = SEEK_DATA;
+    else if (whence == SHIM_LIN_SEEK_HOLE) whence = SEEK_HOLE;
     return lseek(fd, off, whence);
 }
 
@@ -596,22 +582,72 @@ int __ape_shim_faccessat(int dirfd, const char *path, int amode, int lin) {
     return rc;
 }
 
+// tv_nsec can carry UTIME_NOW/UTIME_OMIT, which are platform-coded.
+static const struct timespec *utimes_to_host(const struct timespec *times,
+                                             struct timespec copy[2]) {
+    if (!times) return NULL;
+    for (int i = 0; i < 2; i++) {
+        copy[i] = times[i];
+        if (copy[i].tv_nsec == SHIM_LIN_UTIME_NOW) copy[i].tv_nsec = UTIME_NOW;
+        else if (copy[i].tv_nsec == SHIM_LIN_UTIME_OMIT) copy[i].tv_nsec = UTIME_OMIT;
+    }
+    return copy;
+}
+
 int __ape_shim_utimensat(int dirfd, const char *path,
                          const struct timespec times[2], int lin) {
     int host = 0;
     if (at_bit(&lin, SHIM_LIN_AT_SYMLINK_NOFOLLOW, &AT_SYMLINK_NOFOLLOW, &host) < 0)
         return -1;
     if (lin) return errno = EINVAL, -1;
-    // tv_nsec can carry UTIME_NOW/UTIME_OMIT, which are platform-coded too.
     struct timespec copy[2];
-    if (times) {
-        for (int i = 0; i < 2; i++) {
-            copy[i] = times[i];
-            if (copy[i].tv_nsec == SHIM_LIN_UTIME_NOW) copy[i].tv_nsec = UTIME_NOW;
-            if (copy[i].tv_nsec == SHIM_LIN_UTIME_OMIT) copy[i].tv_nsec = UTIME_OMIT;
-        }
-    }
-    return utimensat(at_fdcwd(dirfd), path, times ? copy : NULL, host);
+    return utimensat(at_fdcwd(dirfd), path, utimes_to_host(times, copy), host);
+}
+
+int __ape_shim_futimens(int fd, const struct timespec times[2]) {
+    struct timespec copy[2];
+    return futimens(fd, utimes_to_host(times, copy));
+}
+
+int __ape_shim_mkdirat(int dirfd, const char *path, unsigned mode) {
+    return mkdirat(at_fdcwd(dirfd), path, mode);
+}
+
+int __ape_shim_symlinkat(const char *target, int newdirfd, const char *linkpath) {
+    return symlinkat(target, at_fdcwd(newdirfd), linkpath);
+}
+
+ssize_t __ape_shim_readlinkat(int dirfd, const char *path, char *buf, size_t size) {
+    return readlinkat(at_fdcwd(dirfd), path, buf, size);
+}
+
+int __ape_shim_fchownat(int dirfd, const char *path, unsigned uid, unsigned gid, int lin) {
+    int host = 0;
+    if (at_bit(&lin, SHIM_LIN_AT_SYMLINK_NOFOLLOW, &AT_SYMLINK_NOFOLLOW, &host) < 0 ||
+        at_bit(&lin, SHIM_LIN_AT_EMPTY_PATH, SHIM_AT_EMPTY_PATH, &host) < 0)
+        return -1;
+    if (lin) return errno = EINVAL, -1;
+    return fchownat(at_fdcwd(dirfd), path, uid, gid, host);
+}
+
+int __ape_shim_fchmodat(int dirfd, const char *path, unsigned mode, int lin) {
+    int host = 0;
+    if (at_bit(&lin, SHIM_LIN_AT_SYMLINK_NOFOLLOW, &AT_SYMLINK_NOFOLLOW, &host) < 0)
+        return -1;
+    if (lin) return errno = EINVAL, -1;
+    return fchmodat(at_fdcwd(dirfd), path, mode, host);
+}
+
+// flock: LOCK_SH and LOCK_NB differ on NT (0 and 1).
+int __ape_shim_flock(int fd, int lin) {
+    int host = 0;
+    if (lin & ~(SHIM_LIN_LOCK_SH | SHIM_LIN_LOCK_EX | SHIM_LIN_LOCK_NB | SHIM_LIN_LOCK_UN))
+        return errno = EINVAL, -1;
+    if (lin & SHIM_LIN_LOCK_SH) host |= LOCK_SH;
+    if (lin & SHIM_LIN_LOCK_EX) host |= LOCK_EX;
+    if (lin & SHIM_LIN_LOCK_NB) host |= LOCK_NB;
+    if (lin & SHIM_LIN_LOCK_UN) host |= LOCK_UN;
+    return flock(fd, host);
 }
 
 // mkfifo(): cosmo ships mknod() but not the POSIX wrapper over it. Nothing

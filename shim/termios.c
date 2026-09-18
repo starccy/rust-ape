@@ -35,12 +35,14 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 #include <sys/types.h>
+#include <pty.h>
 #include <termios.h>
 #include <unistd.h>
 
 #include <libc/intrin/nomultics.h>
 #include <libc/sysv/consts/baud.internal.h>
 #include <libc/sysv/consts/fio.h>
+#include <libc/sysv/consts/modem.h>
 #include <libc/sysv/consts/termios.h>
 
 #include "tables.h"
@@ -280,16 +282,31 @@ int __ape_shim_tcsetattr(int fd, int act, const struct lin_termios *lt) {
     return tcsetattr_keep_mouse(fd, act, &t);
 }
 
+// openpty and forkpty: the optional termios is musl's struct. winsize is the same on
+// both sides.
+int __ape_shim_openpty(int *master, int *slave, char *name,
+                       const struct lin_termios *lt, const struct winsize *ws) {
+    struct termios t;
+    if (lt) {
+        uint32_t f[4] = { lt->c_iflag, lt->c_oflag, lt->c_cflag, lt->c_lflag };
+        prefix_to_host(&t, f, lt->c_cc, 32);
+    }
+    return openpty(master, slave, name, lt ? &t : NULL, ws);
+}
+
+int __ape_shim_forkpty(int *master, char *name, const struct lin_termios *lt,
+                       const struct winsize *ws) {
+    struct termios t;
+    if (lt) {
+        uint32_t f[4] = { lt->c_iflag, lt->c_oflag, lt->c_cflag, lt->c_lflag };
+        prefix_to_host(&t, f, lt->c_cc, 32);
+    }
+    return forkpty(master, name, lt ? &t : NULL, ws);
+}
+
 int __ape_shim_tcflush(int fd, int qs) {
 #define X(name, linval) if (qs == (linval)) return tcflush(fd, name);
     SHIM_TCFLUSH_TABLE(X)
-#undef X
-    return errno = EINVAL, -1;
-}
-
-int __ape_shim_tcflow(int fd, int action) {
-#define X(name, linval) if (action == (linval)) return tcflow(fd, name);
-    SHIM_TCFLOW_TABLE(X)
 #undef X
     return errno = EINVAL, -1;
 }
@@ -315,6 +332,11 @@ int __ape_shim_cfsetospeed(struct lin_termios *lt, uint32_t sp) {
 
 int __ape_shim_cfsetispeed(struct lin_termios *lt, uint32_t sp) {
     return sp ? __ape_shim_cfsetospeed(lt, sp) : 0;
+}
+
+// musl's cfsetspeed is cfsetospeed: both speeds live in the one CBAUD field.
+int __ape_shim_cfsetspeed(struct lin_termios *lt, uint32_t sp) {
+    return __ape_shim_cfsetospeed(lt, sp);
 }
 
 void __ape_shim_cfmakeraw(struct lin_termios *lt) {
@@ -380,6 +402,13 @@ static int tio_set(int fd, const void *arg, bool two, int act) {
     return tcsetattr_keep_mouse(fd, act, &t);
 }
 
+#define X(name, lin) { lin, &name },
+static const struct {
+    int lin;
+    const uint64_t *host;
+} kForwarded[] = { SHIM_TIOC_TABLE(X) SHIM_MODEM_TABLE(X) };
+#undef X
+
 int __ape_shim_ioctl(int fd, int lin_req, ...) {
     va_list ap;
     va_start(ap, lin_req);
@@ -429,6 +458,18 @@ int __ape_shim_ioctl(int fd, int lin_req, ...) {
         *(int32_t *)arg = (int32_t)s;
         return 0;
     }
+
+    if (lin_req == SHIM_LIN_FIOCLEX || lin_req == SHIM_LIN_FIONCLEX) {
+        int flags = fcntl(fd, F_GETFD);
+        if (flags < 0) return -1;
+        int want = lin_req == SHIM_LIN_FIOCLEX ? (flags | FD_CLOEXEC) : (flags & ~FD_CLOEXEC);
+        return want == flags ? 0 : fcntl(fd, F_SETFD, want);
+    }
+
+    // the rest of the tables: same argument on both sides
+    for (size_t i = 0; i < sizeof(kForwarded) / sizeof(kForwarded[0]); i++)
+        if (kForwarded[i].lin == lin_req && *kForwarded[i].host)
+            return ioctl(fd, *kForwarded[i].host, arg);
 
     return errno = ENOTTY, -1;
 }

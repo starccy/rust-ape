@@ -96,6 +96,7 @@ unsafe extern "C" {
     unsafe fn GetProgramExecutableName() -> *mut c_char;
     unsafe fn GetInterpreterExecutableName(buf: *mut c_char, size: usize) -> *mut c_char;
     unsafe fn __get_tmpdir() -> *mut c_char;
+    #[link_name = "__ape_shim_getauxval"]
     unsafe fn getauxval(kind: c_ulong) -> c_ulong;
     unsafe fn getpagesize() -> c_int;
 }

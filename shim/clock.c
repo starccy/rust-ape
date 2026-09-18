@@ -69,3 +69,17 @@ int __ape_shim_pthread_condattr_setclock(pthread_condattr_t *attr, int lin) {
     if (clock_to_host(lin, &host) < 0) return EINVAL; // @returnserrno family
     return pthread_condattr_setclock(attr, host);
 }
+
+int __ape_shim_pthread_condattr_getclock(const pthread_condattr_t *attr, int *out) {
+    int host;
+    int rc = pthread_condattr_getclock(attr, &host);
+    if (rc) return rc;
+    for (size_t i = 0; i < NCLOCKS; i++) {
+        if (*kClocks[i].host == host) {
+            *out = kClocks[i].lin;
+            return 0;
+        }
+    }
+    *out = host;
+    return 0;
+}

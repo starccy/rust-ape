@@ -25,7 +25,6 @@
 #include "tables.h"
 
 // shim/signal.c
-int __ape_shim_signum_to_linux(int host);
 
 // Linux W* -> host. Returns 0, or -1 with errno set.
 static int wopts_to_host(int lin, int *out) {
@@ -51,11 +50,11 @@ static int wopts_to_host(int lin, int *out) {
 
 static int wstatus_to_linux(int st) {
     if (WIFSTOPPED(st)) {
-        return (__ape_shim_signum_to_linux(WSTOPSIG(st)) << 8) | 0x7f;
+        return (WSTOPSIG(st) << 8) | 0x7f;
     }
     if (WIFSIGNALED(st)) {
         // low 7 bits are the signal, bit 7 is the core-dump flag
-        return (st & 0x80) | __ape_shim_signum_to_linux(WTERMSIG(st));
+        return (st & 0x80) | WTERMSIG(st);
     }
     return st; // exited (signal-free) or continued (0xffff)
 }
@@ -129,7 +128,7 @@ static int waitid_emulate(int idtype, unsigned id, siginfo_t *infop, int lin) {
         infop->si_status = 0;
         return 0;
     }
-    infop->si_signo = SHIM_LIN_SIGCHLD;
+    infop->si_signo = SIGCHLD;
     infop->si_pid = rc;
     infop->si_uid = getuid();
     // st is already Linux-coded, including the signal number
@@ -138,7 +137,7 @@ static int waitid_emulate(int idtype, unsigned id, siginfo_t *infop, int lin) {
         infop->si_status = (st >> 8) & 0xff;
     } else if (st == 0xffff) {
         infop->si_code = SHIM_LIN_CLD_CONTINUED;
-        infop->si_status = SHIM_LIN_SIGCONT;
+        infop->si_status = SIGCONT;
     } else if ((st & 0x7f) == 0) {
         infop->si_code = SHIM_LIN_CLD_EXITED;
         infop->si_status = (st >> 8) & 0xff;

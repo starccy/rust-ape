@@ -26,39 +26,7 @@ diff a/library/Cargo.toml b/library/Cargo.toml
 diff a/library/std/src/sys/io/error/unix.rs b/library/std/src/sys/io/error/unix.rs
 --- a/library/std/src/sys/io/error/unix.rs
 +++ b/library/std/src/sys/io/error/unix.rs
-@@ -19,7 +19,9 @@
-             target_os = "hurd",
-             target_os = "teeos",
-         ),
--        link_name = "__errno_location"
-+        // cosmo: the shim keeps the Rust world in Linux errno coding; see
-+        // shim/errno.c in the SDK.
-+        link_name = "__ape_shim_errno_location"
-     )]
-     #[cfg_attr(
-         any(
-@@ -40,7 +42,8 @@
-     #[cfg_attr(target_os = "haiku", link_name = "_errnop")]
-     #[cfg_attr(target_os = "aix", link_name = "_Errno")]
-     // SAFETY: this will always return the same pointer on a given thread.
--    #[unsafe(ffi_const)]
-+    // cosmo: no ffi_const — the shim's accessor refreshes the translated
-+    // copy as a side effect, so calls must not be merged.
-     pub safe fn errno_location() -> *mut c_int;
- }
- 
-@@ -206,7 +209,9 @@
-                 ),
-                 not(target_env = "ohos")
-             ),
--            link_name = "__xpg_strerror_r"
-+            // cosmo: errno is Linux-coded on this side of the shim, and
-+            // cosmo's strerror_r wants the host's; the shim translates.
-+            link_name = "__ape_shim_strerror_r"
-         )]
-         fn strerror_r(errnum: c_int, buf: *mut c_char, buflen: libc::size_t) -> c_int;
-     }
-@@ -216,7 +221,9 @@
+@@ -216,7 +216,9 @@
      let p = buf.as_mut_ptr();
      unsafe {
          if strerror_r(errno as c_int, p, buf.len()) < 0 {

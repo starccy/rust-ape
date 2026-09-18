@@ -36,6 +36,30 @@
 #define SHIM_LIN_X_OK 1
 #define SHIM_LIN_UTIME_NOW 1073741823
 #define SHIM_LIN_UTIME_OMIT 1073741822
+#define SHIM_LIN_LOCK_SH 1
+#define SHIM_LIN_LOCK_EX 2
+#define SHIM_LIN_LOCK_NB 4
+#define SHIM_LIN_LOCK_UN 8
+#define SHIM_LIN_SEEK_DATA 3
+#define SHIM_LIN_SEEK_HOLE 4
+#define SHIM_LIN_MS_ASYNC 1
+#define SHIM_LIN_MS_INVALIDATE 2
+#define SHIM_LIN_MS_SYNC 4
+#define SHIM_LIN_RUSAGE_THREAD 1
+#define SHIM_LIN_PTHREAD_MUTEX_NORMAL 0
+#define SHIM_LIN_PTHREAD_MUTEX_RECURSIVE 1
+#define SHIM_LIN_PTHREAD_MUTEX_ERRORCHECK 2
+#define SHIM_LIN_PTHREAD_PROCESS_PRIVATE 0
+#define SHIM_LIN_PTHREAD_PROCESS_SHARED 1
+#define SHIM_LIN_SCHED_RESET_ON_FORK 1073741824
+#define SHIM_LIN_POSIX_SPAWN_RESETIDS 1
+#define SHIM_LIN_POSIX_SPAWN_SETPGROUP 2
+#define SHIM_LIN_POSIX_SPAWN_SETSIGDEF 4
+#define SHIM_LIN_POSIX_SPAWN_SETSIGMASK 8
+#define SHIM_LIN_POSIX_SPAWN_SETSCHEDPARAM 16
+#define SHIM_LIN_POSIX_SPAWN_SETSCHEDULER 32
+#define SHIM_LIN_POSIX_SPAWN_USEVFORK 64
+#define SHIM_LIN_POSIX_SPAWN_SETSID 128
 #define SHIM_LIN_WNOHANG 1
 #define SHIM_LIN_WUNTRACED 2
 #define SHIM_LIN_WCONTINUED 8
@@ -80,6 +104,8 @@
 #define SHIM_LIN_TCSETSW 21507
 #define SHIM_LIN_TCSETSF 21508
 #define SHIM_LIN_FIONBIO 21537
+#define SHIM_LIN_FIOCLEX 21585
+#define SHIM_LIN_FIONCLEX 21584
 #define SHIM_LIN_TCGETS2 -2144578518
 #define SHIM_LIN_TCSETS2 1076646955
 #define SHIM_LIN_TCSETSW2 1076646956
@@ -107,350 +133,6 @@
 #elif defined(__aarch64__)
 #define SHIM_LIN_SYS_getrandom 278
 #endif
-
-/* SHIM_ERRNO_TABLE <- libc crate; cosmo side declared in libc/errno.h */
-#define SHIM_LIN_EPERM 1
-static const int SHIM_FIX_EPERM = 1; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENOENT 2
-static const int SHIM_FIX_ENOENT = 2; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ESRCH 3
-static const int SHIM_FIX_ESRCH = 3; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EINTR 4
-static const int SHIM_FIX_EINTR = 4; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EIO 5
-static const int SHIM_FIX_EIO = 5; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENXIO 6
-static const int SHIM_FIX_ENXIO = 6; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_E2BIG 7
-static const int SHIM_FIX_E2BIG = 7; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENOEXEC 8
-static const int SHIM_FIX_ENOEXEC = 8; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EBADF 9
-static const int SHIM_FIX_EBADF = 9; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ECHILD 10
-static const int SHIM_FIX_ECHILD = 10; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EAGAIN 11
-static const int SHIM_FIX_EAGAIN = 11; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENOMEM 12
-static const int SHIM_FIX_ENOMEM = 12; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EACCES 13
-static const int SHIM_FIX_EACCES = 13; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EFAULT 14
-static const int SHIM_FIX_EFAULT = 14; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENOTBLK 15
-static const int SHIM_FIX_ENOTBLK = 15; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EBUSY 16
-static const int SHIM_FIX_EBUSY = 16; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EEXIST 17
-static const int SHIM_FIX_EEXIST = 17; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EXDEV 18
-static const int SHIM_FIX_EXDEV = 18; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENODEV 19
-static const int SHIM_FIX_ENODEV = 19; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENOTDIR 20
-static const int SHIM_FIX_ENOTDIR = 20; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EISDIR 21
-static const int SHIM_FIX_EISDIR = 21; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EINVAL 22
-static const int SHIM_FIX_EINVAL = 22; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENFILE 23
-static const int SHIM_FIX_ENFILE = 23; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EMFILE 24
-static const int SHIM_FIX_EMFILE = 24; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENOTTY 25
-static const int SHIM_FIX_ENOTTY = 25; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ETXTBSY 26
-static const int SHIM_FIX_ETXTBSY = 26; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EFBIG 27
-static const int SHIM_FIX_EFBIG = 27; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENOSPC 28
-static const int SHIM_FIX_ENOSPC = 28; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ESPIPE 29
-static const int SHIM_FIX_ESPIPE = 29; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EROFS 30
-static const int SHIM_FIX_EROFS = 30; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EMLINK 31
-static const int SHIM_FIX_EMLINK = 31; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EPIPE 32
-static const int SHIM_FIX_EPIPE = 32; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EDOM 33
-static const int SHIM_FIX_EDOM = 33; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ERANGE 34
-static const int SHIM_FIX_ERANGE = 34; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EDEADLK 35
-static const int SHIM_FIX_EDEADLK = 35; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENAMETOOLONG 36
-static const int SHIM_FIX_ENAMETOOLONG = 36; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENOLCK 37
-static const int SHIM_FIX_ENOLCK = 37; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENOSYS 38
-static const int SHIM_FIX_ENOSYS = 38; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENOTEMPTY 39
-static const int SHIM_FIX_ENOTEMPTY = 39; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ELOOP 40
-static const int SHIM_FIX_ELOOP = 40; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENOMSG 42
-static const int SHIM_FIX_ENOMSG = 42; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EIDRM 43
-static const int SHIM_FIX_EIDRM = 43; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENOSTR 60
-static const int SHIM_FIX_ENOSTR = 60; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENODATA 61
-static const int SHIM_FIX_ENODATA = 61; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENOSR 63
-static const int SHIM_FIX_ENOSR = 63; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENONET 64
-static const int SHIM_FIX_ENONET = 64; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EREMOTE 66
-static const int SHIM_FIX_EREMOTE = 66; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENOLINK 67
-static const int SHIM_FIX_ENOLINK = 67; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EPROTO 71
-static const int SHIM_FIX_EPROTO = 71; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EMULTIHOP 72
-static const int SHIM_FIX_EMULTIHOP = 72; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EBADMSG 74
-static const int SHIM_FIX_EBADMSG = 74; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EOVERFLOW 75
-static const int SHIM_FIX_EOVERFLOW = 75; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EBADFD 77
-static const int SHIM_FIX_EBADFD = 77; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EILSEQ 84
-static const int SHIM_FIX_EILSEQ = 84; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ERESTART 85
-static const int SHIM_FIX_ERESTART = 85; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EUSERS 87
-static const int SHIM_FIX_EUSERS = 87; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENOTSOCK 88
-static const int SHIM_FIX_ENOTSOCK = 88; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EDESTADDRREQ 89
-static const int SHIM_FIX_EDESTADDRREQ = 89; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EMSGSIZE 90
-static const int SHIM_FIX_EMSGSIZE = 90; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EPROTOTYPE 91
-static const int SHIM_FIX_EPROTOTYPE = 91; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENOPROTOOPT 92
-static const int SHIM_FIX_ENOPROTOOPT = 92; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EPROTONOSUPPORT 93
-static const int SHIM_FIX_EPROTONOSUPPORT = 93; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ESOCKTNOSUPPORT 94
-static const int SHIM_FIX_ESOCKTNOSUPPORT = 94; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EOPNOTSUPP 95
-static const int SHIM_FIX_EOPNOTSUPP = 95; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENOTSUP 95
-static const int SHIM_FIX_ENOTSUP = 95; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EPFNOSUPPORT 96
-static const int SHIM_FIX_EPFNOSUPPORT = 96; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EAFNOSUPPORT 97
-static const int SHIM_FIX_EAFNOSUPPORT = 97; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EADDRINUSE 98
-static const int SHIM_FIX_EADDRINUSE = 98; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EADDRNOTAVAIL 99
-static const int SHIM_FIX_EADDRNOTAVAIL = 99; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENETDOWN 100
-static const int SHIM_FIX_ENETDOWN = 100; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENETUNREACH 101
-static const int SHIM_FIX_ENETUNREACH = 101; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENETRESET 102
-static const int SHIM_FIX_ENETRESET = 102; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ECONNABORTED 103
-static const int SHIM_FIX_ECONNABORTED = 103; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ECONNRESET 104
-static const int SHIM_FIX_ECONNRESET = 104; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENOBUFS 105
-static const int SHIM_FIX_ENOBUFS = 105; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EISCONN 106
-static const int SHIM_FIX_EISCONN = 106; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENOTCONN 107
-static const int SHIM_FIX_ENOTCONN = 107; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ESHUTDOWN 108
-static const int SHIM_FIX_ESHUTDOWN = 108; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ETOOMANYREFS 109
-static const int SHIM_FIX_ETOOMANYREFS = 109; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ETIMEDOUT 110
-static const int SHIM_FIX_ETIMEDOUT = 110; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ETIME 62
-static const int SHIM_FIX_ETIME = 62; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ECONNREFUSED 111
-static const int SHIM_FIX_ECONNREFUSED = 111; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EHOSTDOWN 112
-static const int SHIM_FIX_EHOSTDOWN = 112; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EHOSTUNREACH 113
-static const int SHIM_FIX_EHOSTUNREACH = 113; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EALREADY 114
-static const int SHIM_FIX_EALREADY = 114; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EINPROGRESS 115
-static const int SHIM_FIX_EINPROGRESS = 115; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ESTALE 116
-static const int SHIM_FIX_ESTALE = 116; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EDQUOT 122
-static const int SHIM_FIX_EDQUOT = 122; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENOMEDIUM 123
-static const int SHIM_FIX_ENOMEDIUM = 123; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EMEDIUMTYPE 124
-static const int SHIM_FIX_EMEDIUMTYPE = 124; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ECANCELED 125
-static const int SHIM_FIX_ECANCELED = 125; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EOWNERDEAD 130
-static const int SHIM_FIX_EOWNERDEAD = 130; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ENOTRECOVERABLE 131
-static const int SHIM_FIX_ENOTRECOVERABLE = 131; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_ERFKILL 132
-static const int SHIM_FIX_ERFKILL = 132; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_EHWPOISON 133
-static const int SHIM_FIX_EHWPOISON = 133; /* cosmo fixes this per-platform-invariant */
-#define SHIM_ERRNO_TABLE(X) \
-  X(SHIM_FIX_EPERM, SHIM_LIN_EPERM) \
-  X(SHIM_FIX_ENOENT, SHIM_LIN_ENOENT) \
-  X(SHIM_FIX_ESRCH, SHIM_LIN_ESRCH) \
-  X(SHIM_FIX_EINTR, SHIM_LIN_EINTR) \
-  X(SHIM_FIX_EIO, SHIM_LIN_EIO) \
-  X(SHIM_FIX_ENXIO, SHIM_LIN_ENXIO) \
-  X(SHIM_FIX_E2BIG, SHIM_LIN_E2BIG) \
-  X(SHIM_FIX_ENOEXEC, SHIM_LIN_ENOEXEC) \
-  X(SHIM_FIX_EBADF, SHIM_LIN_EBADF) \
-  X(SHIM_FIX_ECHILD, SHIM_LIN_ECHILD) \
-  X(SHIM_FIX_EAGAIN, SHIM_LIN_EAGAIN) \
-  X(SHIM_FIX_ENOMEM, SHIM_LIN_ENOMEM) \
-  X(SHIM_FIX_EACCES, SHIM_LIN_EACCES) \
-  X(SHIM_FIX_EFAULT, SHIM_LIN_EFAULT) \
-  X(SHIM_FIX_ENOTBLK, SHIM_LIN_ENOTBLK) \
-  X(SHIM_FIX_EBUSY, SHIM_LIN_EBUSY) \
-  X(SHIM_FIX_EEXIST, SHIM_LIN_EEXIST) \
-  X(SHIM_FIX_EXDEV, SHIM_LIN_EXDEV) \
-  X(SHIM_FIX_ENODEV, SHIM_LIN_ENODEV) \
-  X(SHIM_FIX_ENOTDIR, SHIM_LIN_ENOTDIR) \
-  X(SHIM_FIX_EISDIR, SHIM_LIN_EISDIR) \
-  X(SHIM_FIX_EINVAL, SHIM_LIN_EINVAL) \
-  X(SHIM_FIX_ENFILE, SHIM_LIN_ENFILE) \
-  X(SHIM_FIX_EMFILE, SHIM_LIN_EMFILE) \
-  X(SHIM_FIX_ENOTTY, SHIM_LIN_ENOTTY) \
-  X(SHIM_FIX_ETXTBSY, SHIM_LIN_ETXTBSY) \
-  X(SHIM_FIX_EFBIG, SHIM_LIN_EFBIG) \
-  X(SHIM_FIX_ENOSPC, SHIM_LIN_ENOSPC) \
-  X(SHIM_FIX_ESPIPE, SHIM_LIN_ESPIPE) \
-  X(SHIM_FIX_EROFS, SHIM_LIN_EROFS) \
-  X(SHIM_FIX_EMLINK, SHIM_LIN_EMLINK) \
-  X(SHIM_FIX_EPIPE, SHIM_LIN_EPIPE) \
-  X(SHIM_FIX_EDOM, SHIM_LIN_EDOM) \
-  X(SHIM_FIX_ERANGE, SHIM_LIN_ERANGE) \
-  X(SHIM_FIX_EDEADLK, SHIM_LIN_EDEADLK) \
-  X(SHIM_FIX_ENAMETOOLONG, SHIM_LIN_ENAMETOOLONG) \
-  X(SHIM_FIX_ENOLCK, SHIM_LIN_ENOLCK) \
-  X(SHIM_FIX_ENOSYS, SHIM_LIN_ENOSYS) \
-  X(SHIM_FIX_ENOTEMPTY, SHIM_LIN_ENOTEMPTY) \
-  X(SHIM_FIX_ELOOP, SHIM_LIN_ELOOP) \
-  X(SHIM_FIX_ENOMSG, SHIM_LIN_ENOMSG) \
-  X(SHIM_FIX_EIDRM, SHIM_LIN_EIDRM) \
-  X(SHIM_FIX_ENOSTR, SHIM_LIN_ENOSTR) \
-  X(SHIM_FIX_ENODATA, SHIM_LIN_ENODATA) \
-  X(SHIM_FIX_ENOSR, SHIM_LIN_ENOSR) \
-  X(SHIM_FIX_ENONET, SHIM_LIN_ENONET) \
-  X(SHIM_FIX_EREMOTE, SHIM_LIN_EREMOTE) \
-  X(SHIM_FIX_ENOLINK, SHIM_LIN_ENOLINK) \
-  X(SHIM_FIX_EPROTO, SHIM_LIN_EPROTO) \
-  X(SHIM_FIX_EMULTIHOP, SHIM_LIN_EMULTIHOP) \
-  X(SHIM_FIX_EBADMSG, SHIM_LIN_EBADMSG) \
-  X(SHIM_FIX_EOVERFLOW, SHIM_LIN_EOVERFLOW) \
-  X(SHIM_FIX_EBADFD, SHIM_LIN_EBADFD) \
-  X(SHIM_FIX_EILSEQ, SHIM_LIN_EILSEQ) \
-  X(SHIM_FIX_ERESTART, SHIM_LIN_ERESTART) \
-  X(SHIM_FIX_EUSERS, SHIM_LIN_EUSERS) \
-  X(SHIM_FIX_ENOTSOCK, SHIM_LIN_ENOTSOCK) \
-  X(SHIM_FIX_EDESTADDRREQ, SHIM_LIN_EDESTADDRREQ) \
-  X(SHIM_FIX_EMSGSIZE, SHIM_LIN_EMSGSIZE) \
-  X(SHIM_FIX_EPROTOTYPE, SHIM_LIN_EPROTOTYPE) \
-  X(SHIM_FIX_ENOPROTOOPT, SHIM_LIN_ENOPROTOOPT) \
-  X(SHIM_FIX_EPROTONOSUPPORT, SHIM_LIN_EPROTONOSUPPORT) \
-  X(SHIM_FIX_ESOCKTNOSUPPORT, SHIM_LIN_ESOCKTNOSUPPORT) \
-  X(SHIM_FIX_EOPNOTSUPP, SHIM_LIN_EOPNOTSUPP) \
-  X(SHIM_FIX_ENOTSUP, SHIM_LIN_ENOTSUP) \
-  X(SHIM_FIX_EPFNOSUPPORT, SHIM_LIN_EPFNOSUPPORT) \
-  X(SHIM_FIX_EAFNOSUPPORT, SHIM_LIN_EAFNOSUPPORT) \
-  X(SHIM_FIX_EADDRINUSE, SHIM_LIN_EADDRINUSE) \
-  X(SHIM_FIX_EADDRNOTAVAIL, SHIM_LIN_EADDRNOTAVAIL) \
-  X(SHIM_FIX_ENETDOWN, SHIM_LIN_ENETDOWN) \
-  X(SHIM_FIX_ENETUNREACH, SHIM_LIN_ENETUNREACH) \
-  X(SHIM_FIX_ENETRESET, SHIM_LIN_ENETRESET) \
-  X(SHIM_FIX_ECONNABORTED, SHIM_LIN_ECONNABORTED) \
-  X(SHIM_FIX_ECONNRESET, SHIM_LIN_ECONNRESET) \
-  X(SHIM_FIX_ENOBUFS, SHIM_LIN_ENOBUFS) \
-  X(SHIM_FIX_EISCONN, SHIM_LIN_EISCONN) \
-  X(SHIM_FIX_ENOTCONN, SHIM_LIN_ENOTCONN) \
-  X(SHIM_FIX_ESHUTDOWN, SHIM_LIN_ESHUTDOWN) \
-  X(SHIM_FIX_ETOOMANYREFS, SHIM_LIN_ETOOMANYREFS) \
-  X(SHIM_FIX_ETIMEDOUT, SHIM_LIN_ETIMEDOUT) \
-  X(SHIM_FIX_ETIME, SHIM_LIN_ETIME) \
-  X(SHIM_FIX_ECONNREFUSED, SHIM_LIN_ECONNREFUSED) \
-  X(SHIM_FIX_EHOSTDOWN, SHIM_LIN_EHOSTDOWN) \
-  X(SHIM_FIX_EHOSTUNREACH, SHIM_LIN_EHOSTUNREACH) \
-  X(SHIM_FIX_EALREADY, SHIM_LIN_EALREADY) \
-  X(SHIM_FIX_EINPROGRESS, SHIM_LIN_EINPROGRESS) \
-  X(SHIM_FIX_ESTALE, SHIM_LIN_ESTALE) \
-  X(SHIM_FIX_EDQUOT, SHIM_LIN_EDQUOT) \
-  X(SHIM_FIX_ENOMEDIUM, SHIM_LIN_ENOMEDIUM) \
-  X(SHIM_FIX_EMEDIUMTYPE, SHIM_LIN_EMEDIUMTYPE) \
-  X(SHIM_FIX_ECANCELED, SHIM_LIN_ECANCELED) \
-  X(SHIM_FIX_EOWNERDEAD, SHIM_LIN_EOWNERDEAD) \
-  X(SHIM_FIX_ENOTRECOVERABLE, SHIM_LIN_ENOTRECOVERABLE) \
-  X(SHIM_FIX_ERFKILL, SHIM_LIN_ERFKILL) \
-  X(SHIM_FIX_EHWPOISON, SHIM_LIN_EHWPOISON) \
-  /* end SHIM_ERRNO_TABLE */
-
-/* SHIM_OFLAG_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/o.h */
-#define SHIM_LIN_O_CREAT 64
-static const unsigned SHIM_FIX_O_CREAT = 64; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_O_EXCL 128
-static const unsigned SHIM_FIX_O_EXCL = 128; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_O_TRUNC 512
-static const unsigned SHIM_FIX_O_TRUNC = 512; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_O_APPEND 1024
-static const unsigned SHIM_FIX_O_APPEND = 1024; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_O_NONBLOCK 2048
-static const unsigned SHIM_FIX_O_NONBLOCK = 2048; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_O_CLOEXEC 524288
-static const unsigned SHIM_FIX_O_CLOEXEC = 524288; /* cosmo fixes this per-platform-invariant */
-#if defined(__x86_64__)
-#define SHIM_LIN_O_DIRECTORY 65536
-#elif defined(__aarch64__)
-#define SHIM_LIN_O_DIRECTORY 16384
-#endif
-static const unsigned SHIM_FIX_O_DIRECTORY = 65536; /* cosmo fixes this per-platform-invariant */
-#if defined(__x86_64__)
-#define SHIM_LIN_O_NOFOLLOW 131072
-#elif defined(__aarch64__)
-#define SHIM_LIN_O_NOFOLLOW 32768
-#endif
-static const unsigned SHIM_FIX_O_NOFOLLOW = 131072; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_O_PATH 2097152
-static const unsigned SHIM_FIX__O_PATH = 2097152; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_O_DSYNC 4096
-static const unsigned SHIM_FIX_O_DSYNC = 4096; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_O_NOCTTY 256
-static const unsigned SHIM_FIX_O_NOCTTY = 256; /* cosmo fixes this per-platform-invariant */
-#if defined(__x86_64__)
-#define SHIM_LIN_O_DIRECT 16384
-#elif defined(__aarch64__)
-#define SHIM_LIN_O_DIRECT 65536
-#endif
-static const unsigned SHIM_FIX_O_DIRECT = 16384; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_O_NOATIME 262144
-static const unsigned SHIM_FIX_O_NOATIME = 262144; /* cosmo fixes this per-platform-invariant */
-#define SHIM_OFLAG_TABLE(X) \
-  X(SHIM_FIX_O_CREAT, SHIM_LIN_O_CREAT, 0) \
-  X(SHIM_FIX_O_EXCL, SHIM_LIN_O_EXCL, 0) \
-  X(SHIM_FIX_O_TRUNC, SHIM_LIN_O_TRUNC, 0) \
-  X(SHIM_FIX_O_APPEND, SHIM_LIN_O_APPEND, 0) \
-  X(SHIM_FIX_O_NONBLOCK, SHIM_LIN_O_NONBLOCK, 0) \
-  X(SHIM_FIX_O_CLOEXEC, SHIM_LIN_O_CLOEXEC, 0) \
-  X(SHIM_FIX_O_DIRECTORY, SHIM_LIN_O_DIRECTORY, 0) \
-  X(SHIM_FIX_O_NOFOLLOW, SHIM_LIN_O_NOFOLLOW, 0) \
-  X(SHIM_FIX__O_PATH, SHIM_LIN_O_PATH, 1) \
-  X(SHIM_FIX_O_DSYNC, SHIM_LIN_O_DSYNC, 0) \
-  X(SHIM_FIX_O_NOCTTY, SHIM_LIN_O_NOCTTY, 1) \
-  X(SHIM_FIX_O_DIRECT, SHIM_LIN_O_DIRECT, 1) \
-  X(SHIM_FIX_O_NOATIME, SHIM_LIN_O_NOATIME, 1) \
-  /* end SHIM_OFLAG_TABLE */
 
 /* SHIM_FCNTL_CMD_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/f.h */
 #define SHIM_LIN_F_GETLK 5
@@ -564,6 +246,11 @@ static const int SHIM_FIX_TCP_NODELAY = 1; /* cosmo fixes this per-platform-inva
 #define SHIM_LIN_TCP_DEFER_ACCEPT 9
 #define SHIM_LIN_TCP_FASTOPEN 23
 #define SHIM_LIN_TCP_QUICKACK 12
+#define SHIM_LIN_TCP_CONGESTION 13
+#define SHIM_LIN_TCP_USER_TIMEOUT 18
+#define SHIM_LIN_TCP_NOTSENT_LOWAT 25
+#define SHIM_LIN_TCP_THIN_LINEAR_TIMEOUTS 16
+#define SHIM_LIN_TCP_THIN_DUPACK 17
 #define SHIM_TCP_TABLE(X) \
   X(SHIM_FIX_TCP_NODELAY, SHIM_LIN_TCP_NODELAY) \
   X(TCP_MAXSEG, SHIM_LIN_TCP_MAXSEG) \
@@ -575,6 +262,11 @@ static const int SHIM_FIX_TCP_NODELAY = 1; /* cosmo fixes this per-platform-inva
   X(TCP_DEFER_ACCEPT, SHIM_LIN_TCP_DEFER_ACCEPT) \
   X(TCP_FASTOPEN, SHIM_LIN_TCP_FASTOPEN) \
   X(TCP_QUICKACK, SHIM_LIN_TCP_QUICKACK) \
+  X(TCP_CONGESTION, SHIM_LIN_TCP_CONGESTION) \
+  X(TCP_USER_TIMEOUT, SHIM_LIN_TCP_USER_TIMEOUT) \
+  X(TCP_NOTSENT_LOWAT, SHIM_LIN_TCP_NOTSENT_LOWAT) \
+  X(TCP_THIN_LINEAR_TIMEOUTS, SHIM_LIN_TCP_THIN_LINEAR_TIMEOUTS) \
+  X(TCP_THIN_DUPACK, SHIM_LIN_TCP_THIN_DUPACK) \
   /* end SHIM_TCP_TABLE */
 
 /* SHIM_IP_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/ip.h */
@@ -590,6 +282,7 @@ static const int SHIM_FIX_TCP_NODELAY = 1; /* cosmo fixes this per-platform-inva
 #define SHIM_LIN_IP_ADD_MEMBERSHIP 35
 #define SHIM_LIN_IP_DROP_MEMBERSHIP 36
 #define SHIM_LIN_IP_PKTINFO 8
+#define SHIM_LIN_IP_MTU 14
 #define SHIM_IP_TABLE(X) \
   X(IP_TOS, SHIM_LIN_IP_TOS) \
   X(IP_TTL, SHIM_LIN_IP_TTL) \
@@ -603,6 +296,7 @@ static const int SHIM_FIX_TCP_NODELAY = 1; /* cosmo fixes this per-platform-inva
   X(IP_ADD_MEMBERSHIP, SHIM_LIN_IP_ADD_MEMBERSHIP) \
   X(IP_DROP_MEMBERSHIP, SHIM_LIN_IP_DROP_MEMBERSHIP) \
   X(IP_PKTINFO, SHIM_LIN_IP_PKTINFO) \
+  X(IP_MTU, SHIM_LIN_IP_MTU) \
   /* end SHIM_IP_TABLE */
 
 /* SHIM_IPV6_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/ipv6.h */
@@ -616,6 +310,12 @@ static const int SHIM_FIX_TCP_NODELAY = 1; /* cosmo fixes this per-platform-inva
 #define SHIM_LIN_IPV6_TCLASS 67
 #define SHIM_LIN_IPV6_RECVTCLASS 66
 #define SHIM_LIN_IPV6_PKTINFO 50
+#define SHIM_LIN_IPV6_HOPLIMIT 52
+#define SHIM_LIN_IPV6_DONTFRAG 62
+#define SHIM_LIN_IPV6_CHECKSUM 7
+#define SHIM_LIN_IPV6_HOPOPTS 54
+#define SHIM_LIN_IPV6_RTHDR 57
+#define SHIM_LIN_IPV6_RECVRTHDR 56
 #define SHIM_IPV6_TABLE(X) \
   X(IPV6_V6ONLY, SHIM_LIN_IPV6_V6ONLY) \
   X(IPV6_UNICAST_HOPS, SHIM_LIN_IPV6_UNICAST_HOPS) \
@@ -627,6 +327,12 @@ static const int SHIM_FIX_TCP_NODELAY = 1; /* cosmo fixes this per-platform-inva
   X(IPV6_TCLASS, SHIM_LIN_IPV6_TCLASS) \
   X(IPV6_RECVTCLASS, SHIM_LIN_IPV6_RECVTCLASS) \
   X(IPV6_PKTINFO, SHIM_LIN_IPV6_PKTINFO) \
+  X(IPV6_HOPLIMIT, SHIM_LIN_IPV6_HOPLIMIT) \
+  X(IPV6_DONTFRAG, SHIM_LIN_IPV6_DONTFRAG) \
+  X(IPV6_CHECKSUM, SHIM_LIN_IPV6_CHECKSUM) \
+  X(IPV6_HOPOPTS, SHIM_LIN_IPV6_HOPOPTS) \
+  X(IPV6_RTHDR, SHIM_LIN_IPV6_RTHDR) \
+  X(IPV6_RECVRTHDR, SHIM_LIN_IPV6_RECVRTHDR) \
   /* end SHIM_IPV6_TABLE */
 
 /* SHIM_MAP_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/map.h */
@@ -636,6 +342,9 @@ static const int SHIM_FIX_TCP_NODELAY = 1; /* cosmo fixes this per-platform-inva
 #define SHIM_LIN_MAP_NORESERVE 16384
 #define SHIM_LIN_MAP_POPULATE 32768
 #define SHIM_LIN_MAP_LOCKED 8192
+#define SHIM_LIN_MAP_DENYWRITE 2048
+#define SHIM_LIN_MAP_EXECUTABLE 4096
+#define SHIM_LIN_MAP_NONBLOCK 65536
 #define SHIM_MAP_TABLE(X) \
   X(MAP_ANONYMOUS, SHIM_LIN_MAP_ANONYMOUS, 0) \
   X(MAP_FIXED_NOREPLACE, SHIM_LIN_MAP_FIXED_NOREPLACE, 0) \
@@ -643,6 +352,9 @@ static const int SHIM_FIX_TCP_NODELAY = 1; /* cosmo fixes this per-platform-inva
   X(MAP_NORESERVE, SHIM_LIN_MAP_NORESERVE, 1) \
   X(MAP_POPULATE, SHIM_LIN_MAP_POPULATE, 1) \
   X(MAP_LOCKED, SHIM_LIN_MAP_LOCKED, 1) \
+  X(MAP_DENYWRITE, SHIM_LIN_MAP_DENYWRITE, 1) \
+  X(MAP_EXECUTABLE, SHIM_LIN_MAP_EXECUTABLE, 1) \
+  X(MAP_NONBLOCK, SHIM_LIN_MAP_NONBLOCK, 1) \
   /* end SHIM_MAP_TABLE */
 
 /* SHIM_CLOCK_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/clock.h */
@@ -665,90 +377,6 @@ static const int SHIM_FIX_CLOCK_REALTIME = 0; /* cosmo fixes this per-platform-i
   X(CLOCK_MONOTONIC_COARSE, SHIM_LIN_CLOCK_MONOTONIC_COARSE) \
   X(CLOCK_BOOTTIME, SHIM_LIN_CLOCK_BOOTTIME) \
   /* end SHIM_CLOCK_TABLE */
-
-/* SHIM_MADV_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/madv.h */
-#define SHIM_LIN_MADV_NORMAL 0
-static const unsigned SHIM_FIX_MADV_NORMAL = 0; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_MADV_RANDOM 1
-static const unsigned SHIM_FIX_MADV_RANDOM = 1; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_MADV_SEQUENTIAL 2
-static const unsigned SHIM_FIX_MADV_SEQUENTIAL = 2; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_MADV_WILLNEED 3
-static const unsigned SHIM_FIX_MADV_WILLNEED = 3; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_MADV_DONTNEED 4
-static const unsigned SHIM_FIX_MADV_DONTNEED = 4; /* cosmo fixes this per-platform-invariant */
-#define SHIM_MADV_TABLE(X) \
-  X(SHIM_FIX_MADV_NORMAL, SHIM_LIN_MADV_NORMAL) \
-  X(SHIM_FIX_MADV_RANDOM, SHIM_LIN_MADV_RANDOM) \
-  X(SHIM_FIX_MADV_SEQUENTIAL, SHIM_LIN_MADV_SEQUENTIAL) \
-  X(SHIM_FIX_MADV_WILLNEED, SHIM_LIN_MADV_WILLNEED) \
-  X(SHIM_FIX_MADV_DONTNEED, SHIM_LIN_MADV_DONTNEED) \
-  /* end SHIM_MADV_TABLE */
-
-/* SHIM_RLIMIT_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/rlimit.h */
-#define SHIM_LIN_RLIMIT_CPU 0
-static const unsigned SHIM_FIX_RLIMIT_CPU = 0; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_RLIMIT_FSIZE 1
-static const unsigned SHIM_FIX_RLIMIT_FSIZE = 1; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_RLIMIT_DATA 2
-static const unsigned SHIM_FIX_RLIMIT_DATA = 2; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_RLIMIT_STACK 3
-static const unsigned SHIM_FIX_RLIMIT_STACK = 3; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_RLIMIT_CORE 4
-static const unsigned SHIM_FIX_RLIMIT_CORE = 4; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_RLIMIT_RSS 5
-static const unsigned SHIM_FIX_RLIMIT_RSS = 5; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_RLIMIT_NPROC 6
-static const unsigned SHIM_FIX_RLIMIT_NPROC = 6; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_RLIMIT_NOFILE 7
-static const unsigned SHIM_FIX_RLIMIT_NOFILE = 7; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_RLIMIT_MEMLOCK 8
-static const unsigned SHIM_FIX_RLIMIT_MEMLOCK = 8; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_RLIMIT_AS 9
-static const unsigned SHIM_FIX_RLIMIT_AS = 9; /* cosmo fixes this per-platform-invariant */
-#define SHIM_RLIMIT_TABLE(X) \
-  X(SHIM_FIX_RLIMIT_CPU, SHIM_LIN_RLIMIT_CPU) \
-  X(SHIM_FIX_RLIMIT_FSIZE, SHIM_LIN_RLIMIT_FSIZE) \
-  X(SHIM_FIX_RLIMIT_DATA, SHIM_LIN_RLIMIT_DATA) \
-  X(SHIM_FIX_RLIMIT_STACK, SHIM_LIN_RLIMIT_STACK) \
-  X(SHIM_FIX_RLIMIT_CORE, SHIM_LIN_RLIMIT_CORE) \
-  X(SHIM_FIX_RLIMIT_RSS, SHIM_LIN_RLIMIT_RSS) \
-  X(SHIM_FIX_RLIMIT_NPROC, SHIM_LIN_RLIMIT_NPROC) \
-  X(SHIM_FIX_RLIMIT_NOFILE, SHIM_LIN_RLIMIT_NOFILE) \
-  X(SHIM_FIX_RLIMIT_MEMLOCK, SHIM_LIN_RLIMIT_MEMLOCK) \
-  X(SHIM_FIX_RLIMIT_AS, SHIM_LIN_RLIMIT_AS) \
-  /* end SHIM_RLIMIT_TABLE */
-
-/* SHIM_SIG_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/sig.h */
-#define SHIM_LIN_SIGBUS 7
-static const int SHIM_FIX_SIGBUS = 7; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_SIGUSR1 10
-static const int SHIM_FIX_SIGUSR1 = 10; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_SIGUSR2 12
-static const int SHIM_FIX_SIGUSR2 = 12; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_SIGCHLD 17
-static const int SHIM_FIX_SIGCHLD = 17; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_SIGCONT 18
-static const int SHIM_FIX_SIGCONT = 18; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_SIGSTOP 19
-static const int SHIM_FIX_SIGSTOP = 19; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_SIGTSTP 20
-static const int SHIM_FIX_SIGTSTP = 20; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_SIGURG 23
-static const int SHIM_FIX_SIGURG = 23; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_SIGSYS 31
-static const int SHIM_FIX_SIGSYS = 31; /* cosmo fixes this per-platform-invariant */
-#define SHIM_SIG_TABLE(X) \
-  X(SHIM_FIX_SIGBUS, SHIM_LIN_SIGBUS) \
-  X(SHIM_FIX_SIGUSR1, SHIM_LIN_SIGUSR1) \
-  X(SHIM_FIX_SIGUSR2, SHIM_LIN_SIGUSR2) \
-  X(SHIM_FIX_SIGCHLD, SHIM_LIN_SIGCHLD) \
-  X(SHIM_FIX_SIGCONT, SHIM_LIN_SIGCONT) \
-  X(SHIM_FIX_SIGSTOP, SHIM_LIN_SIGSTOP) \
-  X(SHIM_FIX_SIGTSTP, SHIM_LIN_SIGTSTP) \
-  X(SHIM_FIX_SIGURG, SHIM_LIN_SIGURG) \
-  X(SHIM_FIX_SIGSYS, SHIM_LIN_SIGSYS) \
-  /* end SHIM_SIG_TABLE */
 
 /* SHIM_SA_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/sa.h */
 #define SHIM_LIN_SA_NOCLDSTOP 1
@@ -795,11 +423,79 @@ static const int SHIM_FIX_AF_UNIX = 1; /* cosmo fixes this per-platform-invarian
 #define SHIM_LIN_AF_INET 2
 static const int SHIM_FIX_AF_INET = 2; /* cosmo fixes this per-platform-invariant */
 #define SHIM_LIN_AF_INET6 10
+#define SHIM_LIN_AF_NETLINK 16
+#define SHIM_LIN_AF_VSOCK 40
+#define SHIM_LIN_AF_APPLETALK 5
+#define SHIM_LIN_AF_ASH 18
+#define SHIM_LIN_AF_IPX 4
+#define SHIM_LIN_AF_IRDA 23
+#define SHIM_LIN_AF_ISDN 34
+#define SHIM_LIN_AF_MPLS 28
+#define SHIM_LIN_AF_NETROM 6
+#define SHIM_LIN_AF_PHONET 35
+#define SHIM_LIN_AF_ROSE 11
+#define SHIM_LIN_AF_SNA 22
+#define SHIM_LIN_AF_TIPC 30
+#define SHIM_LIN_AF_ALG 38
+#define SHIM_LIN_AF_ATMPVC 8
+#define SHIM_LIN_AF_ATMSVC 20
+#define SHIM_LIN_AF_AX25 3
+#define SHIM_LIN_AF_BLUETOOTH 31
+#define SHIM_LIN_AF_BRIDGE 7
+#define SHIM_LIN_AF_CAIF 37
+#define SHIM_LIN_AF_CAN 29
+#define SHIM_LIN_AF_ECONET 19
+#define SHIM_LIN_AF_IB 27
+#define SHIM_LIN_AF_IEEE802154 36
+#define SHIM_LIN_AF_IUCV 32
+#define SHIM_LIN_AF_KEY 15
+#define SHIM_LIN_AF_LLC 26
+#define SHIM_LIN_AF_NETBEUI 13
+#define SHIM_LIN_AF_NFC 39
+#define SHIM_LIN_AF_PPPOX 24
+#define SHIM_LIN_AF_RXRPC 33
+#define SHIM_LIN_AF_SECURITY 14
+#define SHIM_LIN_AF_WANPIPE 25
+#define SHIM_LIN_AF_X25 9
 #define SHIM_AF_TABLE(X) \
   X(SHIM_FIX_AF_UNSPEC, SHIM_LIN_AF_UNSPEC) \
   X(SHIM_FIX_AF_UNIX, SHIM_LIN_AF_UNIX) \
   X(SHIM_FIX_AF_INET, SHIM_LIN_AF_INET) \
   X(AF_INET6, SHIM_LIN_AF_INET6) \
+  X(AF_NETLINK, SHIM_LIN_AF_NETLINK) \
+  X(AF_VSOCK, SHIM_LIN_AF_VSOCK) \
+  X(AF_APPLETALK, SHIM_LIN_AF_APPLETALK) \
+  X(AF_ASH, SHIM_LIN_AF_ASH) \
+  X(AF_IPX, SHIM_LIN_AF_IPX) \
+  X(AF_IRDA, SHIM_LIN_AF_IRDA) \
+  X(AF_ISDN, SHIM_LIN_AF_ISDN) \
+  X(AF_MPLS, SHIM_LIN_AF_MPLS) \
+  X(AF_NETROM, SHIM_LIN_AF_NETROM) \
+  X(AF_PHONET, SHIM_LIN_AF_PHONET) \
+  X(AF_ROSE, SHIM_LIN_AF_ROSE) \
+  X(AF_SNA, SHIM_LIN_AF_SNA) \
+  X(AF_TIPC, SHIM_LIN_AF_TIPC) \
+  X(AF_ALG, SHIM_LIN_AF_ALG) \
+  X(AF_ATMPVC, SHIM_LIN_AF_ATMPVC) \
+  X(AF_ATMSVC, SHIM_LIN_AF_ATMSVC) \
+  X(AF_AX25, SHIM_LIN_AF_AX25) \
+  X(AF_BLUETOOTH, SHIM_LIN_AF_BLUETOOTH) \
+  X(AF_BRIDGE, SHIM_LIN_AF_BRIDGE) \
+  X(AF_CAIF, SHIM_LIN_AF_CAIF) \
+  X(AF_CAN, SHIM_LIN_AF_CAN) \
+  X(AF_ECONET, SHIM_LIN_AF_ECONET) \
+  X(AF_IB, SHIM_LIN_AF_IB) \
+  X(AF_IEEE802154, SHIM_LIN_AF_IEEE802154) \
+  X(AF_IUCV, SHIM_LIN_AF_IUCV) \
+  X(AF_KEY, SHIM_LIN_AF_KEY) \
+  X(AF_LLC, SHIM_LIN_AF_LLC) \
+  X(AF_NETBEUI, SHIM_LIN_AF_NETBEUI) \
+  X(AF_NFC, SHIM_LIN_AF_NFC) \
+  X(AF_PPPOX, SHIM_LIN_AF_PPPOX) \
+  X(AF_RXRPC, SHIM_LIN_AF_RXRPC) \
+  X(AF_SECURITY, SHIM_LIN_AF_SECURITY) \
+  X(AF_WANPIPE, SHIM_LIN_AF_WANPIPE) \
+  X(AF_X25, SHIM_LIN_AF_X25) \
   /* end SHIM_AF_TABLE */
 
 /* SHIM_TIFLAG_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/termios.h */
@@ -1082,38 +778,127 @@ static const uint32_t SHIM_FIX_B0 = 0; /* cosmo fixes this per-platform-invarian
   X(TCIOFLUSH, SHIM_LIN_TCIOFLUSH) \
   /* end SHIM_TCFLUSH_TABLE */
 
-/* SHIM_TCFLOW_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/termios.h */
-#define SHIM_LIN_TCOOFF 0
-static const int SHIM_FIX_TCOOFF = 0; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_TCOON 1
-static const int SHIM_FIX_TCOON = 1; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_TCIOFF 2
-static const int SHIM_FIX_TCIOFF = 2; /* cosmo fixes this per-platform-invariant */
-#define SHIM_LIN_TCION 3
-static const int SHIM_FIX_TCION = 3; /* cosmo fixes this per-platform-invariant */
-#define SHIM_TCFLOW_TABLE(X) \
-  X(SHIM_FIX_TCOOFF, SHIM_LIN_TCOOFF) \
-  X(SHIM_FIX_TCOON, SHIM_LIN_TCOON) \
-  X(SHIM_FIX_TCIOFF, SHIM_LIN_TCIOFF) \
-  X(SHIM_FIX_TCION, SHIM_LIN_TCION) \
-  /* end SHIM_TCFLOW_TABLE */
-
 /* SHIM_TIOC_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/termios.h */
 #define SHIM_LIN_TIOCGWINSZ 21523
 #define SHIM_LIN_TIOCSWINSZ 21524
 #define SHIM_LIN_TIOCSCTTY 21518
 #define SHIM_LIN_TIOCNOTTY 21538
+#define SHIM_LIN_TIOCNXCL 21517
+#define SHIM_LIN_TIOCOUTQ 21521
+#define SHIM_LIN_TIOCGETD 21540
+#define SHIM_LIN_TIOCSETD 21539
+#define SHIM_LIN_TIOCSTI 21522
+#define SHIM_LIN_TIOCCONS 21533
+#define SHIM_LIN_TIOCSIG 1074025526
 #define SHIM_TIOC_TABLE(X) \
   X(TIOCGWINSZ, SHIM_LIN_TIOCGWINSZ) \
   X(TIOCSWINSZ, SHIM_LIN_TIOCSWINSZ) \
   X(TIOCSCTTY, SHIM_LIN_TIOCSCTTY) \
   X(TIOCNOTTY, SHIM_LIN_TIOCNOTTY) \
+  X(TIOCNXCL, SHIM_LIN_TIOCNXCL) \
+  X(TIOCOUTQ, SHIM_LIN_TIOCOUTQ) \
+  X(TIOCGETD, SHIM_LIN_TIOCGETD) \
+  X(TIOCSETD, SHIM_LIN_TIOCSETD) \
+  X(TIOCSTI, SHIM_LIN_TIOCSTI) \
+  X(TIOCCONS, SHIM_LIN_TIOCCONS) \
+  X(TIOCSIG, SHIM_LIN_TIOCSIG) \
   /* end SHIM_TIOC_TABLE */
+
+/* SHIM_MODEM_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/modem.h */
+#define SHIM_LIN_TIOCMGET 21525
+#define SHIM_LIN_TIOCMSET 21528
+#define SHIM_LIN_TIOCMBIS 21526
+#define SHIM_LIN_TIOCMBIC 21527
+#define SHIM_MODEM_TABLE(X) \
+  X(TIOCMGET, SHIM_LIN_TIOCMGET) \
+  X(TIOCMSET, SHIM_LIN_TIOCMSET) \
+  X(TIOCMBIS, SHIM_LIN_TIOCMBIS) \
+  X(TIOCMBIC, SHIM_LIN_TIOCMBIC) \
+  /* end SHIM_MODEM_TABLE */
+
+/* SHIM_ST_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/st.h */
+#define SHIM_LIN_ST_RDONLY 1
+#define SHIM_LIN_ST_NOSUID 2
+#define SHIM_LIN_ST_NODEV 4
+#define SHIM_LIN_ST_NOEXEC 8
+#define SHIM_LIN_ST_SYNCHRONOUS 16
+#define SHIM_LIN_ST_MANDLOCK 64
+#define SHIM_LIN_ST_WRITE 128
+#define SHIM_LIN_ST_APPEND 256
+#define SHIM_LIN_ST_IMMUTABLE 512
+#define SHIM_LIN_ST_NOATIME 1024
+#define SHIM_LIN_ST_NODIRATIME 2048
+#define SHIM_ST_TABLE(X) \
+  X(ST_RDONLY, SHIM_LIN_ST_RDONLY) \
+  X(ST_NOSUID, SHIM_LIN_ST_NOSUID) \
+  X(ST_NODEV, SHIM_LIN_ST_NODEV) \
+  X(ST_NOEXEC, SHIM_LIN_ST_NOEXEC) \
+  X(ST_SYNCHRONOUS, SHIM_LIN_ST_SYNCHRONOUS) \
+  X(ST_MANDLOCK, SHIM_LIN_ST_MANDLOCK) \
+  X(ST_WRITE, SHIM_LIN_ST_WRITE) \
+  X(ST_APPEND, SHIM_LIN_ST_APPEND) \
+  X(ST_IMMUTABLE, SHIM_LIN_ST_IMMUTABLE) \
+  X(ST_NOATIME, SHIM_LIN_ST_NOATIME) \
+  X(ST_NODIRATIME, SHIM_LIN_ST_NODIRATIME) \
+  /* end SHIM_ST_TABLE */
+
+/* SHIM_IFF_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/iff.h */
+#define SHIM_LIN_IFF_UP 1
+static const int SHIM_FIX_IFF_UP = 1; /* cosmo fixes this per-platform-invariant */
+#define SHIM_LIN_IFF_BROADCAST 2
+static const int SHIM_FIX_IFF_BROADCAST = 2; /* cosmo fixes this per-platform-invariant */
+#define SHIM_LIN_IFF_LOOPBACK 8
+static const int SHIM_FIX_IFF_LOOPBACK = 8; /* cosmo fixes this per-platform-invariant */
+#define SHIM_LIN_IFF_POINTOPOINT 16
+#define SHIM_LIN_IFF_NOTRAILERS 32
+#define SHIM_LIN_IFF_RUNNING 64
+#define SHIM_LIN_IFF_NOARP 128
+#define SHIM_LIN_IFF_PROMISC 256
+#define SHIM_LIN_IFF_ALLMULTI 512
+#define SHIM_LIN_IFF_MASTER 1024
+#define SHIM_LIN_IFF_SLAVE 2048
+#define SHIM_LIN_IFF_MULTICAST 4096
+#define SHIM_LIN_IFF_PORTSEL 8192
+#define SHIM_LIN_IFF_AUTOMEDIA 16384
+#define SHIM_LIN_IFF_DYNAMIC 32768
+#define SHIM_IFF_TABLE(X) \
+  X(SHIM_FIX_IFF_UP, SHIM_LIN_IFF_UP) \
+  X(SHIM_FIX_IFF_BROADCAST, SHIM_LIN_IFF_BROADCAST) \
+  X(SHIM_FIX_IFF_LOOPBACK, SHIM_LIN_IFF_LOOPBACK) \
+  X(IFF_POINTOPOINT, SHIM_LIN_IFF_POINTOPOINT) \
+  X(IFF_NOTRAILERS, SHIM_LIN_IFF_NOTRAILERS) \
+  X(IFF_RUNNING, SHIM_LIN_IFF_RUNNING) \
+  X(IFF_NOARP, SHIM_LIN_IFF_NOARP) \
+  X(IFF_PROMISC, SHIM_LIN_IFF_PROMISC) \
+  X(IFF_ALLMULTI, SHIM_LIN_IFF_ALLMULTI) \
+  X(IFF_MASTER, SHIM_LIN_IFF_MASTER) \
+  X(IFF_SLAVE, SHIM_LIN_IFF_SLAVE) \
+  X(IFF_MULTICAST, SHIM_LIN_IFF_MULTICAST) \
+  X(IFF_PORTSEL, SHIM_LIN_IFF_PORTSEL) \
+  X(IFF_AUTOMEDIA, SHIM_LIN_IFF_AUTOMEDIA) \
+  X(IFF_DYNAMIC, SHIM_LIN_IFF_DYNAMIC) \
+  /* end SHIM_IFF_TABLE */
 
 /* SHIM_FIO_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/fio.h */
 #define SHIM_LIN_FIONREAD 21531
 #define SHIM_FIO_TABLE(X) \
   X(FIONREAD, SHIM_LIN_FIONREAD) \
   /* end SHIM_FIO_TABLE */
+
+/* SHIM_SCHED_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/sched.h */
+#define SHIM_LIN_SCHED_OTHER 0
+#define SHIM_LIN_SCHED_FIFO 1
+#define SHIM_LIN_SCHED_RR 2
+#define SHIM_LIN_SCHED_BATCH 3
+#define SHIM_LIN_SCHED_IDLE 5
+#define SHIM_LIN_SCHED_DEADLINE 6
+#define SHIM_SCHED_TABLE(X) \
+  X(SCHED_OTHER, SHIM_LIN_SCHED_OTHER) \
+  X(SCHED_FIFO, SHIM_LIN_SCHED_FIFO) \
+  X(SCHED_RR, SHIM_LIN_SCHED_RR) \
+  X(SCHED_BATCH, SHIM_LIN_SCHED_BATCH) \
+  X(SCHED_IDLE, SHIM_LIN_SCHED_IDLE) \
+  X(SCHED_DEADLINE, SHIM_LIN_SCHED_DEADLINE) \
+  /* end SHIM_SCHED_TABLE */
 
 #endif /* RUST_APE_SHIM_TABLES_H_ */

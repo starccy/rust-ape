@@ -47,6 +47,8 @@
 #include <libc/sysv/consts/ip.h>
 #include <libc/sysv/consts/ipv6.h>
 #include <libc/sysv/consts/msg.h>
+#include <libc/sysv/consts/iff.h>
+#include <ifaddrs.h>
 
 #include "tables.h"
 
@@ -576,13 +578,6 @@ int __ape_shim_getsockopt(int fd, int level, int name, void *val, unsigned *len)
         return 0;
     }
     int r = getsockopt(fd, level, name, val, len);
-    // SO_ERROR's payload IS an errno, in host coding; hand back the Linux one
-    // so raw_os_error comparisons in take_error()/connect_timeout() stay true.
-    extern int __ape_shim_errno_host_to_linux(int);
-    if (r == 0 && lin_level == SHIM_LIN_SOL_SOCKET && lin_name == SHIM_LIN_SO_ERROR &&
-        val && len && *len >= sizeof(int)) {
-        *(int *)val = __ape_shim_errno_host_to_linux(*(int *)val);
-    }
     if (r == 0 && IsBsd() && val && len && *len == sizeof(int) &&
         sockopt_is_boolean(lin_level, lin_name)) {
         *(int *)val = !!*(int *)val;
@@ -936,4 +931,22 @@ int __ape_shim_getnameinfo(const void *addr, unsigned alen, char *host_out,
     // NI_* flag values are musl's on both sides (cosmo ships musl's netdb).
     return getnameinfo(addr_to_host(addr, &alen, &tmp), alen, host_out, hostlen,
                        serv, servlen, flags);
+}
+
+// getifaddrs: the addresses carry the host's AF_* and ifa_flags the host's
+// IFF_* bits.
+int __ape_shim_getifaddrs(struct ifaddrs **out) {
+    int rc = getifaddrs(out);
+    if (rc || IsLinux()) return rc;
+    for (struct ifaddrs *ifa = *out; ifa; ifa = ifa->ifa_next) {
+        struct sockaddr *sas[] = { ifa->ifa_addr, ifa->ifa_netmask, ifa->ifa_broadaddr };
+        for (int i = 0; i < 3; i++)
+            if (sas[i]) sas[i]->sa_family = (unsigned short)af_to_linux(sas[i]->sa_family);
+        unsigned lin = 0;
+#define X(name, linval) if ((name) && (ifa->ifa_flags & (unsigned)(name))) lin |= (linval);
+        SHIM_IFF_TABLE(X)
+#undef X
+        ifa->ifa_flags = lin;
+    }
+    return 0;
 }

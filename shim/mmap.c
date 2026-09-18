@@ -51,22 +51,6 @@ static const struct mbit kMaps[] = { SHIM_MAP_TABLE(X) };
 #undef X
 #define NMAPS (sizeof(kMaps) / sizeof(kMaps[0]))
 
-struct advmap {
-    int lin;
-    const unsigned *host;
-};
-
-#define X(name, lin) { lin, &name },
-static const struct advmap kMadvs[] = { SHIM_MADV_TABLE(X) };
-#undef X
-#define NMADVS (sizeof(kMadvs) / sizeof(kMadvs[0]))
-
-int __ape_shim_madvise(void *addr, unsigned long len, int lin) {
-    for (size_t i = 0; i < NMADVS; i++)
-        if (kMadvs[i].lin == lin) return madvise(addr, len, (int)*kMadvs[i].host);
-    return errno = EINVAL, -1;
-}
-
 static void *reserve_nt(unsigned long len, int host) {
     void *p = VirtualAlloc(0, len, kNtMemReserve, kNtPageNoaccess);
     if (!p) return errno = ENOMEM, MAP_FAILED;
@@ -121,4 +105,14 @@ int __ape_shim_mprotect(void *addr, size_t len, int prot) {
         commit_nt(addr, len, prot))
         return -1;
     return mprotect(addr, len, prot);
+}
+
+int __ape_shim_msync(void *addr, unsigned long len, int lin) {
+    int host = 0;
+    if (lin & ~(SHIM_LIN_MS_ASYNC | SHIM_LIN_MS_INVALIDATE | SHIM_LIN_MS_SYNC))
+        return errno = EINVAL, -1;
+    if (lin & SHIM_LIN_MS_ASYNC) host |= MS_ASYNC;
+    if (lin & SHIM_LIN_MS_SYNC) host |= MS_SYNC;
+    if (lin & SHIM_LIN_MS_INVALIDATE) host |= MS_INVALIDATE; // 0 where there is none
+    return msync(addr, len, host);
 }

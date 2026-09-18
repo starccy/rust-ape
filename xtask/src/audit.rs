@@ -28,7 +28,9 @@ pub struct AuditArgs {
     #[arg(long, default_value = "debug")]
     pub profile: String,
 
-    /// List constants nothing references too
+    /// Sweep everything, not only what this build uses: constants nothing
+    /// references, and every function the libc crate declares that goes
+    /// straight to cosmo
     #[arg(long)]
     pub all: bool,
 }
@@ -144,11 +146,18 @@ pub fn run(args: &AuditArgs) -> Result<()> {
     let names = scrape_const_names(&root)?;
     println!("==> {} constant names in the libc crate's linux-musl files", names.len());
 
+    let signatures = fn_signatures(&root)?;
+    let mut fn_names: Vec<String> = signatures.keys().cloned().collect();
+    fn_names.sort();
+    // functions rustc accepts for the real targets, which settles the cfg
+    // questions the source scan can't
+    let mut declared: HashSet<String> = HashSet::new();
     let mut musl: HashMap<&str, HashMap<String, i128>> = HashMap::new();
     let mut cosmo: HashMap<&str, HashMap<String, (String, Cosmo)>> = HashMap::new();
     for &arch in ARCHES {
         println!("==> resolving the libc crate's values for {arch}");
-        let m = rust_values(&root, &work, arch, &names)?;
+        let (m, exist) = rust_values(&root, &work, arch, &names, &fn_names)?;
+        declared.extend(exist);
         println!("==> asking cosmocc about {} of them for {arch}", m.len());
         let wanted: Vec<&str> = m.keys().map(String::as_str).collect();
         cosmo.insert(arch, cosmo_values(&root, arch, &wanted)?);
@@ -158,7 +167,7 @@ pub fn run(args: &AuditArgs) -> Result<()> {
     let covered = shim_covered(&root)?;
     let (allow, families) = load_audit_file(&root.join("patches/audit.toml"))?;
 
-    let imports = libc_imports(&root, &args.project, &args.profile)?;
+    let (imports, cosmo_defined) = libc_imports(&root, &args.project, &args.profile)?;
     let built: HashSet<&str> = imports.values().flatten().map(String::as_str).collect();
     let refs = References::collect(&root, &args.project, &built)?;
 
@@ -249,44 +258,69 @@ pub fn run(args: &AuditArgs) -> Result<()> {
     }
 
     // ---- functions
-    let signatures = fn_signatures(&root)?;
     let hot = hot_families(&families, &rows);
-    let mut fn_rows: Vec<FnRow> = Vec::new();
-    for (func, crates) in &imports {
+    // what is wrong with sending `func` straight to cosmo, if anything:
+    // (is a family with a differing value involved, what to show)
+    let judge = |func: &String| -> Option<(bool, String)> {
         if func.starts_with("__ape_shim_") || PLAIN.contains(&func.as_str()) {
-            continue;
+            return None;
         }
         let differing: Vec<&str> = hot
             .iter()
             .filter(|(_, consumers)| consumers.contains(func))
             .map(|(label, _)| label.as_str())
             .collect();
-        if differing.is_empty() {
-            // no family lists it: look at the signature for anything that
-            // could carry a constant and have a person decide
-            if families.iter().any(|f| f.consumers.contains(func)) {
-                continue;
-            }
-            let Some(params) = signatures.get(func.as_str()) else { continue };
-            let suspects = suspect_params(params);
-            if suspects.is_empty() {
-                continue;
-            }
-            fn_rows.push(FnRow {
-                name: func.clone(),
-                verdict: if allow.fns.matches(func) { "allowed" } else { "review" },
-                families: suspects.join(", "),
-                crates: crates.iter().cloned().collect::<Vec<_>>().join(" "),
-            });
-            continue;
+        if !differing.is_empty() {
+            return Some((true, differing.join(" ")));
         }
-        let verdict = if allow.fns.matches(func) { "allowed" } else { "GAP" };
+        // no family lists it: look at the signature for anything that
+        // could carry a constant and have a person decide
+        if families.iter().any(|f| f.consumers.contains(func)) {
+            return None;
+        }
+        let suspects = suspect_params(&signatures.get(func.as_str())?.params);
+        (!suspects.is_empty()).then(|| (false, suspects.join(", ")))
+    };
+
+    let mut fn_rows: Vec<FnRow> = Vec::new();
+    for (func, crates) in &imports {
+        let Some((in_family, note)) = judge(func) else { continue };
+        let verdict = match (allow.fns.matches(func), in_family) {
+            (true, _) => "allowed",
+            (false, true) => "GAP",
+            (false, false) => "review",
+        };
         fn_rows.push(FnRow {
             name: func.clone(),
             verdict,
-            families: differing.join(" "),
+            families: note,
             crates: crates.iter().cloned().collect::<Vec<_>>().join(" "),
         });
+    }
+
+    // --all: the same questions for what the libc crate declares and this
+    // build happens not to call
+    if args.all {
+        let mut unused: Vec<&String> = signatures
+            .iter()
+            .filter(|(name, decl)| {
+                !decl.redirected
+                    && declared.contains(*name)
+                    && cosmo_defined.contains(*name)
+                    && !imports.contains_key(*name)
+            })
+            .map(|(name, _)| name)
+            .collect();
+        unused.sort();
+        for func in unused {
+            let Some((in_family, note)) = judge(func) else { continue };
+            let verdict = match (allow.fns.matches(func), in_family) {
+                (true, _) => "allowed",
+                (false, true) => "unused GAP",
+                (false, false) => "unused review",
+            };
+            fn_rows.push(FnRow { name: func.clone(), verdict, families: note, crates: String::new() });
+        }
     }
 
     write_reports(&work, &rows, &fn_rows, &imports)?;
@@ -316,7 +350,8 @@ pub fn run(args: &AuditArgs) -> Result<()> {
         }
         println!("\n{title}: {}", hits.len());
         for r in &hits {
-            failed = true;
+            // what --all adds is a survey, not a verdict on this build
+            failed |= !r.users.is_empty();
             println!("  {:<28} used by {}", r.name, if r.users.is_empty() { "-" } else { &r.users });
             for d in &r.diffs {
                 println!("      {d}");
@@ -342,6 +377,19 @@ pub fn run(args: &AuditArgs) -> Result<()> {
             println!("  {:<28} ({}) from {}", r.name, r.families, r.crates);
         }
         println!("  add each to a [[family]] in patches/audit.toml, or to its [allow.fn] with a reason");
+    }
+    for (title, verdict) in [
+        ("declared by the libc crate, not called in this build, and taking a differing family", "unused GAP"),
+        ("declared by the libc crate, not called in this build, no family lists them", "unused review"),
+    ] {
+        let hits: Vec<&FnRow> = fn_rows.iter().filter(|r| r.verdict == verdict).collect();
+        if hits.is_empty() {
+            continue;
+        }
+        println!("\n{title}: {}", hits.len());
+        for r in hits {
+            println!("  {:<32} {}", r.name, r.families);
+        }
     }
     let stale: Vec<String> = allow
         .consts
@@ -448,7 +496,13 @@ fn walk(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) -> Result<()> {
 /// real target spec and read the values back out of the LLVM IR. Names that
 /// don't exist for this target, or aren't integers, fall out through rustc's
 /// error list.
-fn rust_values(root: &Path, work: &Path, arch: &str, names: &[String]) -> Result<HashMap<String, i128>> {
+fn rust_values(
+    root: &Path,
+    work: &Path,
+    arch: &str,
+    names: &[String],
+    fns: &[String],
+) -> Result<(HashMap<String, i128>, HashSet<String>)> {
     let dir = work.join("rs");
     fs::create_dir_all(dir.join("src"))?;
     fs::write(
@@ -462,11 +516,18 @@ fn rust_values(root: &Path, work: &Path, arch: &str, names: &[String]) -> Result
     const HEADER: &str = "#![no_std]\n#![allow(deprecated, overflowing_literals, unused_imports)]\n";
     let header_lines = HEADER.lines().count();
     let target = root.join(format!("generated/{arch}-unknown-linux-musl.json"));
-    let mut live: Vec<&String> = names.iter().collect();
+    // one probe per line, constants first, then functions: naming a function
+    // only compiles when the crate declares it for this target
+    let mut live: Vec<(bool, &String)> =
+        names.iter().map(|n| (false, n)).chain(fns.iter().map(|n| (true, n))).collect();
     for _round in 0..8 {
         let mut text = String::from(HEADER);
-        for n in &live {
-            let _ = writeln!(text, "#[unsafe(no_mangle)] pub static AUDIT_{n}: i128 = libc::{n} as i128;");
+        for (is_fn, n) in &live {
+            if *is_fn {
+                let _ = writeln!(text, "pub fn audit_fn_{n}() {{ let _ = libc::{n}; }}");
+            } else {
+                let _ = writeln!(text, "#[unsafe(no_mangle)] pub static AUDIT_{n}: i128 = libc::{n} as i128;");
+            }
         }
         fs::write(dir.join("src/lib.rs"), text)?;
         let deps = dir.join(format!("target/{arch}-unknown-linux-musl/debug/deps"));
@@ -495,7 +556,8 @@ fn rust_values(root: &Path, work: &Path, arch: &str, names: &[String]) -> Result
                         && p.file_name().is_some_and(|f| f.to_string_lossy().starts_with("audit_probe"))
                 })
                 .context("the probe built but left no .ll file")?;
-            return parse_llvm_ir(&fs::read_to_string(ll)?);
+            let exist = live.iter().filter(|(is_fn, _)| *is_fn).map(|(_, n)| (*n).clone()).collect();
+            return Ok((parse_llvm_ir(&fs::read_to_string(ll)?)?, exist));
         }
         let stderr = String::from_utf8_lossy(&out.stderr);
         let mut bad: HashSet<usize> = HashSet::new();
@@ -892,7 +954,11 @@ fn idents(path: &Path, out: &mut HashSet<String>) {
 
 /// Undefined symbols of every rlib the project built that libcosmo.a
 /// defines, with the crates importing each.
-fn libc_imports(root: &Path, project: &Path, profile: &str) -> Result<BTreeMap<String, BTreeSet<String>>> {
+fn libc_imports(
+    root: &Path,
+    project: &Path,
+    profile: &str,
+) -> Result<(BTreeMap<String, BTreeSet<String>>, HashSet<String>)> {
     let deps = root
         .join(project)
         .join(format!("target/x86_64-unknown-linux-musl/{profile}/deps"));
@@ -938,7 +1004,7 @@ fn libc_imports(root: &Path, project: &Path, profile: &str) -> Result<BTreeMap<S
             out.entry(sym.to_string()).or_default().insert(crate_of(Path::new(file)));
         }
     }
-    Ok(out)
+    Ok((out, defined))
 }
 
 /// `deps/libfoo_bar-0123abcd.rlib` (with or without the extension) -> `foo_bar`
@@ -956,16 +1022,31 @@ fn nm_lines(cmd: &mut Command) -> Result<Vec<String>> {
     Ok(String::from_utf8_lossy(&out.stdout).lines().map(str::to_string).collect())
 }
 
-/// `pub fn name(params)` of the libc crate's linux-musl files, params as
-/// (name, type).
-fn fn_signatures(root: &Path) -> Result<HashMap<String, Vec<(String, String)>>> {
-    let mut out = HashMap::new();
-    let files: BTreeSet<PathBuf> =
+struct Decl {
+    /// (name, type)
+    params: Vec<(String, String)>,
+    /// carries a `link_name = "__ape_shim_..."` under cfg rust_ape_shim
+    redirected: bool,
+}
+
+/// Every `pub fn` of the libc crate's linux-musl files.
+fn fn_signatures(root: &Path) -> Result<HashMap<String, Decl>> {
+    let mut out: HashMap<String, Decl> = HashMap::new();
+    let mut files: Vec<PathBuf> =
         ARCHES.iter().flat_map(|a| genshim::libc_search_paths(root, a)).collect();
+    for sub in ["new/linux_uapi", "new/musl", "new/common"] {
+        walk(&root.join("vendor/patches/libc/src").join(sub), "rs", &mut files)?;
+    }
+    let files: BTreeSet<PathBuf> = files.into_iter().collect();
     for f in files {
         let Ok(text) = fs::read_to_string(&f) else { continue };
         let mut rest = text.as_str();
         while let Some(i) = rest.find("pub fn ") {
+            // attributes sit between the end of the previous item and here
+            let before = &rest[..i];
+            let item_start = before.rfind([';', '{', '}']).map_or(0, |k| k + 1);
+            let attrs = &before[item_start..];
+            let redirected = attrs.contains("rust_ape_shim") && attrs.contains("__ape_shim_");
             rest = &rest[i + 7..];
             let Some(open) = rest.find('(') else { break };
             let name = rest[..open].trim();
@@ -1007,7 +1088,18 @@ fn fn_signatures(root: &Path) -> Result<HashMap<String, Vec<(String, String)>>> 
                     cur.push(c);
                 }
             }
-            out.entry(name.to_string()).or_insert(params);
+            // cfg_if! branches for other systems declare the same names; the
+            // branch carrying the redirect is the one this target compiles
+            match out.entry(name.to_string()) {
+                std::collections::hash_map::Entry::Occupied(mut e) => {
+                    if redirected && !e.get().redirected {
+                        e.insert(Decl { params, redirected });
+                    }
+                }
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    e.insert(Decl { params, redirected });
+                }
+            }
         }
     }
     Ok(out)
@@ -1027,6 +1119,8 @@ fn suspect_params(params: &[(String, String)]) -> Vec<String> {
         "usec", "base", "iovcnt", "nmemb", "maxevents", "backlog", "uid", "gid", "pid", "pgid",
         "pgrp", "sid", "owner", "group", "incr", "cpu", "errnum", "ngroups", "setlen", "stream",
         "ch", "key", "value", "val", "offset", "rank", "prio", "priority", "idx", "index",
+        "i", "nochdir", "noclose", "proj_id", "nelem", "net", "argc", "proto", "port", "loc",
+        "suffixlen", "stayopen", "seed", "pshared", "shared", "errcode",
     ];
     const STRUCTS: &[&str] = &[
         "termios", "sigaction", "flock", "pollfd", "sockaddr", "msghdr", "mmsghdr", "addrinfo",
@@ -1122,6 +1216,9 @@ fn write_reports(
             ("direct", "")
         };
         let _ = writeln!(t, "{func}\t{status}\t{fam}\t{crates}");
+    }
+    for r in fn_rows.iter().filter(|r| r.verdict.starts_with("unused")) {
+        let _ = writeln!(t, "{}\t{}\t{}\t", r.name, r.verdict, r.families);
     }
     fs::write(work.join("functions.tsv"), t)?;
     Ok(())

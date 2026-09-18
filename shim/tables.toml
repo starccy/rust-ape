@@ -1,0 +1,397 @@
+# What `cargo xtask gen-shim` puts into tables.h: the constants the shim
+# translates between Linux's values (what the Rust side was compiled with)
+# and cosmo's. After editing, run `cargo xtask gen-shim`.
+
+# Linux values the shim handles one by one. They come out as bare
+# SHIM_LIN_<name> defines, with no cosmo-side table.
+singles = [
+    "O_LARGEFILE", "O_SYNC", "O_DIRECTORY", "O_TMPFILE",
+    "AT_FDCWD", "AT_SYMLINK_NOFOLLOW", "AT_REMOVEDIR", "AT_SYMLINK_FOLLOW",
+    "AT_EMPTY_PATH", "AT_EACCESS", "AT_NO_AUTOMOUNT",
+    # access/faccessat amode bits. POSIX numbers these 4/2/1 and every Unix
+    # agrees, but cosmo publishes NT's access mask for them on Windows, so
+    # they need translating like any other constant. F_OK is 0 everywhere,
+    # which an empty translated mask reproduces on its own.
+    "R_OK", "W_OK", "X_OK",
+    "UTIME_NOW", "UTIME_OMIT",
+    "LOCK_SH", "LOCK_EX", "LOCK_NB", "LOCK_UN",
+    "SEEK_DATA", "SEEK_HOLE",
+    "MS_ASYNC", "MS_INVALIDATE", "MS_SYNC",
+    "RUSAGE_THREAD",
+    # musl and cosmo number the mutex types and the pshared values
+    # differently, as plain #defines on both sides
+    "PTHREAD_MUTEX_NORMAL", "PTHREAD_MUTEX_RECURSIVE", "PTHREAD_MUTEX_ERRORCHECK",
+    "PTHREAD_PROCESS_PRIVATE", "PTHREAD_PROCESS_SHARED",
+    "SCHED_RESET_ON_FORK",
+    "POSIX_SPAWN_RESETIDS", "POSIX_SPAWN_SETPGROUP", "POSIX_SPAWN_SETSIGDEF",
+    "POSIX_SPAWN_SETSIGMASK", "POSIX_SPAWN_SETSCHEDPARAM", "POSIX_SPAWN_SETSCHEDULER",
+    "POSIX_SPAWN_USEVFORK", "POSIX_SPAWN_SETSID",
+    "WNOHANG", "WUNTRACED", "WCONTINUED",
+    # waitid: idtypes, the extra option bits and the si_code values it
+    # reports; the shim builds these by hand off Linux and passes them
+    # straight to the kernel there.
+    "WEXITED", "WSTOPPED", "WNOWAIT", "SYS_waitid",
+    "P_ALL", "P_PID", "P_PGID", "P_PIDFD",
+    "CLD_EXITED", "CLD_KILLED", "CLD_DUMPED", "CLD_TRAPPED", "CLD_STOPPED",
+    "CLD_CONTINUED",
+    "SOCK_CLOEXEC", "SOCK_NONBLOCK", "MAP_STACK",
+    "SIG_BLOCK", "SIG_UNBLOCK", "SIG_SETMASK", "SO_ERROR",
+    "SOL_SOCKET", "IPPROTO_IP", "IPPROTO_TCP", "IPPROTO_IPV6", "IPPROTO_UDP",
+    "F_GETLK", "F_SETLK", "F_SETLKW", "F_SETOWN", "F_GETOWN",
+    "F_DUPFD_CLOEXEC",
+    # tty-config ioctl requests the shim reroutes to tcgetattr/tcsetattr
+    # (kernel ABI numbers; on musl Ioctl is c_int so the *2 family is
+    # negative), plus the musl-side baud fields of c_cflag.
+    "TCGETS", "TCSETS", "TCSETSW", "TCSETSF",
+    # FIONBIO and the FIOCLEX pair are rerouted through fcntl, so only
+    # their Linux values are needed.
+    "FIONBIO", "FIOCLEX", "FIONCLEX",
+    "TCGETS2", "TCSETS2", "TCSETSW2", "TCSETSF2",
+    "BOTHER", "CBAUD", "CBAUDEX",
+    # Job-control ioctl requests the shim reroutes to tcgetpgrp/tcsetpgrp/
+    # tcgetsid; cosmo publishes no constant for the first and last of them.
+    "TIOCGPGRP", "TIOCSPGRP", "TIOCGSID",
+    # raw syscall rerouting: futex (std's parker, parking_lot & friends)
+    # and getrandom (the getrandom crate's syscall path)
+    "SYS_futex", "FUTEX_WAIT", "FUTEX_WAKE", "FUTEX_PRIVATE_FLAG",
+    "FUTEX_CLOCK_REALTIME", "FUTEX_WAIT_BITSET", "FUTEX_WAKE_BITSET",
+    "FUTEX_BITSET_MATCH_ANY", "SYS_getrandom",
+]
+
+# One [[table]] per X-macro. `header` is where cosmo declares the names
+# (under libc/), `ctype` the C type of cosmo's constants. A table with a
+# `droppable` list gets a third column: those bits are hints, and a host
+# that lacks one drops it instead of failing the call.
+#
+# A family cosmo already gives Linux's values at compile time needs no
+# table. `cargo xtask audit` says which those are (errno, O_*, signal
+# numbers, RLIMIT_* and MADV_* as of the rust-ape fork).
+
+[[table]]
+macro = "SHIM_FCNTL_CMD_TABLE"
+header = "sysv/consts/f.h"
+ctype = "int"
+names = [
+    "F_GETLK", "F_SETLK", "F_SETLKW",
+    "F_SETOWN", "F_GETOWN", "F_DUPFD_CLOEXEC",
+]
+
+# struct flock l_type values. The struct layouts agree (layouts.c pins
+# them), but these three are runtime constants on the cosmo side.
+[[table]]
+macro = "SHIM_LOCKTYPE_TABLE"
+header = "sysv/consts/f.h"
+ctype = "int"
+names = [
+    "F_RDLCK", "F_WRLCK", "F_UNLCK",
+]
+
+[[table]]
+macro = "SHIM_POLL_TABLE"
+header = "sysv/consts/poll.h"
+ctype = "int16_t"
+names = [
+    "POLLIN", "POLLPRI", "POLLOUT", "POLLERR",
+    "POLLHUP", "POLLNVAL", "POLLRDNORM", "POLLRDBAND",
+    "POLLWRNORM", "POLLWRBAND", "POLLRDHUP",
+]
+
+[[table]]
+macro = "SHIM_MSG_TABLE"
+header = "sysv/consts/msg.h"
+ctype = "int"
+names = [
+    "MSG_DONTWAIT", "MSG_WAITALL", "MSG_NOSIGNAL",
+    "MSG_TRUNC", "MSG_CTRUNC",
+]
+
+[[table]]
+macro = "SHIM_SO_TABLE"
+header = "sysv/consts/so.h"
+ctype = "int"
+names = [
+    "SO_REUSEADDR", "SO_TYPE", "SO_ERROR", "SO_DONTROUTE",
+    "SO_BROADCAST", "SO_SNDBUF", "SO_RCVBUF", "SO_KEEPALIVE",
+    "SO_OOBINLINE", "SO_LINGER", "SO_REUSEPORT",
+    "SO_RCVLOWAT", "SO_SNDLOWAT", "SO_RCVTIMEO",
+    "SO_SNDTIMEO", "SO_ACCEPTCONN",
+]
+
+[[table]]
+macro = "SHIM_TCP_TABLE"
+header = "sysv/consts/tcp.h"
+ctype = "int"
+names = [
+    "TCP_NODELAY", "TCP_MAXSEG", "TCP_CORK", "TCP_KEEPIDLE",
+    "TCP_KEEPINTVL", "TCP_KEEPCNT", "TCP_SYNCNT",
+    "TCP_DEFER_ACCEPT", "TCP_FASTOPEN", "TCP_QUICKACK",
+    "TCP_CONGESTION", "TCP_USER_TIMEOUT", "TCP_NOTSENT_LOWAT",
+    "TCP_THIN_LINEAR_TIMEOUTS", "TCP_THIN_DUPACK",
+]
+
+[[table]]
+macro = "SHIM_IP_TABLE"
+header = "sysv/consts/ip.h"
+ctype = "int"
+names = [
+    "IP_TOS", "IP_TTL", "IP_HDRINCL", "IP_OPTIONS",
+    "IP_RECVTOS", "IP_RECVTTL", "IP_MULTICAST_IF",
+    "IP_MULTICAST_TTL", "IP_MULTICAST_LOOP", "IP_ADD_MEMBERSHIP",
+    "IP_DROP_MEMBERSHIP", "IP_PKTINFO", "IP_MTU",
+]
+
+[[table]]
+macro = "SHIM_IPV6_TABLE"
+header = "sysv/consts/ipv6.h"
+ctype = "int"
+names = [
+    "IPV6_V6ONLY", "IPV6_UNICAST_HOPS", "IPV6_MULTICAST_IF",
+    "IPV6_MULTICAST_HOPS", "IPV6_MULTICAST_LOOP",
+    "IPV6_ADD_MEMBERSHIP", "IPV6_DROP_MEMBERSHIP", "IPV6_TCLASS",
+    "IPV6_RECVTCLASS", "IPV6_PKTINFO", "IPV6_HOPLIMIT",
+    "IPV6_DONTFRAG", "IPV6_CHECKSUM", "IPV6_HOPOPTS",
+    "IPV6_RTHDR", "IPV6_RECVRTHDR",
+]
+
+[[table]]
+macro = "SHIM_MAP_TABLE"
+header = "sysv/consts/map.h"
+ctype = "int"
+names = [
+    "MAP_ANONYMOUS", "MAP_FIXED_NOREPLACE", "MAP_HUGETLB",
+    "MAP_NORESERVE", "MAP_POPULATE", "MAP_LOCKED",
+    "MAP_DENYWRITE", "MAP_EXECUTABLE", "MAP_NONBLOCK",
+]
+droppable = ["MAP_NORESERVE", "MAP_POPULATE", "MAP_LOCKED", "MAP_DENYWRITE", "MAP_EXECUTABLE", "MAP_NONBLOCK"]
+
+[[table]]
+macro = "SHIM_CLOCK_TABLE"
+header = "sysv/consts/clock.h"
+ctype = "int"
+names = [
+    "CLOCK_REALTIME", "CLOCK_MONOTONIC",
+    "CLOCK_PROCESS_CPUTIME_ID", "CLOCK_THREAD_CPUTIME_ID",
+    "CLOCK_MONOTONIC_RAW", "CLOCK_REALTIME_COARSE",
+    "CLOCK_MONOTONIC_COARSE", "CLOCK_BOOTTIME",
+]
+
+# sa_flags bits for sigaction. cosmo stores these as uint64_t.
+[[table]]
+macro = "SHIM_SA_TABLE"
+header = "sysv/consts/sa.h"
+ctype = "uint64_t"
+names = [
+    "SA_NOCLDSTOP", "SA_NOCLDWAIT", "SA_SIGINFO",
+    "SA_ONSTACK", "SA_RESTART", "SA_NODEFER",
+    "SA_RESETHAND",
+]
+
+# sigaltstack ss_flags. SS_ONSTACK is 1 on both sides; SS_DISABLE varies.
+[[table]]
+macro = "SHIM_SS_TABLE"
+header = "sysv/consts/ss.h"
+ctype = "int"
+names = [
+    "SS_ONSTACK", "SS_DISABLE",
+]
+
+# getauxval() keys. cosmo synthesizes the auxv on non-Linux hosts and its
+# AT_* keys are runtime constants, so a Linux-coded key has to be mapped
+# before the lookup. AT_MINSIGSTKSZ is the one std actually reads (it sizes
+# sigaltstack with it); the HWCAP pair rides along for feature detection.
+[[table]]
+macro = "SHIM_AUXV_TABLE"
+header = "sysv/consts/auxv.h"
+ctype = "unsigned long"
+names = [
+    "AT_MINSIGSTKSZ", "AT_HWCAP", "AT_HWCAP2",
+]
+
+# Address families. UNSPEC/UNIX/INET are universal (cosmo #defines them);
+# AF_INET6 is the runtime one, and it also lives inside sockaddr_in6's
+# family field, which the socket shim rewrites in both directions.
+[[table]]
+macro = "SHIM_AF_TABLE"
+header = "sysv/consts/af.h"
+ctype = "int"
+names = [
+    "AF_UNSPEC", "AF_UNIX", "AF_INET", "AF_INET6",
+    # The rest mostly exist on Linux alone. They are listed so that a Linux
+    # number isn't read as whatever family owns it on the host (16 is
+    # AF_NETLINK on Linux and AF_APPLETALK on XNU and NT). AF_ROUTE is left
+    # out: on Linux it is AF_NETLINK, on XNU a different protocol. So is
+    # AF_PACKET, which shim/packet.c emulates on NT under its Linux number.
+    "AF_NETLINK", "AF_VSOCK", "AF_APPLETALK",
+    "AF_ASH", "AF_IPX", "AF_IRDA", "AF_ISDN", "AF_MPLS",
+    "AF_NETROM", "AF_PHONET", "AF_ROSE", "AF_SNA", "AF_TIPC",
+    "AF_ALG", "AF_ATMPVC", "AF_ATMSVC", "AF_AX25",
+    "AF_BLUETOOTH", "AF_BRIDGE", "AF_CAIF", "AF_CAN",
+    "AF_ECONET", "AF_IB", "AF_IEEE802154", "AF_IUCV",
+    "AF_KEY", "AF_LLC", "AF_NETBEUI", "AF_NFC", "AF_PPPOX",
+    "AF_RXRPC", "AF_SECURITY", "AF_WANPIPE", "AF_X25",
+]
+
+# termios flag bits, one domain per c_*flag field. The C side translates
+# bit by bit and silently drops what the host lacks — kernels ignore
+# unknown termios bits, so strictness here would only break raw-mode setup.
+[[table]]
+macro = "SHIM_TIFLAG_TABLE"
+header = "sysv/consts/termios.h"
+ctype = "uint32_t"
+names = [
+    "IGNBRK", "BRKINT", "IGNPAR", "PARMRK", "INPCK",
+    "ISTRIP", "INLCR", "IGNCR", "ICRNL", "IUCLC",
+    "IXON", "IXANY", "IXOFF", "IMAXBEL", "IUTF8",
+]
+
+[[table]]
+macro = "SHIM_TOFLAG_TABLE"
+header = "sysv/consts/termios.h"
+ctype = "uint32_t"
+names = [
+    "OPOST", "OLCUC", "ONLCR", "OCRNL", "ONOCR",
+    "ONLRET", "OFILL", "OFDEL",
+]
+
+# Output delay fields: multi-bit masks plus their nonzero values (every *0
+# value is 0 on both sides). Translated as enumerated fields, not as bits.
+[[table]]
+macro = "SHIM_TODLY_TABLE"
+header = "sysv/consts/termios.h"
+ctype = "uint32_t"
+names = [
+    "NLDLY", "NL1",
+    "CRDLY", "CR1", "CR2", "CR3",
+    "TABDLY", "TAB1", "TAB2", "TAB3", "XTABS",
+    "BSDLY", "BS1",
+    "VTDLY", "VT1",
+    "FFDLY", "FF1",
+]
+
+[[table]]
+macro = "SHIM_TCFLAG_TABLE"
+header = "sysv/consts/termios.h"
+ctype = "uint32_t"
+names = [
+    "CSIZE", "CS6", "CS7", "CS8",
+    "CSTOPB", "CREAD", "PARENB", "PARODD",
+    "HUPCL", "CLOCAL", "CRTSCTS", "CMSPAR",
+]
+
+[[table]]
+macro = "SHIM_TLFLAG_TABLE"
+header = "sysv/consts/termios.h"
+ctype = "uint32_t"
+names = [
+    "ISIG", "ICANON", "XCASE", "ECHO", "ECHOE",
+    "ECHOK", "ECHONL", "NOFLSH", "TOSTOP", "ECHOCTL",
+    "ECHOPRT", "ECHOKE", "FLUSHO", "PENDIN", "IEXTEN",
+    "EXTPROC",
+]
+
+# c_cc indices, not bits: V* says where in c_cc a control character lives
+# (musl NCCS 32, cosmo NCCS 20); the repack moves bytes between indexings.
+[[table]]
+macro = "SHIM_TCC_TABLE"
+header = "sysv/consts/termios.h"
+ctype = "uint8_t"
+names = [
+    "VINTR", "VQUIT", "VERASE", "VKILL", "VEOF",
+    "VTIME", "VMIN", "VSWTC", "VSTART", "VSTOP",
+    "VSUSP", "VEOL", "VREPRINT", "VDISCARD",
+    "VWERASE", "VLNEXT", "VEOL2",
+]
+
+# Baud codes: enumerated values living in musl's CBAUD field of c_cflag and
+# in cosmo's _c_ispeed/_c_ospeed. B460800/B921600 exist in musl but not in
+# cosmo, so they are simply not mapped (unmatched rates pass unset).
+[[table]]
+macro = "SHIM_BAUD_TABLE"
+header = "sysv/consts/baud.internal.h"
+ctype = "uint32_t"
+names = [
+    "B0", "B50", "B75", "B110", "B134", "B150",
+    "B200", "B300", "B600", "B1200", "B1800",
+    "B2400", "B4800", "B9600", "B19200", "B38400",
+    "B57600", "B115200", "B230400", "B500000",
+    "B576000", "B1000000", "B1152000", "B1500000",
+    "B2000000", "B2500000", "B3000000", "B3500000",
+    "B4000000",
+]
+
+[[table]]
+macro = "SHIM_TCFLUSH_TABLE"
+header = "sysv/consts/termios.h"
+ctype = "int"
+names = [
+    "TCIFLUSH", "TCOFLUSH", "TCIOFLUSH",
+]
+
+# ioctl request codes forwarded to cosmo's ioctl (struct winsize has the
+# same shape on both sides). The tty-config requests (TCGETS family) are
+# deliberately NOT here: the ioctl shim reroutes them through
+# tcgetattr/tcsetattr, so their Linux values live in SINGLES instead.
+[[table]]
+macro = "SHIM_TIOC_TABLE"
+header = "sysv/consts/termios.h"
+ctype = "uint64_t"
+names = [
+    "TIOCGWINSZ", "TIOCSWINSZ",
+    # Session control, which is what a pty child does between fork and exec.
+    "TIOCSCTTY", "TIOCNOTTY",
+    # forwarded as they are: the argument is an int or a pointer to one
+    "TIOCNXCL", "TIOCOUTQ", "TIOCGETD", "TIOCSETD",
+    "TIOCSTI", "TIOCCONS", "TIOCSIG",
+]
+
+# Modem control lines, int* on both sides.
+[[table]]
+macro = "SHIM_MODEM_TABLE"
+header = "sysv/consts/modem.h"
+ctype = "uint64_t"
+names = [
+    "TIOCMGET", "TIOCMSET", "TIOCMBIS", "TIOCMBIC",
+]
+
+# statvfs f_flag bits, which cosmo hands over as the host spells them
+# (MNT_* on XNU, volume flags on NT).
+[[table]]
+macro = "SHIM_ST_TABLE"
+header = "sysv/consts/st.h"
+ctype = "int"
+names = [
+    "ST_RDONLY", "ST_NOSUID", "ST_NODEV", "ST_NOEXEC",
+    "ST_SYNCHRONOUS", "ST_MANDLOCK", "ST_WRITE", "ST_APPEND",
+    "ST_IMMUTABLE", "ST_NOATIME", "ST_NODIRATIME",
+]
+
+# Interface flags getifaddrs reports. IFF_DEBUG is left out: NT's value
+# for it is the one IFF_LOOPBACK has there.
+[[table]]
+macro = "SHIM_IFF_TABLE"
+header = "sysv/consts/iff.h"
+ctype = "int"
+names = [
+    "IFF_UP", "IFF_BROADCAST", "IFF_LOOPBACK", "IFF_POINTOPOINT",
+    "IFF_NOTRAILERS", "IFF_RUNNING", "IFF_NOARP", "IFF_PROMISC",
+    "IFF_ALLMULTI", "IFF_MASTER", "IFF_SLAVE", "IFF_MULTICAST",
+    "IFF_PORTSEL", "IFF_AUTOMEDIA", "IFF_DYNAMIC",
+]
+
+[[table]]
+macro = "SHIM_FIO_TABLE"
+header = "sysv/consts/fio.h"
+ctype = "uint32_t"
+names = [
+    "FIONREAD",
+]
+
+# Scheduling policies. cosmo says 127 for one the host doesn't have.
+[[table]]
+macro = "SHIM_SCHED_TABLE"
+header = "sysv/consts/sched.h"
+ctype = "int"
+names = [
+    "SCHED_OTHER", "SCHED_FIFO", "SCHED_RR", "SCHED_BATCH", "SCHED_IDLE",
+    "SCHED_DEADLINE",
+]
