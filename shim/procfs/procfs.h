@@ -48,8 +48,7 @@ int64_t pfs_open_process(uint32_t pid);
 uint32_t pfs_self_pid(void);
 
 // The kernel identity, aligned with what cosmo's uname() says on this host
-// (sysname "Windows", version "Cosmopolitan 4.0.2 MODE=..."). The release is
-// uname's "10.0" plus the real build number, as in "10.0.20348", so
+// (sysname and cosmopolitan's version).
 // major.minor.patch parsers get three components.
 const char *pfs_kernel_sysname(void);
 const char *pfs_kernel_release(void);

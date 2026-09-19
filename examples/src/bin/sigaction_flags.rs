@@ -60,14 +60,10 @@ fn overflow_the_stack() {
     overflow_the_stack();
 }
 
-/// Where the stack pointer lands inside the guard page decides whether the
-/// overflow is reportable at all on Windows: the kernel writes the exception
-/// record BELOW the faulting sp before dispatching it, and cosmo maps a
-/// thread stack as exactly guard+stack, so a low sp put that write past the
-/// end of the mapping and killed the process with nothing printed. Every
-/// frame here is a whole page, so the offset is whatever the thread pushed
-/// before recursing and stays put for the whole descent — these pads walk it
-/// across the page so both halves get covered.
+/// Windows writes the exception record below the faulting sp, so a low sp
+/// can land that write under the guard page and kill the process silently.
+/// The fork's allocator reserves room for this, and the pad values below
+/// walk sp across the page to exercise both cases.
 fn overflow_with_pad(pad: usize) {
     macro_rules! pad_then_overflow {
         ($n:expr) => {{
@@ -295,8 +291,7 @@ fn main() {
     // --strace: eaten by cosmo before argv, so the child behaves identically
     // but narrates its syscalls to stderr. The message check below is a
     // contains(), so the extra lines are free — and when the detector goes
-    // blind on some host, the tail of the trace IS the crash-site forensics
-    // (this failure only reproduces on CI, never locally).
+    // blind on some host, the tail of the trace IS the crash-site forensics.
     for pad in 0..PADS {
         let out = std::process::Command::new(&self_path)
             .arg("--strace")

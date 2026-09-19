@@ -16,9 +16,6 @@
 #include <string.h>
 #include <pthread.h>
 #include <sys/auxv.h>
-#include <sys/mman.h>
-#define _COSMO_SOURCE // for libc/dce.h's IsWindows()
-#include <libc/dce.h>
 #include <libc/sysv/consts/sig.h>
 #include <libc/sysv/consts/sa.h>
 #include <libc/sysv/consts/ss.h>
@@ -173,92 +170,7 @@ static int ss_flags_to_linux(int host) {
     return (int)lin;
 }
 
-// NT dispatches a fault by writing the exception record BELOW the faulting
-// stack pointer, and a stack overflow faults with sp somewhere inside the
-// guard page. cosmo maps a thread stack as exactly guardsize+stacksize with
-// the guard at the very bottom, so when sp sits low in that page the write
-// lands past the end of the mapping: the dispatch itself fails and NT kills
-// the process before any handler — cosmo's or std's — runs. Nothing is
-// printed, and the exit status is the raw NT status (an access violation, or
-// the guard-page one). Whether an overflow is reportable at all therefore
-// comes down to where sp happened to land, which is why this read as a ~50%
-// flake on Server 2022 and a certainty under arm64's x86_64 emulation, whose
-// dispatch needs more room than a native one.
-//
-// NT's own stacks keep guaranteed pages for exactly this; a stack cosmo
-// mapped itself has none, so give it the equivalent: plain writable memory
-// directly below the guard. One allocation granule is also the smallest that
-// can go there — a shorter span leaves the address unaligned and NT refuses
-// the placement outright.
-#define NT_GRANULE 65536 // NT's allocation granularity
-
-struct nt_slack {
-    void *addr;
-    size_t size;
-};
-
-static pthread_key_t nt_slack_key;
-static pthread_once_t nt_slack_once = PTHREAD_ONCE_INIT;
-
-static void nt_slack_free(void *p) {
-    struct nt_slack *s = p;
-    munmap(s->addr, s->size);
-    free(s);
-}
-
-static void nt_slack_key_init(void) {
-    pthread_key_create(&nt_slack_key, nt_slack_free);
-}
-
-static void nt_stack_slack(void) {
-    pthread_once(&nt_slack_once, nt_slack_key_init);
-    if (pthread_getspecific(nt_slack_key))
-        return; // this thread already has its slack
-    pthread_attr_t attr;
-    if (pthread_getattr_np(pthread_self(), &attr))
-        return;
-    void *stack;
-    size_t size, guard;
-    int described = !pthread_attr_getstack(&attr, &stack, &size) &&
-                    !pthread_attr_getguardsize(&attr, &guard);
-    pthread_attr_destroy(&attr);
-    if (!described)
-        return;
-    // Start at the granule boundary below the mapping and run up to it: NT
-    // places a reservation on a granule boundary but sizes it by pages, so
-    // this is the largest span that can be had adjacent to the guard. A
-    // thread stack sits on a boundary already and gets the full granule; the
-    // main thread's, which cosmo laid out differently, gets whatever page or
-    // two remains under it.
-    uintptr_t bottom = (uintptr_t)stack - guard;
-    uintptr_t start = (bottom - 1) & ~(uintptr_t)(NT_GRANULE - 1);
-    size_t span = bottom - start;
-    void *got = mmap((void *)start, span, PROT_READ | PROT_WRITE,
-                     MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-    if (got == MAP_FAILED)
-        return; // something is already there: the stack is as good as it gets
-    if (got != (void *)start) {
-        munmap(got, span);
-        return;
-    }
-    struct nt_slack *s = malloc(sizeof *s);
-    if (!s)
-        return; // keep the mapping anyway, it is already doing its job
-    s->addr = got;
-    s->size = span;
-    // Freed by the key's destructor at thread exit; the slack is a mapping of
-    // its own, so unmapping it is safe from the thread that used it.
-    pthread_setspecific(nt_slack_key, s);
-}
-
 int __ape_shim_sigaltstack(const struct lin_stack *ss, struct lin_stack *old) {
-    // Claimed on the way in, not out: std asks what the current alternate
-    // stack is before it maps one, and cosmo's allocator hands out descending
-    // addresses — so the slot under the thread stack is exactly where std's
-    // own alternate stack would land moments later. Taking it first leaves
-    // that allocation to fall in below, where it does no harm.
-    if (IsWindows())
-        nt_stack_slack();
     stack_t hss, hold;
     stack_t *pss = NULL;
     if (ss) {
