@@ -68,6 +68,11 @@ fn main() {
     fs::remove_file(&path).expect("remove_file");
     assert!(!path.exists(), "file outlived remove_file");
 
+    // A directory opens fine and then refuses to be read.
+    let mut dir = File::open(std::env::temp_dir()).expect("open a directory");
+    let err = dir.read(&mut [0u8; 16]).expect_err("read() on a directory");
+    assert_eq!(err.kind(), std::io::ErrorKind::IsADirectory, "{err}");
+
     println!("\nfile io ok");
 }
 

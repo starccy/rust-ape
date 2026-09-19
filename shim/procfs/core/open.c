@@ -183,7 +183,7 @@ static bool gen_vpath(const char *vpath, struct pfs_buf *b) {
     return true;
 }
 
-// Entry: shim/read.c. -2 when fd is not a memory descriptor.
+// Entry: the before hook in shim/read.c. -2 when fd is not a memory descriptor.
 long __ape_shim_procfs_memfd_read(int fd, const struct iovec *iov,
                                   int iovlen) {
     if (!PC_HOSTED()) return -2;
