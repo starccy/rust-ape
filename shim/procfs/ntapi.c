@@ -34,8 +34,6 @@
 #include "xnu.h"
 
 #define PFS_SNAP_MS 200
-#define MAX_PROCS 1024
-#define MAX_THREADS 8192
 
 // ---------------------------------------------------------------------------
 // Dynamic symbols. A tiny cache keyed by DLL name; misses stay cached as
@@ -131,11 +129,37 @@ struct nt_threadentry32 { // cosmo has no header for this one
 typedef bool32 (__msabi *Thread32F)(int64_t, struct nt_threadentry32 *);
 
 static pthread_mutex_t g_snap_lock = PTHREAD_MUTEX_INITIALIZER;
-static struct pfs_proc g_procs[MAX_PROCS];
-static int g_nprocs;
-static struct threadent g_threads[MAX_THREADS];
-static int g_nthreads;
+static struct pfs_proc *g_procs;
+static int g_nprocs, g_capprocs;
+static struct threadent *g_threads;
+static int g_nthreads, g_capthreads;
 static int64_t g_snap_ms;
+
+static struct pfs_proc *next_proc(void) {
+    if (g_nprocs == g_capprocs) {
+        int cap = g_capprocs ? g_capprocs * 2 : 1024;
+        struct pfs_proc *grown = malloc(cap * sizeof *grown);
+        if (!grown) return 0;
+        if (g_nprocs) memcpy(grown, g_procs, g_nprocs * sizeof *grown);
+        g_procs = grown;
+        g_capprocs = cap;
+    }
+    return &g_procs[g_nprocs++];
+}
+
+// Only ever read under g_snap_lock.
+static void add_thread(uint32_t tid, uint32_t pid) {
+    if (g_nthreads == g_capthreads) {
+        int cap = g_capthreads ? g_capthreads * 2 : 8192;
+        struct threadent *grown = realloc(g_threads, cap * sizeof *grown);
+        if (!grown) return;
+        g_threads = grown;
+        g_capthreads = cap;
+    }
+    g_threads[g_nthreads].tid = tid;
+    g_threads[g_nthreads].pid = pid;
+    g_nthreads++;
+}
 
 int64_t pfs_now_ms(void) {
     struct timespec ts;
@@ -191,8 +215,8 @@ static bool snap_query_locked(void) {
     for (char *q = buf;;) {
         struct NtSystemProcessInformation *e = (void *)q;
         uint32_t pid = (uint32_t)e->UniqueProcessId;
-        if (g_nprocs < MAX_PROCS) {
-            struct pfs_proc *p = &g_procs[g_nprocs++];
+        struct pfs_proc *p = next_proc();
+        if (p) {
             memset(p, 0, sizeof *p);
             p->pid = pid;
             p->ppid = (uint32_t)e->InheritedFromUniqueProcessId;
@@ -216,12 +240,8 @@ static bool snap_query_locked(void) {
             p->io = e->IoCounters;
         }
         const struct NtSystemThreads *th = (void *)(q + sizeof *e);
-        for (uint32_t i = 0; i < e->NumberOfThreads && g_nthreads < MAX_THREADS;
-             i++) {
-            g_threads[g_nthreads].tid = (uint32_t)(uintptr_t)th[i].ClientId.UniqueThread;
-            g_threads[g_nthreads].pid = pid;
-            g_nthreads++;
-        }
+        for (uint32_t i = 0; i < e->NumberOfThreads; i++)
+            add_thread((uint32_t)(uintptr_t)th[i].ClientId.UniqueThread, pid);
         if (!e->NextEntryOffset) break;
         q += e->NextEntryOffset;
     }
@@ -246,9 +266,10 @@ static void snap_refresh_locked(void) {
     g_nprocs = 0;
     struct NtProcessEntry32 e;
     e.dwSize = sizeof e;
-    for (bool32 ok = Process32First(snap, &e); ok && g_nprocs < MAX_PROCS;
+    for (bool32 ok = Process32First(snap, &e); ok;
          ok = Process32Next(snap, &e)) {
-        struct pfs_proc *p = &g_procs[g_nprocs++];
+        struct pfs_proc *p = next_proc();
+        if (!p) break;
         memset(p, 0, sizeof *p);
         p->pid = e.th32ProcessID;
         p->ppid = e.th32ParentProcessID;
@@ -265,12 +286,8 @@ static void snap_refresh_locked(void) {
     if (t32first && t32next) {
         struct nt_threadentry32 te;
         te.dwSize = sizeof te;
-        for (bool32 ok = t32first(snap, &te); ok && g_nthreads < MAX_THREADS;
-             ok = t32next(snap, &te)) {
-            g_threads[g_nthreads].tid = te.th32ThreadID;
-            g_threads[g_nthreads].pid = te.th32OwnerProcessID;
-            g_nthreads++;
-        }
+        for (bool32 ok = t32first(snap, &te); ok; ok = t32next(snap, &te))
+            add_thread(te.th32ThreadID, te.th32OwnerProcessID);
     }
 
     CloseHandle(snap);

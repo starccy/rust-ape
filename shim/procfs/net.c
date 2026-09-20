@@ -22,7 +22,6 @@
 #include "xnu.h"
 
 #define NET_REFRESH_MS 250
-#define MAX_ROWS 4096
 
 // TCP_TABLE_OWNER_PID_ALL / UDP_TABLE_OWNER_PID, and the two address
 // families as Winsock numbers them.
@@ -48,8 +47,8 @@ struct row {
 };
 
 static pthread_mutex_t g_net_lock = PTHREAD_MUTEX_INITIALIZER;
-static struct row g_rows[MAX_ROWS];
-static int g_nrows;
+static struct row *g_rows;
+static int g_nrows, g_caprows;
 static int64_t g_net_ms;
 
 static uint64_t fnv(const void *p, size_t n, uint64_t h) {
@@ -85,7 +84,13 @@ static uint16_t nt_port(uint32_t p) {
 static void add_row(uint8_t proto, uint8_t family, uint8_t state,
                     uint32_t pid, const void *laddr, uint16_t lport,
                     const void *raddr, uint16_t rport) {
-    if (g_nrows >= MAX_ROWS) return;
+    if (g_nrows == g_caprows) {
+        int cap = g_caprows ? g_caprows * 2 : 1024;
+        struct row *grown = realloc(g_rows, cap * sizeof *grown);
+        if (!grown) return;
+        g_rows = grown;
+        g_caprows = cap;
+    }
     struct row *r = &g_rows[g_nrows];
     memset(r, 0, sizeof *r);
     r->proto = proto;
@@ -131,14 +136,16 @@ static void *fetch(GetExtTableF f, uint32_t af, uint32_t cls) {
     if (!f) return 0;
     uint32_t size = 0;
     f(0, &size, 0, af, cls, 0);
-    if (!size) return 0;
-    void *buf = malloc(size);
-    if (!buf) return 0;
-    if (f(buf, &size, 0, af, cls, 0) != 0) {
+    for (int tries = 0; size && tries < 4; tries++) {
+        size += size / 4;
+        void *buf = malloc(size);
+        if (!buf) return 0;
+        uint32_t rc = f(buf, &size, 0, af, cls, 0);
+        if (!rc) return buf;
         free(buf);
-        return 0;
+        if (rc != 122) return 0; // ERROR_INSUFFICIENT_BUFFER
     }
-    return buf;
+    return 0;
 }
 
 static void net_refresh_locked(void) {

@@ -7,6 +7,8 @@ use std::time::{Duration, SystemTime};
 
 fn main() {
     let dir = std::env::temp_dir().join(format!("audit_gaps_{}", std::process::id()));
+
+    let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join("f");
     let f = File::create(&path).unwrap();
