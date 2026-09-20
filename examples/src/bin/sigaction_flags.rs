@@ -42,6 +42,18 @@ extern "C" fn info_handler(sig: i32, info: *mut libc::siginfo_t, _ctx: *mut libc
     }
 }
 
+extern "C" fn main_overflow_handler(_sig: i32, info: *mut libc::siginfo_t, _ctx: *mut libc::c_void) {
+    let msg: &[u8] = if unsafe { (*info).si_addr() }.is_null() {
+        b"main thread fault without an address\n"
+    } else {
+        b"main thread overflow caught\n"
+    };
+    unsafe {
+        libc::write(2, msg.as_ptr().cast(), msg.len());
+        libc::_exit(3);
+    }
+}
+
 // The two casts rustc wants spelled out: function item -> fn pointer -> usize.
 fn addr1(f: extern "C" fn(i32)) -> usize {
     f as usize
@@ -87,7 +99,18 @@ const PADS: usize = 5;
 fn main() {
     if let Some(pad) = std::env::var_os("SIGACTION_FLAGS_OVERFLOW") {
         let pad: usize = pad.to_string_lossy().parse().expect("pad index");
-        std::thread::spawn(move || overflow_with_pad(pad)).join().unwrap();
+        if std::env::var_os("SIGACTION_FLAGS_OVERFLOW_MAIN").is_some() {
+            unsafe {
+                let mut act: libc::sigaction = mem::zeroed();
+                act.sa_sigaction = addr3(main_overflow_handler);
+                act.sa_flags = libc::SA_SIGINFO | libc::SA_ONSTACK;
+                assert_eq!(libc::sigaction(libc::SIGSEGV, &act, std::ptr::null_mut()), 0);
+                assert_eq!(libc::sigaction(libc::SIGBUS, &act, std::ptr::null_mut()), 0);
+            }
+            overflow_with_pad(pad);
+        } else {
+            std::thread::spawn(move || overflow_with_pad(pad)).join().unwrap();
+        }
         unreachable!();
     }
 
@@ -309,6 +332,22 @@ fn main() {
         );
     }
     println!("stack overflow detected by std at {PADS} sp offsets: SA_ONSTACK/SA_SIGINFO/si_addr all intact");
+
+    for pad in 0..PADS {
+        let out = std::process::Command::new(&self_path)
+            .env("SIGACTION_FLAGS_OVERFLOW", pad.to_string())
+            .env("SIGACTION_FLAGS_OVERFLOW_MAIN", "1")
+            .output()
+            .expect("spawn self");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("main thread overflow caught") && out.status.code() == Some(3),
+            "pad {pad}: the main thread's overflow never reached the handler \
+             (child {:?}, stderr: {stderr:?})",
+            out.status
+        );
+    }
+    println!("main thread overflow reached a SA_ONSTACK handler at {PADS} sp offsets");
 
     println!("\nsigaction flags ok");
 }
