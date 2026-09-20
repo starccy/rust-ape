@@ -112,6 +112,7 @@ static void unclaim_slot(int fd) {
     if (IsWindows()) {
         __releasefd(fd);
     } else {
+        __get_pib()->fds.p[fd].kind = kFdEmpty;
         close(fd); // releases the slot too
     }
 }

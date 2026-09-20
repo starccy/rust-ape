@@ -42,7 +42,8 @@ int __ape_shim_close_hook(int fd, int *rc) {
         break;
     }
   } else if (IsXnuSilicon()) {
-    __ape_shim_procfs_memfd_close(fd);
+    if (__ape_shim_procfs_memfd_close(fd) == 0)
+      __get_pib()->fds.p[fd].kind = kFdEmpty;
     __ape_shim_procfs_fd_closed(fd);
   }
   return 0;
