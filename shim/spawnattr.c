@@ -5,13 +5,7 @@
 // one bit. std passes Linux values, so before the redirect cosmo read
 // SETSIGDEF|SETSIGMASK as SETPGROUP|SETSIGDEF: every Command::spawn put
 // the child in a new process group and the signal mask never applied.
-//
-// On NT the flags also get USEVFORK. cosmo only takes the vfork path
-// when asked, and without it posix_spawn is a fork() of the whole
-// address space plus an exec, a hundred milliseconds instead of a few.
-#define _COSMO_SOURCE // for libc/dce.h's IsWindows()
 #include <spawn.h>
-#include <libc/dce.h>
 
 #include "tables.h"
 
@@ -33,7 +27,6 @@ int __ape_shim_posix_spawnattr_setflags(posix_spawnattr_t *attr, short lin) {
     short host = 0;
     for (unsigned i = 0; i < sizeof(kFlags) / sizeof(kFlags[0]); i++)
         if (lin & kFlags[i].lin) host |= kFlags[i].host;
-    if (IsWindows()) host |= POSIX_SPAWN_USEVFORK;
     return posix_spawnattr_setflags(attr, host);
 }
 
