@@ -391,12 +391,14 @@ pub fn run(args: &AuditArgs) -> Result<()> {
             println!("  {:<32} {}", r.name, r.families);
         }
     }
+    
+    let stale_fns = if args.all { allow.fns.unused() } else { Vec::new() };
     let stale: Vec<String> = allow
         .consts
         .unused()
         .into_iter()
         .map(|p| format!("const {p}"))
-        .chain(allow.fns.unused().into_iter().map(|p| format!("fn {p}")))
+        .chain(stale_fns.into_iter().map(|p| format!("fn {p}")))
         .collect();
     if !stale.is_empty() {
         println!("\nwarning: patches/audit.toml allow entries that silenced nothing in this build:");
