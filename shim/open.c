@@ -117,6 +117,7 @@ static int oflags_to_host(int lin, int *out) {
     host |= lin & OFLAGS_KNOWN;
     lin &= ~OFLAGS_KNOWN;
     if (lin) return errno = EINVAL, -1; // bits we don't know about
+    if (!IsLinux()) host &= ~_O_PATH;
     *out = host;
     return 0;
 }
