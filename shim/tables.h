@@ -133,6 +133,26 @@
 #elif defined(__aarch64__)
 #define SHIM_LIN_SYS_getrandom 278
 #endif
+#if defined(__x86_64__)
+#define SHIM_LIN_SYS_fchmod 91
+#elif defined(__aarch64__)
+#define SHIM_LIN_SYS_fchmod 52
+#endif
+#if defined(__x86_64__)
+#define SHIM_LIN_SYS_fchmodat 268
+#elif defined(__aarch64__)
+#define SHIM_LIN_SYS_fchmodat 53
+#endif
+#if defined(__x86_64__)
+#define SHIM_LIN_SYS_fchown 93
+#elif defined(__aarch64__)
+#define SHIM_LIN_SYS_fchown 55
+#endif
+#if defined(__x86_64__)
+#define SHIM_LIN_SYS_copy_file_range 326
+#elif defined(__aarch64__)
+#define SHIM_LIN_SYS_copy_file_range 285
+#endif
 
 /* SHIM_FCNTL_CMD_TABLE <- libc crate; cosmo side declared in libc/sysv/consts/f.h */
 #define SHIM_LIN_F_GETLK 5

@@ -13,11 +13,15 @@
 // empirically; it does not touch the errno variable). That coding never
 // leaves this file; the Rust side only sees the 1/0 result.
 
+#define _GNU_SOURCE // copy_file_range
 #include <errno.h>
 #include <stdarg.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <sys/random.h>
+#include <sys/stat.h>
 #include <time.h>
+#include <unistd.h>
 #include <libc/cosmo.h>
 #include <libc/sysv/consts/clock.h>
 
@@ -29,7 +33,9 @@
 // std's error handling read as a spurious wakeup, silently degrading every
 // Mutex/Condvar into a spin loop on all platforms, Linux included.
 // Rerouting the function covers std and every third-party crate at once.
-// Only the futex operations in actual use and getrandom are translated;
+// Only the futex operations in actual use, getrandom and the file calls
+// rustix's libc backend issues raw on Linux (fchmod and friends, which
+// it bypasses libc for to dodge musl's O_PATH emulation) are translated;
 // every other syscall number keeps the ENOSYS an unshimmed build had,
 // which callers with fallbacks already handle.
 //
@@ -41,6 +47,9 @@
 // values are set host-coded here; the errno shim hands the Rust side the
 // musl coding its comparisons expect (std and parking_lot both compare
 // against EINTR/EAGAIN/ETIMEDOUT).
+// shim/open.c
+int __ape_shim_fchmodat(int, const char *, unsigned, int);
+
 long __ape_shim_syscall(long n, ...) {
     if (n == SHIM_LIN_SYS_futex) {
         va_list ap;
@@ -105,6 +114,42 @@ long __ape_shim_syscall(long n, ...) {
         // cosmo's to reject. This is cosmo's own cross-platform getrandom
         // (host RNG on NT), so the crate's /dev/urandom fallback never runs.
         return getrandom(buf, len, flags);
+    }
+    if (n == SHIM_LIN_SYS_fchmod || n == SHIM_LIN_SYS_fchown ||
+        n == SHIM_LIN_SYS_fchmodat || n == SHIM_LIN_SYS_copy_file_range) {
+        va_list ap;
+        va_start(ap, n);
+        long r;
+        if (n == SHIM_LIN_SYS_fchmod) {
+            int fd = va_arg(ap, int);
+            unsigned mode = va_arg(ap, unsigned);
+            r = fchmod(fd, mode);
+        } else if (n == SHIM_LIN_SYS_fchown) {
+            int fd = va_arg(ap, int);
+            unsigned uid = va_arg(ap, unsigned);
+            unsigned gid = va_arg(ap, unsigned);
+            r = fchown(fd, uid, gid);
+        } else if (n == SHIM_LIN_SYS_fchmodat) {
+            // the three-argument form; the kernel has no flags word here
+            int dirfd = va_arg(ap, int);
+            const char *path = va_arg(ap, const char *);
+            unsigned mode = va_arg(ap, unsigned);
+            r = __ape_shim_fchmodat(dirfd, path, mode, 0);
+        } else {
+            int in = va_arg(ap, int);
+            int64_t *inoff = va_arg(ap, int64_t *);
+            int out = va_arg(ap, int);
+            int64_t *outoff = va_arg(ap, int64_t *);
+            size_t len = va_arg(ap, size_t);
+            unsigned flags = va_arg(ap, unsigned);
+            if (flags) {
+                va_end(ap);
+                return errno = EINVAL, -1;
+            }
+            r = copy_file_range(in, inoff, out, outoff, len, 0);
+        }
+        va_end(ap);
+        return r;
     }
     return errno = ENOSYS, -1;
 }

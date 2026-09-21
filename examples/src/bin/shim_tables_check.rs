@@ -207,6 +207,14 @@
 #[cfg(target_arch = "aarch64")] const _: () = assert!(libc::FUTEX_BITSET_MATCH_ANY as i64 == -1);
 #[cfg(target_arch = "x86_64")] const _: () = assert!(libc::SYS_getrandom as i64 == 318);
 #[cfg(target_arch = "aarch64")] const _: () = assert!(libc::SYS_getrandom as i64 == 278);
+#[cfg(target_arch = "x86_64")] const _: () = assert!(libc::SYS_fchmod as i64 == 91);
+#[cfg(target_arch = "aarch64")] const _: () = assert!(libc::SYS_fchmod as i64 == 52);
+#[cfg(target_arch = "x86_64")] const _: () = assert!(libc::SYS_fchmodat as i64 == 268);
+#[cfg(target_arch = "aarch64")] const _: () = assert!(libc::SYS_fchmodat as i64 == 53);
+#[cfg(target_arch = "x86_64")] const _: () = assert!(libc::SYS_fchown as i64 == 93);
+#[cfg(target_arch = "aarch64")] const _: () = assert!(libc::SYS_fchown as i64 == 55);
+#[cfg(target_arch = "x86_64")] const _: () = assert!(libc::SYS_copy_file_range as i64 == 326);
+#[cfg(target_arch = "aarch64")] const _: () = assert!(libc::SYS_copy_file_range as i64 == 285);
 #[cfg(target_arch = "x86_64")] const _: () = assert!(libc::F_GETLK as i64 == 5);
 #[cfg(target_arch = "aarch64")] const _: () = assert!(libc::F_GETLK as i64 == 5);
 #[cfg(target_arch = "x86_64")] const _: () = assert!(libc::F_SETLK as i64 == 6);

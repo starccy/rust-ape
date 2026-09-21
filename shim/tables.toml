@@ -56,6 +56,9 @@ singles = [
     "SYS_futex", "FUTEX_WAIT", "FUTEX_WAKE", "FUTEX_PRIVATE_FLAG",
     "FUTEX_CLOCK_REALTIME", "FUTEX_WAIT_BITSET", "FUTEX_WAKE_BITSET",
     "FUTEX_BITSET_MATCH_ANY", "SYS_getrandom",
+    # rustix's libc backend bypasses libc for a few file calls on Linux
+    # and issues the raw syscall instead
+    "SYS_fchmod", "SYS_fchmodat", "SYS_fchown", "SYS_copy_file_range",
 ]
 
 # One [[table]] per X-macro. `header` is where cosmo declares the names
