@@ -193,6 +193,8 @@ static void put_utf8(struct pfs_buf *b, const char16_t *w, int len) {
     }
 }
 
+static size_t put_ntpath(char *, size_t, const char16_t *, size_t);
+
 static void gen_cmdline(struct pfs_buf *b, uint32_t pid) {
     if (pid == pfs_self_pid()) {
         for (int i = 0; i < __argc; i++)
@@ -224,19 +226,18 @@ static void gen_cmdline(struct pfs_buf *b, uint32_t pid) {
             for (int i = 0; i < argc; i++) {
                 int n = 0;
                 while (argv[i][n]) n++;
-                // argv[0] in the shape exe and cwd use ("/C/x/y"). Readers
-                // with unix path semantics take the basename after the last
-                // slash and stop at a colon, so "C:\x\y.exe" would name
-                // the process "C".
-                if (i == 0) {
-                    for (int j = 0; j < n; j++)
-                        if (argv[0][j] == '\\') argv[0][j] = '/';
-                    if (n >= 2 && argv[0][1] == ':') {
-                        argv[0][1] = argv[0][0];
-                        argv[0][0] = '/';
-                    }
+                // argv[0] in the shape exe and cwd use. Readers with unix
+                // path semantics take the basename after the last slash
+                // and stop at a colon, so "C:\x\y.exe" would name the
+                // process "C".
+                if (i == 0 && n >= 3 && argv[0][1] == ':' &&
+                    (argv[0][2] == '\\' || argv[0][2] == '/')) {
+                    char path[PATH_MAX];
+                    size_t m = put_ntpath(path, sizeof path, argv[0], n);
+                    pfs_put(b, path, m);
+                } else {
+                    put_utf8(b, argv[i], n);
                 }
-                put_utf8(b, argv[i], n);
                 pfs_put(b, "", 1);
             }
             if (local_free) local_free((int64_t)argv);
@@ -477,17 +478,8 @@ static void gen_maps(struct pfs_buf *b, uint32_t pid) {
             mods[i].base = (uint64_t)handles[i];
             char16_t w[512];
             uint32_t len = mn(-1, handles[i], w, 512);
-            size_t k = 0;
-            for (uint32_t j = 0; j < len && k < sizeof mods[i].path - 1; j++)
-                mods[i].path[k++] = w[j] == '\\'
-                                        ? '/'
-                                        : (w[j] < 128 ? (char)w[j] : '_');
+            size_t k = put_ntpath(mods[i].path, sizeof mods[i].path - 1, w, len);
             mods[i].path[k] = 0;
-            // "C:/x" -> "/C/x", the shape absolute paths take here
-            if (k >= 2 && mods[i].path[1] == ':') {
-                mods[i].path[1] = mods[i].path[0];
-                mods[i].path[0] = '/';
-            }
         }
     }
 

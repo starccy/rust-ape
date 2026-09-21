@@ -72,29 +72,16 @@ static int IsAlpha(int c) {
     return ('A' <= c && c <= 'Z') || ('a' <= c && c <= 'z');
 }
 
-// A win32 path in getcwd's unix spelling: prefixes dropped, "C:" as
-// "/C", slashes forward.
+// A win32 path in getcwd's unix spelling: __mkunixpath() is what getcwd()
+// itself answers with, so comparisons against it hold.
 static void nt_to_unix(const char16_t *p16, char *out, size_t outsz) {
     char tmp[PATH_MAX];
-    if (tprecode16to8(tmp, sizeof tmp, p16).ax >= sizeof tmp - 1) {
+    int n = __mkunixpath(p16, tmp);
+    if (n < 0 || (size_t)n + 1 > outsz) {
         out[0] = 0;
         return;
     }
-    char *p = tmp;
-    if (!strncmp(p, "\\\\?\\UNC\\", 8)) {
-        p += 6;
-        p[0] = '\\';
-        p[1] = '\\';
-    } else if (!strncmp(p, "\\\\?\\", 4) && IsAlpha(p[4]) && p[5] == ':') {
-        p += 4;
-    }
-    if (IsAlpha(p[0]) && p[1] == ':' && p[2] == '\\') {
-        p[1] = p[0];
-        p[0] = '\\';
-    }
-    size_t i;
-    for (i = 0; p[i] && i + 1 < outsz; i++) out[i] = p[i] == '\\' ? '/' : p[i];
-    out[i] = 0;
+    memcpy(out, tmp, (size_t)n + 1);
 }
 
 // Whether a unix-spelled path is inside the materialized tree; rest then

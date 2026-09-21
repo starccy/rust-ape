@@ -12,6 +12,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <unistd.h>
@@ -27,6 +28,9 @@
 // The identity the socket tables hash, taken from the descriptor itself.
 // An unconnected or unbound end reads as zeros, which is also how the
 // tables report it.
+// libc/calls/mkunixpath.c
+int __mkunixpath(const char16_t *, char *);
+
 static void socket_text(int fd, const struct Fd *f, char *out, size_t n) {
     uint8_t laddr[16] = {0}, raddr[16] = {0};
     uint16_t lport = 0, rport = 0;
@@ -70,21 +74,22 @@ static void file_text(const struct Fd *f, char *out, size_t n) {
     char16_t w[512];
     uint32_t len = GetFinalPathNameByHandle(f->handle, w, 512, 0);
     if (len && len < 512) {
-        // \\?\C:\x -> C:/x, \\?\UNC\srv\share -> //srv/share
-        uint32_t i = 0;
-        if (len > 4 && w[0] == '\\' && w[1] == '\\' && w[2] == '?') {
-            i = 4;
-            if (len > 8 && w[4] == 'U' && w[5] == 'N' && w[6] == 'C') i = 7;
+        // cosmo's own spelling of the path, the one getcwd() and
+        // GetProgramExecutableName() use; heap, since the calling thread
+        // may have a small stack
+        char *u8 = malloc(PATH_MAX);
+        int m = u8 ? __mkunixpath(w, u8) : -1;
+        if (m >= 0) {
+            if ((size_t)m + 1 > n) m = (int)n - 1;
+            memcpy(out, u8, (size_t)m);
+            out[m] = 0;
+        } else {
+            size_t k = 0;
+            for (uint32_t i = 0; i < len && k < n - 1; i++)
+                out[k++] = w[i] == '\\' ? '/' : (w[i] < 128 ? (char)w[i] : '_');
+            out[k] = 0;
         }
-        size_t k = 0;
-        for (; i < len && k < n - 1; i++)
-            out[k++] = w[i] == '\\' ? '/' : (w[i] < 128 ? (char)w[i] : '_');
-        out[k] = 0;
-        // "C:/x" -> "/C/x", cosmo's spelling of an absolute path
-        if (k >= 2 && out[1] == ':') {
-            out[1] = out[0];
-            out[0] = '/';
-        }
+        free(u8);
         return;
     }
     uint64_t h = 0xcbf29ce484222325ull;
