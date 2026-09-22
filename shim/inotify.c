@@ -42,6 +42,7 @@
 // conventions. That is a lot of machinery for a watcher whose consumers all
 // debounce anyway.
 
+#define _COSMO_SOURCE // libc/dce.h, the NT listing api, tprecode16to8
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -54,8 +55,16 @@
 #include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
-#define _COSMO_SOURCE // for libc/dce.h's IsLinux()
+#include <stdbool.h>
 #include <libc/dce.h>
+#include "libc/calls/syscall_support-nt.internal.h"
+#include "libc/fmt/wintime.internal.h"
+#include "libc/nt/enum/fileflagandattributes.h"
+#include "libc/nt/enum/findexinfolevels.h"
+#include "libc/nt/enum/findexsearchops.h"
+#include "libc/nt/files.h"
+#include "libc/nt/struct/win32finddata.h"
+#include "libc/str/str.h"
 
 #include "syscall.h"
 
@@ -241,8 +250,59 @@ static void emit(struct shim_in_inst *in, int wd, uint32_t mask,
     if (errno != EINTR) in->dead = 1;
 }
 
+static int scan_dir_nt(struct shim_in_watch *w, struct shim_in_kid **out,
+                       size_t *outn) {
+    char16_t path16[PATH_MAX];
+    int len = __mkntpath(w->path, path16);
+    if (len < 0 || len + 3 >= PATH_MAX) return -1;
+    if (len && path16[len - 1] != u'\\') path16[len++] = u'\\';
+    path16[len++] = u'*';
+    path16[len] = 0;
+    struct NtWin32FindData fd;
+    int64_t h = FindFirstFileEx(path16, kNtFindExInfoBasic, &fd,
+                                kNtFindExSearchNameMatch, 0,
+                                kNtFindFirstExLargeFetch);
+    if (h == -1) return -1;
+    struct shim_in_kid *now = NULL;
+    size_t n = 0, cap = 0;
+    do {
+        char name[PATH_MAX];
+        if (!tprecode16to8(name, sizeof(name), fd.cFileName).ax) continue;
+        if (!strcmp(name, ".") || !strcmp(name, "..")) continue;
+        if (n == cap) {
+            size_t ncap = cap ? cap * 2 : 16;
+            struct shim_in_kid *p = realloc(now, ncap * sizeof(*p));
+            if (!p) break;
+            now = p;
+            cap = ncap;
+        }
+        memset(&now[n], 0, sizeof(now[n]));
+        now[n].name = strdup(name);
+        if (!now[n].name) break;
+        struct timespec ts = FileTimeToTimeSpec(fd.ftLastWriteTime);
+        now[n].mtime = ts.tv_sec;
+        now[n].mtime_ns = ts.tv_nsec;
+        now[n].size = ((int64_t)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
+        now[n].isdir = !!(fd.dwFileAttributes & kNtFileAttributeDirectory);
+        now[n].mode = (fd.dwFileAttributes & kNtFileAttributeReparsePoint)
+                          ? 0120777
+                          : (now[n].isdir ? 040000 : 0100000) |
+                                ((fd.dwFileAttributes & kNtFileAttributeReadonly)
+                                     ? 0555
+                                     : 0777);
+        n++;
+    } while (FindNextFile(h, &fd));
+    FindClose(h);
+    *out = now;
+    *outn = n;
+    return 0;
+}
+
 // Directory watch: list, sort, walk the two sorted lists in step.
 static void scan_dir(struct shim_in_inst *in, struct shim_in_watch *w) {
+    struct shim_in_kid *now = NULL;
+    size_t n = 0, cap = 0;
+    if (IsWindows() && !scan_dir_nt(w, &now, &n)) goto Listed;
     DIR *d = opendir(w->path);
     if (!d) {
         if (errno == ENOENT || errno == ENOTDIR) {
@@ -254,8 +314,6 @@ static void scan_dir(struct shim_in_inst *in, struct shim_in_watch *w) {
         return;
     }
 
-    struct shim_in_kid *now = NULL;
-    size_t n = 0, cap = 0;
     struct dirent *de;
     while ((de = readdir(d))) {
         if (!strcmp(de->d_name, ".") || !strcmp(de->d_name, "..")) continue;
@@ -278,6 +336,7 @@ static void scan_dir(struct shim_in_inst *in, struct shim_in_watch *w) {
         n++;
     }
     closedir(d);
+Listed:
     if (n > 1) qsort(now, n, sizeof(*now), kid_cmp);
 
     size_t i = 0, j = 0;

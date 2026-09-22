@@ -42,6 +42,13 @@ fn main() {
     std::fs::write(&file, b"first, and then quite a lot more").expect("grow the file");
     expect(&rx, &file, "growing it");
 
+    // Windows emulation lists the directory without inode numbers, so it
+    // reports this as a modification rather than a delete and a create.
+    let tmp = dir.join("one.txt.tmp");
+    std::fs::write(&tmp, b"replacement").expect("write the replacement");
+    std::fs::rename(&tmp, &file).expect("rename it over the file");
+    expect(&rx, &file, "replacing it by rename");
+
     // Recursive watching is not one watch, it is one per directory, added as
     // directories turn up. A file inside a directory created after the watch
     // started is what proves the new watch took.
