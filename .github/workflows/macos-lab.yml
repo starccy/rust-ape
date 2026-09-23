@@ -71,6 +71,8 @@ jobs:
         if: inputs.ssh
         id: upterm
         uses: owenthereal/action-upterm@v1
+        env:
+          TMPDIR: /tmp
         with:
           limit-access-to-actor: true
           wait-timeout-minutes: 30
