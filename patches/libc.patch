@@ -304,16 +304,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn signal(signum: c_int, handler: sighandler_t) -> sighandler_t;
  
      #[cfg_attr(target_os = "netbsd", link_name = "__getrusage50")]
-@@ -1320,6 +1338,8 @@
-         attr: *const crate::pthread_attr_t,
-         stacksize: *mut size_t,
-     ) -> c_int;
-+    // cosmo: cosmo's PTHREAD_STACK_MIN is larger than musl's; the shim rounds up.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_pthread_attr_setstacksize")]
-     pub fn pthread_attr_setstacksize(attr: *mut crate::pthread_attr_t, stack_size: size_t)
-         -> c_int;
-     pub fn pthread_attr_setdetachstate(attr: *mut crate::pthread_attr_t, state: c_int) -> c_int;
-@@ -1627,6 +1647,9 @@
+@@ -1627,6 +1645,9 @@
      pub fn sigismember(set: *const sigset_t, signum: c_int) -> c_int;
  
      #[cfg_attr(target_os = "netbsd", link_name = "__sigprocmask14")]
@@ -323,7 +314,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn sigprocmask(how: c_int, set: *const sigset_t, oldset: *mut sigset_t) -> c_int;
      #[cfg_attr(target_os = "netbsd", link_name = "__sigpending14")]
      pub fn sigpending(set: *mut sigset_t) -> c_int;
-@@ -2306,6 +2329,9 @@
+@@ -2306,6 +2327,9 @@
              pub fn open_memstream(ptr: *mut *mut c_char, sizeloc: *mut size_t) -> *mut FILE;
              pub fn atexit(cb: extern "C" fn()) -> c_int;
              #[cfg_attr(target_os = "netbsd", link_name = "__sigaction14")]

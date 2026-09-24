@@ -15,7 +15,7 @@ SOMAXCONN = "a backlog is a plain number"
 O_ACCMODE = "masks what the fcntl shim returns, which is Linux-coded already"
 MINSIGSTKSZ = "cosmo's getauxval answers AT_MINSIGSTKSZ with its own minimum and std sizes its stack from that"
 SIGSTKSZ = "same"
-PTHREAD_STACK_MIN = "the pthread_attr_setstacksize shim rounds a smaller size up"
+PTHREAD_STACK_MIN = "cosmo's pthread_attr_setstacksize rounds a smaller size up to its own minimum"
 
 # values with no counterpart to map to
 SCM_CREDENTIALS = "Linux-only ancillary data; std's use sits behind an unstable feature"
@@ -49,6 +49,7 @@ copy_file_range = "cosmo only has it on Linux, and flags has to be 0"
 mount = "MS_* are Linux mount flags; elsewhere mount takes other arguments altogether"
 reboot = "not something a portable program calls; the RB_* values only match on Linux"
 getnetbyaddr = "cosmo's is a stub that returns NULL"
+pthread_attr_setstacksize = "PTHREAD_STACK_MIN is only a floor, and cosmo rounds a smaller size up to its own"
 
 # Which libc functions a family of constants ends up in. The audit uses it
 # two ways: a family with a value that differs on some host needs every
