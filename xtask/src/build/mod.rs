@@ -81,6 +81,7 @@ pub fn run(args: &BuildArgs) -> Result<()> {
         .canonicalize()
         .with_context(|| format!("no such project directory: {}", args.project.display()))?;
     preflight(&root)?;
+    config::check_std_libc()?;
 
     let meta = metadata::load(&project)?;
     verify_patches(&root, &meta)?;
@@ -117,6 +118,7 @@ pub fn run(args: &BuildArgs) -> Result<()> {
     for &(triple, arch) in TARGETS {
         println!("==> building {triple} ({profile})");
         cargo_build(&root, &project, triple, arch, args)?;
+        verify_std_redirects(&root, &project, profile, triple, arch)?;
     }
 
     for target in &targets {
@@ -158,10 +160,8 @@ fn preflight(root: &Path) -> Result<()> {
             missing.push(rel);
         }
     }
-    for rel in ["vendor/library", "vendor/cosmocc/bin"] {
-        if !root.join(rel).is_dir() {
-            missing.push(rel.to_string());
-        }
+    if !root.join("vendor/cosmocc/bin").is_dir() {
+        missing.push("vendor/cosmocc/bin".to_string());
     }
     if !missing.is_empty() {
         bail!(
@@ -265,17 +265,10 @@ fn pack_targets(meta: &Metadata, args: &BuildArgs) -> Result<Vec<PackTarget>> {
 
 /// Identity of everything std is built from: the library and libc stamps.
 fn std_stamp(root: &Path) -> Result<String> {
-    let mut s = String::new();
-    for c in ["library", "libc"] {
-        let f = root.join("vendor/.stamps").join(c);
-        s += fs::read_to_string(&f)
-            .with_context(|| {
-                format!("missing {}: run `cargo xtask setup` first", f.display())
-            })?
-            .trim();
-        s.push('\n');
-    }
-    Ok(s.trim().to_string())
+    let f = root.join("vendor/.stamps/libc");
+    let libc = fs::read_to_string(&f)
+        .with_context(|| format!("missing {}: run `cargo xtask setup` first", f.display()))?;
+    Ok(format!("{}\n{}", config::rust_channel()?, libc.trim()))
 }
 
 fn purge_stale_shim_links(root: &Path, project: &Path, profile: &str) -> Result<()> {
@@ -376,8 +369,6 @@ fn cargo_build(
     let mut cmd = Command::new("cargo");
     cmd.current_dir(project);
     cmd.env("RUSTUP_TOOLCHAIN", config::rust_channel()?);
-    // Where std's sources live; cargo wants this absolute.
-    cmd.env("__CARGO_TESTS_ONLY_SRC_ROOT", root.join("vendor/library"));
 
     // * rustix_use_libc: keep rustix off its raw-syscall backend, which cosmo
     // can't translate away from Linux.
@@ -436,6 +427,14 @@ fn cargo_build(
         "-Z",
         "build-std-features=",
     ]);
+    // std is built from the toolchain's own rust-src, unpatched. The one
+    // thing it has to pick up is the cosmo-adapted libc, and a patch given
+    // on the command line reaches the build-std graph where the project's
+    // own [patch] table does not.
+    cmd.arg("--config").arg(format!(
+        "patch.crates-io.libc.path={:?}",
+        root.join("vendor/patches/libc").display().to_string()
+    ));
     cmd.arg("--target").arg(&target_json);
     if args.release {
         cmd.arg("--release");
@@ -459,6 +458,54 @@ fn cargo_build(
         cmd.arg("--no-default-features");
     }
     util::run(&mut cmd)
+}
+
+/// The std that was just built has to call into the shim. If the libc
+/// patch was dropped from the build-std graph for any reason, std still
+/// links against cosmo's raw sigaction and the layout bug behind
+/// shim/signal.c comes back without a word from cargo, so the rlib is
+/// checked for the one redirect that matters most.
+fn verify_std_redirects(
+    root: &Path,
+    project: &Path,
+    profile: &str,
+    triple: &str,
+    arch: &str,
+) -> Result<()> {
+    let deps = project.join("target").join(triple).join(profile).join("deps");
+    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
+    for entry in fs::read_dir(&deps)? {
+        let path = entry?.path();
+        let name = path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+        if name.starts_with("libstd-") && name.ends_with(".rlib") {
+            let m = fs::metadata(&path)?.modified()?;
+            if newest.as_ref().is_none_or(|(t, _)| *t < m) {
+                newest = Some((m, path));
+            }
+        }
+    }
+    let Some((_, rlib)) = newest else {
+        bail!("no libstd rlib under {}", deps.display());
+    };
+    let nm = root.join(format!("vendor/cosmocc/bin/{arch}-linux-cosmo-nm"));
+    let out = util::ape_command(&nm).arg("-u").arg(&rlib).output().context("running nm")?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let imported: std::collections::BTreeSet<&str> = text
+        .lines()
+        .filter_map(|l| l.split_whitespace().last())
+        .filter(|s| s.starts_with("__ape_shim_"))
+        .collect();
+    if !imported.contains("__ape_shim_sigaction") {
+        bail!(
+            "{} does not call __ape_shim_sigaction, so std was built against an unpatched libc \
+             (shim symbols it does call: {:?}).\n\
+             Check that `cargo build` did not warn that the libc patch was unused, then \
+             `cargo xtask build --clean-std`",
+            rlib.display(),
+            imported
+        );
+    }
+    Ok(())
 }
 
 /// The per-arch ELF cargo produced, which apelink fuses into the fat APE.

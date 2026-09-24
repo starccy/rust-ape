@@ -3,6 +3,7 @@
 //! and every libc function the built crates import without going through
 //! the shim.
 
+use crate::config;
 use crate::genshim;
 use crate::util;
 use anyhow::{Context, Result, bail};
@@ -33,6 +34,11 @@ pub struct AuditArgs {
     /// straight to cosmo
     #[arg(long)]
     pub all: bool,
+
+    /// Rewrite patches/std-imports.txt from this build instead of checking
+    /// against it
+    #[arg(long)]
+    pub update_std_imports: bool,
 }
 
 const ARCHES: &[&str] = &["x86_64", "aarch64"];
@@ -168,6 +174,7 @@ pub fn run(args: &AuditArgs) -> Result<()> {
     let (allow, families) = load_audit_file(&root.join("patches/audit.toml"))?;
 
     let (imports, cosmo_defined) = libc_imports(&root, &args.project, &args.profile)?;
+    let std_imports_ok = check_std_imports(&root, &imports, args.update_std_imports)?;
     let built: HashSet<&str> = imports.values().flatten().map(String::as_str).collect();
     let refs = References::collect(&root, &args.project, &built)?;
 
@@ -410,6 +417,9 @@ pub fn run(args: &AuditArgs) -> Result<()> {
     println!("             {}", work.join("functions.tsv").display());
     if failed {
         bail!("audit found gaps; fix them or explain them in patches/audit.toml");
+    }
+    if !std_imports_ok {
+        bail!("std's libc imports changed; review them, then `cargo xtask audit --update-std-imports`");
     }
     println!("audit ok");
     Ok(())
@@ -880,9 +890,10 @@ struct References {
 impl References {
     fn collect(root: &Path, project: &Path, built: &HashSet<&str>) -> Result<References> {
         let mut std = HashSet::new();
+        let library = config::rust_src_dir()?;
         for sub in ["std/src", "core/src", "alloc/src", "panic_unwind/src", "panic_abort/src"] {
             let mut files = Vec::new();
-            walk(&root.join("vendor/library").join(sub), "rs", &mut files)?;
+            walk(&library.join(sub), "rs", &mut files)?;
             for f in files {
                 idents(&f, &mut std);
             }
@@ -1008,6 +1019,60 @@ fn libc_imports(
         }
     }
     Ok((out, defined))
+}
+
+/// The libc functions std itself calls, against the committed list. The
+/// shim's two remaining jobs (the sigaction repack, the .exe retry on
+/// stat/access/exec) only work if std keeps calling the entry points
+/// they wrap, and a toolchain bump can move std onto others (statx for
+/// stat, say) without anything failing to build. Additions and removals
+/// both need a look; the file is rewritten with --update-std-imports.
+fn check_std_imports(
+    root: &Path,
+    imports: &BTreeMap<String, BTreeSet<String>>,
+    update: bool,
+) -> Result<bool> {
+    let file = root.join("patches/std-imports.txt");
+    let now: BTreeSet<&str> = imports
+        .iter()
+        .filter(|(_, crates)| crates.contains("std"))
+        .map(|(sym, _)| sym.as_str())
+        .collect();
+    if update {
+        let mut text = String::from(
+            "# The libc functions std calls, as found by `cargo xtask audit` in the\n\
+             # examples build. Regenerate with `cargo xtask audit --update-std-imports`\n\
+             # after checking that every new name lands where it should: a name the\n\
+             # shim wraps for policy has to keep its __ape_shim_ redirect, and a new\n\
+             # Linux-only call needs cosmo to answer it on every host.\n",
+        );
+        for s in &now {
+            text.push_str(s);
+            text.push('\n');
+        }
+        fs::write(&file, text)?;
+        println!("==> wrote {} ({} names)", file.display(), now.len());
+        return Ok(true);
+    }
+    let text = fs::read_to_string(&file).with_context(|| {
+        format!("missing {}; run `cargo xtask audit --update-std-imports` once", file.display())
+    })?;
+    let before: BTreeSet<&str> =
+        text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).collect();
+    let added: Vec<&&str> = now.difference(&before).collect();
+    let removed: Vec<&&str> = before.difference(&now).collect();
+    if added.is_empty() && removed.is_empty() {
+        println!("std imports: {} names, unchanged", now.len());
+        return Ok(true);
+    }
+    println!("\nstd's libc imports differ from patches/std-imports.txt:");
+    for s in &added {
+        println!("  + {s}");
+    }
+    for s in &removed {
+        println!("  - {s}");
+    }
+    Ok(false)
 }
 
 /// `deps/libfoo_bar-0123abcd.rlib` (with or without the extension) -> `foo_bar`

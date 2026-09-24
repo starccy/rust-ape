@@ -126,10 +126,6 @@ pub fn apply_patch(dir: &Path, patch_file: &Path) -> Result<()> {
         .stdin(f))
 }
 
-pub fn copy_dir(src: &Path, dst: &Path) -> Result<()> {
-    run(Command::new("cp").arg("-a").arg(src).arg(dst))
-}
-
 pub fn rm_rf(path: &Path) -> Result<()> {
     let is_link = fs::symlink_metadata(path)
         .map(|m| m.file_type().is_symlink())
@@ -159,21 +155,6 @@ pub fn write_stamp(stamp_file: &Path, value: &str) -> Result<()> {
     }
     fs::write(stamp_file, format!("{value}\n"))?;
     Ok(())
-}
-
-pub fn find_dir_suffix(base: &Path, suffix: &str) -> Option<PathBuf> {
-    if base.ends_with(suffix) {
-        return Some(base.to_path_buf());
-    }
-    for entry in fs::read_dir(base).ok()? {
-        let p = entry.ok()?.path();
-        if p.is_dir()
-            && let Some(found) = find_dir_suffix(&p, suffix)
-        {
-            return Some(found);
-        }
-    }
-    None
 }
 
 pub fn git_init(dir: &Path) -> Result<()> {

@@ -48,7 +48,7 @@ orphans=$(awk -F'\t' '
 if [ -n "$orphans" ]; then
     echo "orphaned shim symbols found:"
     echo "Add the #[cfg_attr(rust_ape_shim, link_name = ...)] redirect to the patched"
-    echo "crate (edit vendor/patches/<crate> or vendor/library, then ./patches/regen.sh)"
+    echo "crate (edit vendor/patches/<crate>, then ./patches/regen.sh)"
     echo "or delete the dead code:"
     echo "$orphans"
     bad=1

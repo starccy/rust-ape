@@ -1,7 +1,5 @@
 use crate::config::{self, PATCHED_CRATES};
-use crate::util::{
-    self, apply_patch, copy_dir, download, rm_rf, sha256_file, up_to_date, write_stamp,
-};
+use crate::util::{self, apply_patch, download, rm_rf, sha256_file, up_to_date, write_stamp};
 use anyhow::{Context, Result, bail};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -14,8 +12,8 @@ struct Dirs {
     stamps: PathBuf,
 }
 
-/// Restores the three parts of vendor/: library, patched crates, cosmocc.
-/// each idempotent on its own stamp
+/// Restores the two parts of vendor/: patched crates and cosmocc, each
+/// idempotent on its own stamp. std itself comes from the toolchain's rust-src.
 pub fn run(force: bool, local_cosmocc: Option<&Path>) -> Result<()> {
     let root = util::repo_root();
     let dirs = Dirs {
@@ -24,53 +22,13 @@ pub fn run(force: bool, local_cosmocc: Option<&Path>) -> Result<()> {
         cache: root.join("cache"),
         stamps: root.join("vendor/.stamps"),
     };
-    if !dirs.patches.join("library.patch").is_file() {
-        bail!("missing {}/library.patch", dirs.patches.display());
-    }
-    fetch_library(&dirs, force)?;
+    config::check_std_libc()?;
     fetch_crates(&dirs, force)?;
     match local_cosmocc {
         Some(dir) => link_cosmocc(&dirs, dir)?,
         None => fetch_cosmocc(&dirs, force)?,
     }
     println!("ready: {}", dirs.vendor.display());
-    Ok(())
-}
-
-/// vendor/library = rust-src for the pinned nightly + library.patch
-fn fetch_library(dirs: &Dirs, force: bool) -> Result<()> {
-    let channel = config::rust_channel()?;
-    let patch = dirs.patches.join("library.patch");
-    let dir = dirs.vendor.join("library");
-    let stamp_file = dirs.stamps.join("library");
-    
-    let stamp = format!("{channel} patch:{}", sha256_file(&patch)?);
-    if !force && up_to_date(&dir, &stamp_file, &stamp) {
-        println!("==> library up to date, skipping");
-        return Ok(());
-    }
-    rm_rf(&dir)?;
-    fs::create_dir_all(&dirs.vendor)?;
-
-    if let Some(src) = local_rust_src(channel) {
-        let commit = toolchain_commit(channel).unwrap_or_else(|| "unknown".into());
-        println!("==> copying rust-src from local rustup {channel} (commit {commit})");
-        copy_dir(&src, &dir)?;
-    } else {
-        let tarball = dirs.cache.join(format!("rust-src-{channel}.tar.xz"));
-        download(&config::rust_src_url()?, &tarball)?;
-        println!("==> unpacking rust-src");
-        let tmp = dirs.cache.join("rust-src-extract");
-        rm_rf(&tmp)?;
-        fs::create_dir_all(&tmp)?;
-        util::run(Command::new("tar").arg("-xJf").arg(&tarball).arg("-C").arg(&tmp))?;
-        let libdir = util::find_dir_suffix(&tmp, "rustlib/src/rust/library")
-            .context("no library directory in the tarball")?;
-        fs::rename(&libdir, &dir)?;
-        rm_rf(&tmp)?;
-    }
-    apply_patch(&dirs.vendor, &patch)?;
-    write_stamp(&stamp_file, &stamp)?;
     Ok(())
 }
 
@@ -97,6 +55,20 @@ fn fetch_crates(dirs: &Dirs, force: bool) -> Result<()> {
         fs::rename(&extracted, &dir)?;
         apply_patch(&crates_dir, &patch)?;
         write_stamp(&stamp_file, &stamp)?;
+    }
+    
+    for entry in fs::read_dir(&crates_dir)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !PATCHED_CRATES.iter().any(|&(n, _)| n == name) {
+            println!("==> removing stale vendor/patches/{name}");
+            rm_rf(&entry.path())?;
+            match fs::remove_file(dirs.stamps.join(&*name)) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+                _ => {}
+            }
+        }
     }
     Ok(())
 }
@@ -162,37 +134,4 @@ fn link_cosmocc(dirs: &Dirs, local: &Path) -> Result<()> {
     println!("==> cosmocc -> {}", local.display());
     write_stamp(&stamp_file, &stamp)?;
     Ok(())
-}
-
-fn toolchain_commit(tc: &str) -> Option<String> {
-    let out = util::capture(
-        Command::new("rustc")
-            .arg(format!("+{tc}"))
-            .args(["--version", "--verbose"]),
-    )
-    .ok()?;
-    out.lines()
-        .find_map(|l| l.strip_prefix("commit-hash: ").map(str::to_owned))
-}
-
-/// This channel's rust-src in the local rustup, adding the component if needed.
-fn local_rust_src(channel: &str) -> Option<PathBuf> {
-    let sysroot = util::capture(
-        Command::new("rustc")
-            .arg(format!("+{channel}"))
-            .args(["--print", "sysroot"]),
-    )
-    .ok()?;
-    let src = Path::new(sysroot.trim()).join("lib/rustlib/src/rust/library");
-    if !src.is_dir() {
-        let added = Command::new("rustup")
-            .args(["component", "add", "rust-src", "--toolchain", channel])
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if !added {
-            return None;
-        }
-    }
-    src.is_dir().then_some(src)
 }

@@ -22,7 +22,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Install everything: restore vendor/ (rust-src, patched crates, cosmocc) and render generated/
+    /// Install everything: restore vendor/ (patched crates, cosmocc) and render generated/
     Setup(setup::SetupArgs),
     /// Scaffold a minimal project wired up to the SDK
     Generate(generate::GenerateArgs),

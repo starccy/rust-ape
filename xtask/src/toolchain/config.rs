@@ -4,8 +4,6 @@ use anyhow::{Context, Result, bail};
 use std::sync::OnceLock;
 
 /// `[toolchain] channel` from rust-toolchain.toml.
-///
-/// The library patch must exactly match the rust toolchain version
 pub fn rust_channel() -> Result<&'static str> {
     static CHANNEL: OnceLock<String> = OnceLock::new();
     if let Some(c) = CHANNEL.get() {
@@ -62,12 +60,63 @@ pub const TARGETS: &[(&str, &str)] = &[
     ("aarch64-unknown-linux-musl", "aarch64"),
 ];
 
-/// Fallback when there's no usable rustup: the dated rust-src tarball on dist.
-pub fn rust_src_url() -> Result<String> {
-    let date = parse_nightly_date(rust_channel()?).expect("channel was checked to be dated");
-    Ok(format!(
-        "https://static.rust-lang.org/dist/{date}/rust-src-nightly.tar.xz"
-    ))
+/// The pinned channel's rust-src, which build-std compiles std from; the
+/// component is added if the toolchain lacks it.
+pub fn rust_src_dir() -> Result<std::path::PathBuf> {
+    let channel = rust_channel()?;
+    let sysroot = util::capture(
+        std::process::Command::new("rustc")
+            .arg(format!("+{channel}"))
+            .args(["--print", "sysroot"]),
+    )?;
+    let src = std::path::Path::new(sysroot.trim()).join("lib/rustlib/src/rust/library");
+    if !src.is_dir() {
+        util::run(
+            std::process::Command::new("rustup")
+                .args(["component", "add", "rust-src", "--toolchain", channel]),
+        )
+        .context("rust-src is needed to build std")?;
+    }
+    if !src.is_dir() {
+        bail!("no rust-src at {} after adding the component", src.display());
+    }
+    Ok(src)
+}
+
+/// The libc version std's own Cargo.lock pins.
+pub fn std_libc_version() -> Result<String> {
+    let lock = rust_src_dir()?.join("Cargo.lock");
+    let text = std::fs::read_to_string(&lock)
+        .with_context(|| format!("could not read {}", lock.display()))?;
+    let table: toml::Table = text
+        .parse()
+        .with_context(|| format!("{} is not valid TOML", lock.display()))?;
+    table
+        .get("package")
+        .and_then(|p| p.as_array())
+        .into_iter()
+        .flatten()
+        .find(|p| p.get("name").and_then(|n| n.as_str()) == Some("libc"))
+        .and_then(|p| p.get("version").and_then(|v| v.as_str()))
+        .map(str::to_string)
+        .with_context(|| format!("{} has no libc entry", lock.display()))
+}
+
+/// The patched libc has to be the version std asks for.
+pub fn check_std_libc() -> Result<()> {
+    let want = std_libc_version()?;
+    let (_, have) = PATCHED_CRATES
+        .iter()
+        .find(|&&(n, _)| n == "libc")
+        .context("libc missing from PATCHED_CRATES")?;
+    if *have != want {
+        bail!(
+            "std of {} depends on libc {want}, but patches/libc.patch is for libc {have}.\n\
+             Rebase the patch onto {want} and update PATCHED_CRATES in xtask/src/config.rs",
+            rust_channel()?
+        );
+    }
+    Ok(())
 }
 
 pub fn crate_url(name: &str, version: &str) -> String {
