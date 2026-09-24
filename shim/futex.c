@@ -47,9 +47,6 @@
 // values are set host-coded here; the errno shim hands the Rust side the
 // musl coding its comparisons expect (std and parking_lot both compare
 // against EINTR/EAGAIN/ETIMEDOUT).
-// shim/open.c
-int __ape_shim_fchmodat(int, const char *, unsigned, int);
-
 long __ape_shim_syscall(long n, ...) {
     if (n == SHIM_LIN_SYS_futex) {
         va_list ap;
@@ -134,7 +131,7 @@ long __ape_shim_syscall(long n, ...) {
             int dirfd = va_arg(ap, int);
             const char *path = va_arg(ap, const char *);
             unsigned mode = va_arg(ap, unsigned);
-            r = __ape_shim_fchmodat(dirfd, path, mode, 0);
+            r = fchmodat(dirfd, path, mode, 0);
         } else {
             int in = va_arg(ap, int);
             int64_t *inoff = va_arg(ap, int64_t *);

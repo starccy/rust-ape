@@ -1,7 +1,6 @@
-// The signal half of the Linux-personality shim. sa_flags are cosmo
-// runtime constants and struct sigaction's layouts differ outright, so it
-// is repacked field by field in both directions. Signal numbers are
-// Linux's on both sides.
+// The signal half of the Linux-personality shim. struct sigaction's
+// layouts differ outright, so it is repacked field by field in both
+// directions. Signal numbers and sa_flags are Linux's on both sides.
 //
 // Handlers are wrapped in a trampoline that puts the interrupted thread's
 // errno back; siginfo_t and ucontext_t pass through as they are.
@@ -15,13 +14,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <pthread.h>
-#include <sys/auxv.h>
 #include <libc/sysv/consts/sig.h>
 #include <libc/sysv/consts/sa.h>
-#include <libc/sysv/consts/ss.h>
-#include <libc/sysv/consts/auxv.h>
-
-#include "tables.h"
 
 
 // ---------------------------------------------------------------------------
@@ -35,21 +29,9 @@ struct lin_sigaction {
     void (*restorer)(void);
 };
 
-static uint64_t sa_flags_to_host(int lin) {
-    uint64_t host = 0;
-#define X(name, linval) if ((unsigned)lin & (unsigned)(linval)) host |= name;
-    SHIM_SA_TABLE(X)
-#undef X
-    return host;
-}
-
-static int sa_flags_to_linux(uint64_t host) {
-    unsigned lin = 0;
-#define X(name, linval) if (host & name) lin |= (unsigned)(linval);
-    SHIM_SA_TABLE(X)
-#undef X
-    return (int)lin;
-}
+// bits cosmo knows; anything else (SA_RESTORER and the like) is dropped
+#define SA_KNOWN (SA_NOCLDSTOP | SA_NOCLDWAIT | SA_SIGINFO | SA_ONSTACK | \
+                  SA_RESTART | SA_NODEFER | SA_RESETHAND)
 
 // ---------------------------------------------------------------------------
 // Handler trampolines. Slot table is indexed by signum; cosmo supports
@@ -95,13 +77,13 @@ int __ape_shim_sigaction(int lin_sig, const struct lin_sigaction *lin_act,
     struct sigaction act, old, *pact = NULL;
     if (lin_act) {
         memset(&act, 0, sizeof(act));
-        act.sa_flags = sa_flags_to_host(lin_act->flags);
+        act.sa_flags = (unsigned)lin_act->flags & SA_KNOWN;
         act.sa_mask = (sigset_t)lin_act->mask[0];
         void *h = lin_act->handler;
         if (special_disposition(h) || !slot) {
             act.sa_handler = (sighandler_t)h;
             if (slot) { g_h1[hostsig] = 0; g_h3[hostsig] = 0; }
-        } else if ((unsigned)lin_act->flags & (unsigned)SHIM_LIN_SA_SIGINFO) {
+        } else if ((unsigned)lin_act->flags & (unsigned)SA_SIGINFO) {
             act.sa_sigaction = tramp3;
             g_h3[hostsig] = (void (*)(int, siginfo_t *, void *))h;
             g_h1[hostsig] = 0;
@@ -126,7 +108,7 @@ int __ape_shim_sigaction(int lin_sig, const struct lin_sigaction *lin_act,
         else if (oh == (void *)tramp3) oh = (void *)prev3;
         lin_old->handler = oh;
         lin_old->mask[0] = (unsigned long)old.sa_mask;
-        lin_old->flags = sa_flags_to_linux(old.sa_flags);
+        lin_old->flags = (int)(old.sa_flags & SA_KNOWN);
         lin_old->restorer = 0;
     }
     return 0;
@@ -138,54 +120,10 @@ void (*__ape_shim_signal(int sig, void (*handler)(int)))(int) {
     struct lin_sigaction act, old;
     memset(&act, 0, sizeof(act));
     act.handler = (void *)handler;
-    act.flags = SHIM_LIN_SA_RESTART;
+    act.flags = SA_RESTART;
     if (__ape_shim_sigaction(sig, &act, &old) < 0)
         return (void (*)(int))SIG_ERR;
     return (void (*)(int))old.handler;
-}
-
-// ---------------------------------------------------------------------------
-// sigaltstack: stack_t layout matches (both are {ss_sp, int ss_flags,
-// ss_size}); only the ss_flags values need mapping. Unknown bits
-// (SS_AUTODISARM) are dropped.
-struct lin_stack {
-    void *ss_sp;
-    int ss_flags;
-    size_t ss_size;
-};
-
-static int ss_flags_to_host(int lin) {
-    int host = 0;
-#define X(name, linval) if ((unsigned)lin & (unsigned)(linval)) host |= name;
-    SHIM_SS_TABLE(X)
-#undef X
-    return host;
-}
-
-static int ss_flags_to_linux(int host) {
-    unsigned lin = 0;
-#define X(name, linval) if ((unsigned)host & (unsigned)name) lin |= (unsigned)(linval);
-    SHIM_SS_TABLE(X)
-#undef X
-    return (int)lin;
-}
-
-int __ape_shim_sigaltstack(const struct lin_stack *ss, struct lin_stack *old) {
-    stack_t hss, hold;
-    stack_t *pss = NULL;
-    if (ss) {
-        hss.ss_sp = ss->ss_sp;
-        hss.ss_flags = ss_flags_to_host(ss->ss_flags);
-        hss.ss_size = ss->ss_size;
-        pss = &hss;
-    }
-    int r = sigaltstack(pss, &hold);
-    if (r == 0 && old) {
-        old->ss_sp = hold.ss_sp;
-        old->ss_flags = ss_flags_to_linux(hold.ss_flags);
-        old->ss_size = hold.ss_size;
-    }
-    return r;
 }
 
 // ---------------------------------------------------------------------------
@@ -193,15 +131,6 @@ int __ape_shim_sigaltstack(const struct lin_stack *ss, struct lin_stack *old) {
 // functions read/write a uint64. Forward direction can pass the pointer
 // straight through (low word is the set); writebacks go through a local so
 // the caller's tail bytes end up zeroed instead of stale.
-
-static int how_to_host(int lin, int *out) {
-    switch (lin) {
-        case SHIM_LIN_SIG_BLOCK:   *out = SIG_BLOCK; return 0;
-        case SHIM_LIN_SIG_UNBLOCK: *out = SIG_UNBLOCK; return 0;
-        case SHIM_LIN_SIG_SETMASK: *out = SIG_SETMASK; return 0;
-        default: return errno = EINVAL, -1;
-    }
-}
 
 struct lin_sigset {
     unsigned long val[16];
@@ -213,42 +142,17 @@ static void write_back_set(struct lin_sigset *out, sigset_t host) {
 }
 
 int __ape_shim_sigprocmask(int how, const struct lin_sigset *set, struct lin_sigset *old) {
-    int h = SIG_SETMASK;
-    if (set && how_to_host(how, &h) < 0) return -1;
     sigset_t hold;
-    int r = sigprocmask(set ? h : SIG_SETMASK, (const sigset_t *)set, old ? &hold : NULL);
+    int r = sigprocmask(set ? how : SIG_SETMASK, (const sigset_t *)set, old ? &hold : NULL);
     if (r == 0 && old) write_back_set(old, hold);
     return r;
 }
 
 int __ape_shim_pthread_sigmask(int how, const struct lin_sigset *set, struct lin_sigset *old) {
-    int h = SIG_SETMASK;
-    if (set && how_to_host(how, &h) < 0) return EINVAL; // @returnserrno family
     sigset_t hold;
-    int r = pthread_sigmask(set ? h : SIG_SETMASK, (const sigset_t *)set, old ? &hold : NULL);
+    int r = pthread_sigmask(set ? how : SIG_SETMASK, (const sigset_t *)set, old ? &hold : NULL);
     if (r == 0 && old) write_back_set(old, hold);
     return r;
-}
-
-// ---------------------------------------------------------------------------
-// getauxval: the caller passes Linux-coded AT_* keys, but cosmo's are runtime
-// constants (the auxv is synthesized with host numbering on non-Linux
-// hosts), so keys map through SHIM_AUXV_TABLE. It lives here because of
-// AT_MINSIGSTKSZ: std sizes its sigaltstack as max(musl SIGSTKSZ,
-// getauxval(AT_MINSIGSTKSZ)), musl's SIGSTKSZ (8k/12k) is below what the XNU
-// kernel accepts, and hosts without the auxv entry answer 0 — so that key
-// gets a floor of MINSIGSTKSZ (32768, cosmo's highest-minimum-across-hosts).
-// Unmapped keys pass through raw: on Linux the numbering already matches,
-// elsewhere they were never going to resolve anyway.
-unsigned long __ape_shim_getauxval(unsigned long lin) {
-    unsigned long key = lin;
-#define X(name, linval) if (lin == (unsigned long)(linval)) key = name;
-    SHIM_AUXV_TABLE(X)
-#undef X
-    unsigned long v = getauxval(key);
-    if (lin == SHIM_LIN_AT_MINSIGSTKSZ && v < (unsigned long)MINSIGSTKSZ)
-        v = MINSIGSTKSZ;
-    return v;
 }
 
 // ---------------------------------------------------------------------------

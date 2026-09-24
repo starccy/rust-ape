@@ -10,36 +10,23 @@ PATH_MAX = "buffer sizing on the Rust side; cosmo's own limit (1024) still appli
 PIPE_BUF = "never passed down"
 BUFSIZ = "never passed down"
 IPPROTO_MAX = "never passed down"
-NCCS = "termios is repacked field by field (SHIM_TCC_TABLE), the array length doesn't cross"
 CPU_SETSIZE = "callers pass the byte size of their own cpu_set_t along"
 SOMAXCONN = "a backlog is a plain number"
 O_ACCMODE = "masks what the fcntl shim returns, which is Linux-coded already"
-MINSIGSTKSZ = "the getauxval shim raises AT_MINSIGSTKSZ to cosmo's floor and std sizes its stack from that"
+MINSIGSTKSZ = "cosmo's getauxval answers AT_MINSIGSTKSZ with its own minimum and std sizes its stack from that"
 SIGSTKSZ = "same"
 PTHREAD_STACK_MIN = "the pthread_attr_setstacksize shim rounds a smaller size up"
 
-# spelled through another name the tables carry
-MAP_ANON = "alias of MAP_ANONYMOUS"
-PF_LOCAL = "alias of AF_UNIX"
-AF_ROUTE = "AF_NETLINK on Linux, which the table carries; XNU's routing socket is another protocol"
-PF_ROUTE = "same"
-AF_PACKET = "kept out of the table on purpose: shim/packet.c emulates it on NT under the Linux number"
-
-# ioctl requests outside the tables never reach cosmo: the shim answers ENOTTY
-"SIOC*" = "refused by the ioctl shim, not passed on"
-"TIOC*" = "refused by the ioctl shim, not passed on"
-FIOASYNC = "refused by the ioctl shim, not passed on"
-
 # values with no counterpart to map to
-MAP_SHARED_VALIDATE = "a mapping type, not a flag; the mmap shim refuses it with EINVAL instead of guessing"
-TCP_INFO = "struct tcp_info is Linux's own; passing the name on would hand back a foreign layout"
-EXTA = "cosmo defines it as B19200, which the baud table carries"
-EXTB = "cosmo defines it as B38400, which the baud table carries"
-_POSIX_VDISABLE = "the termios shim swaps it with 0 in c_cc in both directions"
 SCM_CREDENTIALS = "Linux-only ancillary data; std's use sits behind an unstable feature"
-SCM_TIMESTAMP = "SOL_SOCKET cmsg types other than SCM_RIGHTS pass raw (shim/socket.c); nothing here reads timestamps"
+SCM_TIMESTAMP = "SOL_SOCKET cmsg types other than SCM_RIGHTS pass raw; nothing here reads timestamps"
 
 [allow.fn]
+getaddrinfo = "families, socket types and protocols are Linux's in cosmo; IPPROTO_MAX is only a bound"
+openpty = "struct termios is Linux's shape and values in cosmo now"
+forkpty = "same"
+getifaddrs = "IFF_* come back Linux's from cosmo; the SIOC* names in this family belong to ioctl"
+sigaltstack = "cosmo takes Linux's SS_* itself; the two sizes are explained under allow.const"
 listen = "SOMAXCONN is only ever a number here"
 sched_getaffinity = "takes the caller's own set size in bytes"
 sched_setaffinity = "same"
@@ -75,10 +62,18 @@ functions = [
     "symlinkat", "mkdirat", "mknodat", "mkfifoat", "statx", "execveat",
 ]
 
+# the auxiliary vector keys share the prefix
+[[family]]
+prefixes = ["AT_"]
+except = [
+    "AT_FDCWD", "AT_SYMLINK_", "AT_REMOVEDIR", "AT_EACCESS", "AT_EMPTY_PATH",
+    "AT_NO_AUTOMOUNT", "AT_STATX_", "AT_RECURSIVE",
+]
+functions = ["getauxval"]
+
 [[family]]
 prefixes = ["O_"]
-# O_TMPFILE is dealt with by name in shim/open.c, the only place it can go
-except = ["O_ACCMODE", "O_TMPFILE"]
+except = ["O_ACCMODE"]
 functions = [
     "open", "openat", "open64", "openat64", "fcntl", "pipe2", "dup3",
     "mkostemp", "mkostemps", "shm_open", "posix_openpt", "accept4", "sem_open",
@@ -144,8 +139,14 @@ prefixes = ["MADV_", "POSIX_MADV_"]
 functions = ["madvise", "posix_madvise"]
 
 [[family]]
+prefixes = ["MS_ASYNC", "MS_SYNC", "MS_INVALIDATE"]
+functions = ["msync"]
+
+# the mount flags share the prefix
+[[family]]
 prefixes = ["MS_"]
-functions = ["msync", "mount", "umount2"]
+except = ["MS_ASYNC", "MS_SYNC", "MS_INVALIDATE"]
+functions = ["mount", "umount2"]
 
 [[family]]
 prefixes = ["RB_"]

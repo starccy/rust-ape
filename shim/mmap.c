@@ -1,12 +1,8 @@
 // mmap()/mprotect() for the Linux-personality shim.
 //
-// PROT_* and the MAP_SHARED/MAP_PRIVATE/MAP_FIXED type bits are the same
-// numbers on every platform cosmo supports and pass straight through; the
-// remaining MAP_* bits are runtime constants and get translated. Semantic
-// bits with no host value fail with EOPNOTSUPP, hint bits are dropped,
-// unknown bits are EINVAL.
-//
-// Values come from tables.h (`cargo xtask gen-shim`).
+// PROT_* and MAP_* are Linux's numbers on the cosmo side too, and cosmo
+// drops the hint bits a host doesn't have. Left here: unknown bits are
+// EINVAL and huge pages off Linux are EOPNOTSUPP. msync needs no help.
 //
 // Reserve/commit on NT. Allocators commonly reserve a huge PROT_NONE span
 // and grow into it with mprotect, but cosmo's NT mmap commits the whole
@@ -36,20 +32,11 @@ void __maps_unlock(void);
 int __prot2nt(int, int);
 
 #include "mmap.h"
-#include "tables.h"
 
-#define LIN_MAP_FIXED_BITS (1 | 2 | 16) // SHARED, PRIVATE, FIXED: universal
-
-struct mbit {
-    int linux_bit;
-    const int *host;
-    bool droppable;
-};
-
-#define X(name, lin, drop) { lin, &name, drop },
-static const struct mbit kMaps[] = { SHIM_MAP_TABLE(X) };
-#undef X
-#define NMAPS (sizeof(kMaps) / sizeof(kMaps[0]))
+#define MAP_KNOWN                                                          \
+    (MAP_TYPE | MAP_FIXED | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE | MAP_HUGETLB | \
+     MAP_NORESERVE | MAP_POPULATE | MAP_LOCKED | MAP_DENYWRITE |               \
+     MAP_EXECUTABLE | MAP_NONBLOCK | MAP_STACK)
 
 static void *reserve_nt(unsigned long len, int host) {
     void *p = VirtualAlloc(0, len, kNtMemReserve, kNtPageNoaccess);
@@ -64,21 +51,10 @@ static void *reserve_nt(unsigned long len, int host) {
     return p;
 }
 
-void *__ape_shim_mmap(void *addr, unsigned long len, int prot, int lin,
+void *__ape_shim_mmap(void *addr, unsigned long len, int prot, int host,
                       int fd, long off) {
-    int host = lin & LIN_MAP_FIXED_BITS;
-    lin &= ~LIN_MAP_FIXED_BITS;
-    lin &= ~SHIM_LIN_MAP_STACK; // pure hint; cosmo has no such flag at all
-    for (size_t i = 0; i < NMAPS; i++) {
-        if (!(lin & kMaps[i].linux_bit)) continue;
-        lin &= ~kMaps[i].linux_bit;
-        if (*kMaps[i].host) {
-            host |= *kMaps[i].host;
-        } else if (!kMaps[i].droppable) {
-            return errno = EOPNOTSUPP, MAP_FAILED;
-        }
-    }
-    if (lin) return errno = EINVAL, MAP_FAILED;
+    if (host & ~MAP_KNOWN) return errno = EINVAL, MAP_FAILED;
+    if ((host & MAP_HUGETLB) && !IsLinux()) return errno = EOPNOTSUPP, MAP_FAILED;
     if (IsWindows() && prot == PROT_NONE && len && !(host & MAP_FIXED) &&
         (host & MAP_PRIVATE) && (host & MAP_ANONYMOUS))
         return reserve_nt(len, host);
@@ -105,14 +81,4 @@ int __ape_shim_mprotect(void *addr, size_t len, int prot) {
         commit_nt(addr, len, prot))
         return -1;
     return mprotect(addr, len, prot);
-}
-
-int __ape_shim_msync(void *addr, unsigned long len, int lin) {
-    int host = 0;
-    if (lin & ~(SHIM_LIN_MS_ASYNC | SHIM_LIN_MS_INVALIDATE | SHIM_LIN_MS_SYNC))
-        return errno = EINVAL, -1;
-    if (lin & SHIM_LIN_MS_ASYNC) host |= MS_ASYNC;
-    if (lin & SHIM_LIN_MS_SYNC) host |= MS_SYNC;
-    if (lin & SHIM_LIN_MS_INVALIDATE) host |= MS_INVALIDATE; // 0 where there is none
-    return msync(addr, len, host);
 }

@@ -1,13 +1,11 @@
-// The open/fcntl half of the Linux-personality shim.
+// The file half of the Linux-personality shim.
 //
-// The same problem as errno.c, in the opposite direction. The Rust world
-// passes file flags it baked in at compile time from musl's headers, and
-// cosmo wants whatever the host uses. The patched libc crate points open/openat/fcntl/pipe2 and
-// the *at family at the __ape_shim_* entry points below, which translate the
-// Linux coding into cosmo's runtime constants and forward.
-//
-// All Linux values come from tables.h, generated out of the vendored libc
-// crate by `cargo xtask gen-shim` and cross-checked at build time.
+// The flags and AT_* names cosmo takes are Linux's now, so nothing gets
+// translated here any more. What is left is behaviour: the /proc tree
+// shim/procfs/ synthesizes, the bookkeeping shim/epoll.c needs when
+// descriptors are created and duplicated, the ".exe" retry for $PATH
+// probes on NT, a POSIX corner cosmo's NT lstat gets wrong, and mkfifo,
+// which cosmo doesn't ship.
 
 #include <dirent.h>
 #include <errno.h>
@@ -30,21 +28,7 @@ int eaccess(const char *, int);
 int euidaccess(const char *, int);
 #include <libc/dce.h>
 #include <libc/sysv/consts/at.h>
-#include <libc/sysv/consts/seek.h>
-
-// Newer cosmocc (recognizable by its Linux-coded _O_TMPFILE macro) dropped
-// the Linux-only AT_EMPTY_PATH outright; older versions declare it extern
-// with no macro alias, so _O_TMPFILE serves as the presence test instead.
-// Zero means "unsupported here", which at_bit turns into EOPNOTSUPP.
-#ifdef _O_TMPFILE
-static const int shim_no_at_empty_path = 0;
-#define SHIM_AT_EMPTY_PATH (&shim_no_at_empty_path)
-#else
-#define SHIM_AT_EMPTY_PATH (&AT_EMPTY_PATH)
-#endif
-#include <libc/sysv/consts/utime.h>
-
-#include "tables.h"
+#include <libc/sysv/consts/o.h>
 
 // shim/epoll.c. An emulated epoll fd is a pipe end, so a duplicate of it has
 // to be recorded as naming the same set. No-op on Linux and for every fd that
@@ -57,8 +41,8 @@ void __ape_shim_epoll_note_new_fd(int fd);
 
 // shim/procfs/core/: a read of a /proc content file on NT is answered with
 // a generated-on-open descriptor; -2 means "not mine", including everywhere
-// but Windows. Takes host-coded flags, so it runs after the translation.
-int __ape_shim_procfs_open(const char *path, int hostflags);
+// but Windows.
+int __ape_shim_procfs_open(const char *path, int flags);
 void __ape_shim_procfs_track(int fd, const char *vpath);
 bool __ape_shim_procfs_join(int dirfd, const char *rel, char *out,
                             unsigned long outsz);
@@ -74,165 +58,55 @@ long __ape_shim_procfs_readlinkat(int dirfd, const char *path, char *buf,
 int __ape_shim_procfs_vstat(int dirfd, const char *path, struct stat *st,
                             int nofollow);
 
-#define LIN_O_ACCMODE 0x03 // O_RDONLY/O_WRONLY/O_RDWR, same on every platform
-
-// Every flag cosmo knows has Linux's value, on both architectures, so the
-// known bits cross as they are. O_SYNC, O_TMPFILE and O_LARGEFILE are dealt
-// with separately below.
-#define OFLAGS_KNOWN                                                        \
-    (O_CREAT | O_EXCL | O_TRUNC | O_APPEND | O_NONBLOCK | O_CLOEXEC |       \
-     O_DIRECTORY | O_NOFOLLOW | _O_PATH | O_DSYNC | O_NOCTTY | O_DIRECT |   \
-     O_NOATIME)
-
-// Linux flags -> host flags. Returns 0, or -1 with errno set.
-static int oflags_to_host(int lin, int *out) {
-    int host = lin & LIN_O_ACCMODE;
-    lin &= ~LIN_O_ACCMODE;
-    lin &= ~SHIM_LIN_O_LARGEFILE; // meaningless with 64-bit off_t
-    if ((lin & SHIM_LIN_O_SYNC) == SHIM_LIN_O_SYNC) {
-        if (!O_SYNC) return errno = EOPNOTSUPP, -1;
-        host |= O_SYNC;
-        lin &= ~SHIM_LIN_O_SYNC;
-    }
-    if ((lin & SHIM_LIN_O_TMPFILE) == SHIM_LIN_O_TMPFILE) {
-        // Only the Linux kernel takes O_TMPFILE's raw bits and only cosmo's
-        // NT layer emulates them. Elsewhere the host answers EINVAL — which
-        // tempfile's fallback list doesn't recognize — and the "0 when
-        // unsupported" assumption doesn't hold either (XNU publishes ~0, so
-        // or-ing it in turns the whole flags word into -1). EOPNOTSUPP is
-        // what sends callers down their named-file path.
-        if (!IsLinux() && !IsWindows()) return errno = EOPNOTSUPP, -1;
-#ifdef _O_TMPFILE
-        // newer cosmocc: a Linux-coded macro with kernel semantics, so the
-        // directory bit must be added too, exactly like musl's own O_TMPFILE
-        // (cosmo's tmpfd.c passes _O_TMPFILE | O_DIRECTORY itself).
-        host |= _O_TMPFILE | O_DIRECTORY;
-#else
-        // older cosmocc: a standalone runtime constant; cosmo adds the
-        // directory semantics internally.
-        host |= O_TMPFILE;
-#endif
-        lin &= ~SHIM_LIN_O_TMPFILE;
-    }
-    host |= lin & OFLAGS_KNOWN;
-    lin &= ~OFLAGS_KNOWN;
-    if (lin) return errno = EINVAL, -1; // bits we don't know about
-    if (!IsLinux()) host &= ~_O_PATH;
-    *out = host;
+static unsigned open_mode(int flags, va_list ap) {
+    if ((flags & O_CREAT) || (flags & _O_TMPFILE) == _O_TMPFILE)
+        return va_arg(ap, unsigned);
     return 0;
 }
 
-// Host flags -> Linux flags, for F_GETFL. Best effort; unknown host bits are
-// dropped rather than invented.
-static int oflags_to_linux(int host) {
-    int lin = host & LIN_O_ACCMODE;
-    if (O_SYNC && (host & O_SYNC) == (int)O_SYNC) {
-        lin |= SHIM_LIN_O_SYNC;
-        host &= ~O_SYNC;
-    }
-    return lin | (host & OFLAGS_KNOWN);
-}
-
-static int at_fdcwd(int dirfd) {
-    return dirfd == SHIM_LIN_AT_FDCWD ? AT_FDCWD : dirfd;
-}
-
-// struct flock: the layouts agree byte for byte (layouts.c pins them; the
-// cosmo-only l_sysid sits in musl's tail padding), but l_type carries
-// F_RDLCK/F_WRLCK/F_UNLCK, which are runtime constants on the cosmo side.
-static int ltype_to_host(int16_t lin, int16_t *out) {
-    if (lin == SHIM_LIN_F_RDLCK) return *out = F_RDLCK, 0;
-    if (lin == SHIM_LIN_F_WRLCK) return *out = F_WRLCK, 0;
-    if (lin == SHIM_LIN_F_UNLCK) return *out = F_UNLCK, 0;
-    return errno = EINVAL, -1;
-}
-
-static int16_t ltype_to_linux(int16_t host) {
-    if (host == F_RDLCK) return SHIM_LIN_F_RDLCK;
-    if (host == F_WRLCK) return SHIM_LIN_F_WRLCK;
-    if (host == F_UNLCK) return SHIM_LIN_F_UNLCK;
-    return host; // unknown: pass through, keeps it diagnosable
-}
-
-// F_GETLK writes the struct back (l_type plus the blocker's coordinates);
-// F_SETLK/F_SETLKW leave it untouched per POSIX.
-static int lock_cmd(int fd, int cmd, void *parg, bool writes_back) {
-    struct flock fl = *(struct flock *)parg;
-    if (ltype_to_host(fl.l_type, &fl.l_type) < 0) return -1;
-    int rc = fcntl(fd, cmd, &fl);
-    if (rc != -1 && writes_back) {
-        fl.l_type = ltype_to_linux(fl.l_type);
-        *(struct flock *)parg = fl;
-    }
-    return rc;
-}
-
-// One entry per caller-visible flag; each *at shim states which it accepts.
-static int at_bit(int *lin, int bit, const int *host, int *out) {
-    if (!(*lin & bit)) return 0;
-    *lin &= ~bit;
-    if (*host == 0) return errno = EOPNOTSUPP, -1;
-    *out |= *host;
-    return 0;
-}
-
-int __ape_shim_open(const char *path, int lin, ...) {
-    int host;
-    if (oflags_to_host(lin, &host) < 0) return -1;
-    unsigned mode = 0;
-    if ((lin & O_CREAT) || (lin & SHIM_LIN_O_TMPFILE) == SHIM_LIN_O_TMPFILE) {
-        va_list ap;
-        va_start(ap, lin);
-        mode = va_arg(ap, unsigned);
-        va_end(ap);
-    }
-    int fd = __ape_shim_procfs_open(path, host);
+int __ape_shim_open(const char *path, int flags, ...) {
+    va_list ap;
+    va_start(ap, flags);
+    unsigned mode = open_mode(flags, ap);
+    va_end(ap);
+    int fd = __ape_shim_procfs_open(path, flags);
     if (fd == -2) {
-        fd = open(path, host, mode);
+        fd = open(path, flags, mode);
         if (fd >= 0) __ape_shim_procfs_track(fd, path);
     }
     if (fd >= 0) __ape_shim_epoll_note_new_fd(fd);
     return fd;
 }
 
-int __ape_shim_openat(int dirfd, const char *path, int lin, ...) {
-    int host;
-    if (oflags_to_host(lin, &host) < 0) return -1;
-    unsigned mode = 0;
-    if ((lin & O_CREAT) || (lin & SHIM_LIN_O_TMPFILE) == SHIM_LIN_O_TMPFILE) {
-        va_list ap;
-        va_start(ap, lin);
-        mode = va_arg(ap, unsigned);
-        va_end(ap);
-    }
+int __ape_shim_openat(int dirfd, const char *path, int flags, ...) {
+    va_list ap;
+    va_start(ap, flags);
+    unsigned mode = open_mode(flags, ap);
+    va_end(ap);
     // A relative name through a directory descriptor of the /proc tree
     // is the same virtual path spelled differently (shim/procfs/core/).
     char joined[300];
     const char *vpath = 0;
     if (path && path[0] == '/') {
         vpath = path;
-    } else if (dirfd != SHIM_LIN_AT_FDCWD &&
+    } else if (dirfd != AT_FDCWD &&
                __ape_shim_procfs_join(dirfd, path, joined, sizeof joined)) {
         vpath = joined;
     }
-    int fd = vpath ? __ape_shim_procfs_open(vpath, host) : -2;
+    int fd = vpath ? __ape_shim_procfs_open(vpath, flags) : -2;
     if (fd == -2) {
-        fd = openat(at_fdcwd(dirfd), path, host, mode);
+        fd = openat(dirfd, path, flags, mode);
         if (fd >= 0 && vpath) __ape_shim_procfs_track(fd, vpath);
     }
     if (fd >= 0) __ape_shim_epoll_note_new_fd(fd);
     return fd;
 }
 
-// SEEK_SET/CUR/END are 0/1/2 on both sides. SEEK_DATA and SEEK_HOLE are
-// runtime constants (XNU has them the other way round, NT not at all). A
-// /proc content descriptor lives in memory and seeks there; its rewind
+// A /proc content descriptor lives in memory and seeks there; its rewind
 // regenerates the text (shim/procfs/core/).
 off_t __ape_shim_lseek(int fd, off_t off, int whence) {
     long r = __ape_shim_procfs_memfd_lseek(fd, off, whence);
     if (r != -2) return r;
-    if (whence == SHIM_LIN_SEEK_DATA) whence = SEEK_DATA;
-    else if (whence == SHIM_LIN_SEEK_HOLE) whence = SEEK_HOLE;
     return lseek(fd, off, whence);
 }
 
@@ -262,17 +136,14 @@ DIR *__ape_shim_fdopendir(int fd) {
     return fdopendir(fd);
 }
 
-int __ape_shim_pipe2(int fds[2], int lin) {
-    int host;
-    if (oflags_to_host(lin, &host) < 0) return -1;
-    int rc = pipe2(fds, host);
+int __ape_shim_pipe2(int fds[2], int flags) {
+    int rc = pipe2(fds, flags);
     if (rc == 0) __ape_shim_epoll_note_pipe(fds[0], fds[1]);
     return rc;
 }
 
-// fcntl: commands 0..4 (F_DUPFD..F_SETFL) are portable by definition and pass
-// through; the rest of musl's numbering gets mapped onto cosmo's runtime
-// values. Lock commands translate l_type through lock_cmd above.
+// fcntl: what is left here is the /proc descriptors and the epoll
+// bookkeeping for dups.
 int __ape_shim_fcntl(int fd, int cmd, ...) {
     va_list ap;
     va_start(ap, cmd);
@@ -285,7 +156,8 @@ int __ape_shim_fcntl(int fd, int cmd, ...) {
     if (mr != -2) return mr;
 
     switch (cmd) {
-        case 0: { // F_DUPFD
+        case F_DUPFD:
+        case F_DUPFD_CLOEXEC: {
             int nfd = fcntl(fd, cmd, iarg);
             if (nfd >= 0) {
                 __ape_shim_epoll_note_dup(fd, nfd);
@@ -293,50 +165,9 @@ int __ape_shim_fcntl(int fd, int cmd, ...) {
             }
             return nfd;
         }
-        case 2: // F_SETFD (FD_CLOEXEC is 1 everywhere)
-            return fcntl(fd, cmd, iarg);
-        case 1: // F_GETFD
-            return fcntl(fd, cmd);
-        case 3: { // F_GETFL: translate the returned flags back
-            int host = fcntl(fd, cmd);
-            return host < 0 ? host : oflags_to_linux(host);
-        }
-        case 4: { // F_SETFL: translate the flag argument
-            int host;
-            if (oflags_to_host(iarg & ~LIN_O_ACCMODE, &host) < 0) return -1;
-            return fcntl(fd, cmd, host);
-        }
-        case SHIM_LIN_F_GETLK:
-            return F_GETLK > 0 ? lock_cmd(fd, F_GETLK, parg, true) : (errno = EINVAL, -1);
-        case SHIM_LIN_F_SETLK:
-            return F_SETLK > 0 ? lock_cmd(fd, F_SETLK, parg, false) : (errno = EINVAL, -1);
-        case SHIM_LIN_F_SETLKW:
-            return F_SETLKW > 0 ? lock_cmd(fd, F_SETLKW, parg, false) : (errno = EINVAL, -1);
-#ifdef F_SETOWN // newer cosmocc dropped these outright; default arm EINVALs
-        case SHIM_LIN_F_SETOWN:
-            return F_SETOWN > 0 ? fcntl(fd, F_SETOWN, iarg) : (errno = EINVAL, -1);
-        case SHIM_LIN_F_GETOWN:
-            return F_GETOWN > 0 ? fcntl(fd, F_GETOWN) : (errno = EINVAL, -1);
-#endif
-        case SHIM_LIN_F_DUPFD_CLOEXEC: {
-            if (F_DUPFD_CLOEXEC <= 0) return errno = EINVAL, -1;
-            int nfd = fcntl(fd, F_DUPFD_CLOEXEC, iarg);
-            if (nfd >= 0) {
-                __ape_shim_epoll_note_dup(fd, nfd);
-                __ape_shim_epoll_note_new_fd(nfd);
-            }
-            return nfd;
-        }
         default:
-            return errno = EINVAL, -1;
+            return fcntl(fd, cmd, parg);
     }
-}
-
-int __ape_shim_unlinkat(int dirfd, const char *path, int lin) {
-    int host = 0;
-    if (at_bit(&lin, SHIM_LIN_AT_REMOVEDIR, &AT_REMOVEDIR, &host) < 0) return -1;
-    if (lin) return errno = EINVAL, -1;
-    return unlinkat(at_fdcwd(dirfd), path, host);
 }
 
 // shim/suffix.c -- the NT executable-suffix retry (".exe magic"). The
@@ -417,35 +248,22 @@ static void procfs_follow_stat(int dirfd, const char *path, struct stat *st) {
     }
 }
 
-int __ape_shim_fstatat(int dirfd, const char *path, struct stat *st, int lin) {
-    int host = 0;
-    // Cosmo rejects an empty path before ever looking at AT_EMPTY_PATH, so
-    // the call fails with EINVAL on every host, Linux included. Programs
-    // that read /proc/<pid>/fd depend on it to ask each descriptor what it
-    // refers to.
-    if (path && !path[0] && (lin & SHIM_LIN_AT_EMPTY_PATH)) {
-        if (dirfd != SHIM_LIN_AT_FDCWD) return fstat(dirfd, st);
-        return stat(".", st);
-    }
-    if (at_bit(&lin, SHIM_LIN_AT_SYMLINK_NOFOLLOW, &AT_SYMLINK_NOFOLLOW, &host) < 0 ||
-        at_bit(&lin, SHIM_LIN_AT_EMPTY_PATH, SHIM_AT_EMPTY_PATH, &host) < 0)
-        return -1;
-    lin &= ~SHIM_LIN_AT_NO_AUTOMOUNT; // Linux-only; a no-op everywhere else
-    if (lin) return errno = EINVAL, -1;
-    if ((host & AT_SYMLINK_NOFOLLOW) && lstat_must_follow(path))
-        host &= ~AT_SYMLINK_NOFOLLOW;
+
+int __ape_shim_fstatat(int dirfd, const char *path, struct stat *st, int flags) {
+    if ((flags & AT_SYMLINK_NOFOLLOW) && lstat_must_follow(path))
+        flags &= ~AT_SYMLINK_NOFOLLOW;
     // Apple Silicon: the emulated tree has nothing on disk to stat
-    int vr = __ape_shim_procfs_vstat(at_fdcwd(dirfd), path, st,
-                                     !!(host & AT_SYMLINK_NOFOLLOW));
+    int vr = __ape_shim_procfs_vstat(dirfd, path, st,
+                                     !!(flags & AT_SYMLINK_NOFOLLOW));
     if (vr != -2) return vr;
-    int rc = fstatat(at_fdcwd(dirfd), path, st, host);
+    int rc = fstatat(dirfd, path, st, flags);
     if (rc < 0 && errno == ENOENT) {
         char buf[PATH_MAX];
-        if (__ape_shim_exe_fallback(at_fdcwd(dirfd), path, buf))
-            rc = fstatat(at_fdcwd(dirfd), buf, st, host);
+        if (__ape_shim_exe_fallback(dirfd, path, buf))
+            rc = fstatat(dirfd, buf, st, flags);
     }
     if (rc == 0 && path) {
-        if (host & AT_SYMLINK_NOFOLLOW)
+        if (flags & AT_SYMLINK_NOFOLLOW)
             procfs_link_stat(dirfd, path, st);
         else
             procfs_follow_stat(dirfd, path, st);
@@ -453,8 +271,8 @@ int __ape_shim_fstatat(int dirfd, const char *path, struct stat *st, int lin) {
     return rc;
 }
 
-// stat/lstat carry no constants to translate; they are here only for the
-// suffix retry (std's fs::metadata is how fish sizes up a candidate).
+// stat/lstat are here only for the suffix retry (std's fs::metadata is how
+// fish sizes up a candidate) and the /proc links.
 int __ape_shim_stat(const char *path, struct stat *st) {
     int vr = __ape_shim_procfs_vstat(AT_FDCWD, path, st, 0);
     if (vr != -2) return vr;
@@ -463,7 +281,7 @@ int __ape_shim_stat(const char *path, struct stat *st) {
         char buf[PATH_MAX];
         if (__ape_shim_exe_fallback(AT_FDCWD, path, buf)) rc = stat(buf, st);
     }
-    if (rc == 0 && path) procfs_follow_stat(SHIM_LIN_AT_FDCWD, path, st);
+    if (rc == 0 && path) procfs_follow_stat(AT_FDCWD, path, st);
     return rc;
 }
 
@@ -476,179 +294,66 @@ int __ape_shim_lstat(const char *path, struct stat *st) {
         char buf[PATH_MAX];
         if (__ape_shim_exe_fallback(AT_FDCWD, path, buf)) rc = lstat(buf, st);
     }
-    if (rc == 0 && path) procfs_link_stat(SHIM_LIN_AT_FDCWD, path, st);
+    if (rc == 0 && path) procfs_link_stat(AT_FDCWD, path, st);
     return rc;
-}
-
-int __ape_shim_linkat(int olddirfd, const char *oldpath, int newdirfd,
-                      const char *newpath, int lin) {
-    int host = 0;
-    if (at_bit(&lin, SHIM_LIN_AT_SYMLINK_FOLLOW, &AT_SYMLINK_FOLLOW, &host) < 0 ||
-        at_bit(&lin, SHIM_LIN_AT_EMPTY_PATH, SHIM_AT_EMPTY_PATH, &host) < 0)
-        return -1;
-    if (lin) return errno = EINVAL, -1;
-    return linkat(at_fdcwd(olddirfd), oldpath, at_fdcwd(newdirfd), newpath, host);
-}
-
-// The amode of access/faccessat. POSIX pins R_OK/W_OK/X_OK to 4/2/1 and every
-// Unix keeps them there, but on Windows cosmo publishes NT's access mask
-// (GENERIC_READ & co) under those names, so a Linux-coded amode arrives as
-// garbage bits and the call fails with EINVAL. F_OK is 0 on every host,
-// which an empty host mask reproduces by itself.
-static int amode_to_host(int lin, int *out) {
-    int host = 0;
-    if (lin & ~(SHIM_LIN_R_OK | SHIM_LIN_W_OK | SHIM_LIN_X_OK))
-        return errno = EINVAL, -1;
-    if (lin & SHIM_LIN_R_OK) host |= R_OK;
-    if (lin & SHIM_LIN_W_OK) host |= W_OK;
-    if (lin & SHIM_LIN_X_OK) host |= X_OK;
-    *out = host;
-    return 0;
 }
 
 // The virtual tree's answer to the access family: everything readable,
 // nothing writable, absent things absent. -2 is not ours.
-static int procfs_vaccess(int dirfd, const char *path, int host) {
+static int procfs_vaccess(int dirfd, const char *path, int amode) {
     struct stat st;
     int vr = __ape_shim_procfs_vstat(dirfd, path, &st, 0);
     if (vr == -2) return -2;
     if (vr < 0) return -1;
-    if (host & W_OK) return errno = EACCES, -1;
+    if (amode & W_OK) return errno = EACCES, -1;
     return 0;
 }
 
 int __ape_shim_access(const char *path, int amode) {
-    int host;
-    if (amode_to_host(amode, &host) < 0) return -1;
-    int vr = procfs_vaccess(AT_FDCWD, path, host);
+    int vr = procfs_vaccess(AT_FDCWD, path, amode);
     if (vr != -2) return vr;
-    int rc = access(path, host);
+    int rc = access(path, amode);
     if (rc < 0 && errno == ENOENT) {
         char buf[PATH_MAX];
-        if (__ape_shim_exe_fallback(AT_FDCWD, path, buf)) rc = access(buf, host);
+        if (__ape_shim_exe_fallback(AT_FDCWD, path, buf)) rc = access(buf, amode);
     }
     return rc;
 }
 
-// The effective-identity spellings of the same question, same amode.
+// The effective-identity spellings of the same question.
 int __ape_shim_eaccess(const char *path, int amode) {
-    int host;
-    if (amode_to_host(amode, &host) < 0) return -1;
-    int vr = procfs_vaccess(AT_FDCWD, path, host);
+    int vr = procfs_vaccess(AT_FDCWD, path, amode);
     if (vr != -2) return vr;
-    int rc = eaccess(path, host);
+    int rc = eaccess(path, amode);
     if (rc < 0 && errno == ENOENT) {
         char buf[PATH_MAX];
-        if (__ape_shim_exe_fallback(AT_FDCWD, path, buf)) rc = eaccess(buf, host);
+        if (__ape_shim_exe_fallback(AT_FDCWD, path, buf)) rc = eaccess(buf, amode);
     }
     return rc;
 }
 
 int __ape_shim_euidaccess(const char *path, int amode) {
-    int host;
-    if (amode_to_host(amode, &host) < 0) return -1;
-    int vr = procfs_vaccess(AT_FDCWD, path, host);
+    int vr = procfs_vaccess(AT_FDCWD, path, amode);
     if (vr != -2) return vr;
-    int rc = euidaccess(path, host);
+    int rc = euidaccess(path, amode);
     if (rc < 0 && errno == ENOENT) {
         char buf[PATH_MAX];
         if (__ape_shim_exe_fallback(AT_FDCWD, path, buf))
-            rc = euidaccess(buf, host);
+            rc = euidaccess(buf, amode);
     }
     return rc;
 }
 
-int __ape_shim_faccessat(int dirfd, const char *path, int amode, int lin) {
-    int host = 0, hmode;
-    // AT_EACCESS asks for the effective rather than the real identity. Where
-    // cosmo has no value for it (Windows, which has one identity per process)
-    // the two answers coincide, so drop the bit instead of failing the call.
-    if (AT_EACCESS) {
-        if (at_bit(&lin, SHIM_LIN_AT_EACCESS, &AT_EACCESS, &host) < 0) return -1;
-    } else {
-        lin &= ~SHIM_LIN_AT_EACCESS;
-    }
-    if (at_bit(&lin, SHIM_LIN_AT_SYMLINK_FOLLOW, &AT_SYMLINK_FOLLOW, &host) < 0)
-        return -1;
-    if (lin) return errno = EINVAL, -1;
-    if (amode_to_host(amode, &hmode) < 0) return -1;
-    int vr = procfs_vaccess(at_fdcwd(dirfd), path, hmode);
+int __ape_shim_faccessat(int dirfd, const char *path, int amode, int flags) {
+    int vr = procfs_vaccess(dirfd, path, amode);
     if (vr != -2) return vr;
-    int rc = faccessat(at_fdcwd(dirfd), path, hmode, host);
+    int rc = faccessat(dirfd, path, amode, flags);
     if (rc < 0 && errno == ENOENT) {
         char buf[PATH_MAX];
-        if (__ape_shim_exe_fallback(at_fdcwd(dirfd), path, buf))
-            rc = faccessat(at_fdcwd(dirfd), buf, hmode, host);
+        if (__ape_shim_exe_fallback(dirfd, path, buf))
+            rc = faccessat(dirfd, buf, amode, flags);
     }
     return rc;
-}
-
-// tv_nsec can carry UTIME_NOW/UTIME_OMIT, which are platform-coded.
-static const struct timespec *utimes_to_host(const struct timespec *times,
-                                             struct timespec copy[2]) {
-    if (!times) return NULL;
-    for (int i = 0; i < 2; i++) {
-        copy[i] = times[i];
-        if (copy[i].tv_nsec == SHIM_LIN_UTIME_NOW) copy[i].tv_nsec = UTIME_NOW;
-        else if (copy[i].tv_nsec == SHIM_LIN_UTIME_OMIT) copy[i].tv_nsec = UTIME_OMIT;
-    }
-    return copy;
-}
-
-int __ape_shim_utimensat(int dirfd, const char *path,
-                         const struct timespec times[2], int lin) {
-    int host = 0;
-    if (at_bit(&lin, SHIM_LIN_AT_SYMLINK_NOFOLLOW, &AT_SYMLINK_NOFOLLOW, &host) < 0)
-        return -1;
-    if (lin) return errno = EINVAL, -1;
-    struct timespec copy[2];
-    return utimensat(at_fdcwd(dirfd), path, utimes_to_host(times, copy), host);
-}
-
-int __ape_shim_futimens(int fd, const struct timespec times[2]) {
-    struct timespec copy[2];
-    return futimens(fd, utimes_to_host(times, copy));
-}
-
-int __ape_shim_mkdirat(int dirfd, const char *path, unsigned mode) {
-    return mkdirat(at_fdcwd(dirfd), path, mode);
-}
-
-int __ape_shim_symlinkat(const char *target, int newdirfd, const char *linkpath) {
-    return symlinkat(target, at_fdcwd(newdirfd), linkpath);
-}
-
-ssize_t __ape_shim_readlinkat(int dirfd, const char *path, char *buf, size_t size) {
-    return readlinkat(at_fdcwd(dirfd), path, buf, size);
-}
-
-int __ape_shim_fchownat(int dirfd, const char *path, unsigned uid, unsigned gid, int lin) {
-    int host = 0;
-    if (at_bit(&lin, SHIM_LIN_AT_SYMLINK_NOFOLLOW, &AT_SYMLINK_NOFOLLOW, &host) < 0 ||
-        at_bit(&lin, SHIM_LIN_AT_EMPTY_PATH, SHIM_AT_EMPTY_PATH, &host) < 0)
-        return -1;
-    if (lin) return errno = EINVAL, -1;
-    return fchownat(at_fdcwd(dirfd), path, uid, gid, host);
-}
-
-int __ape_shim_fchmodat(int dirfd, const char *path, unsigned mode, int lin) {
-    int host = 0;
-    if (at_bit(&lin, SHIM_LIN_AT_SYMLINK_NOFOLLOW, &AT_SYMLINK_NOFOLLOW, &host) < 0)
-        return -1;
-    if (lin) return errno = EINVAL, -1;
-    return fchmodat(at_fdcwd(dirfd), path, mode, host);
-}
-
-// flock: LOCK_SH and LOCK_NB differ on NT (0 and 1).
-int __ape_shim_flock(int fd, int lin) {
-    int host = 0;
-    if (lin & ~(SHIM_LIN_LOCK_SH | SHIM_LIN_LOCK_EX | SHIM_LIN_LOCK_NB | SHIM_LIN_LOCK_UN))
-        return errno = EINVAL, -1;
-    if (lin & SHIM_LIN_LOCK_SH) host |= LOCK_SH;
-    if (lin & SHIM_LIN_LOCK_EX) host |= LOCK_EX;
-    if (lin & SHIM_LIN_LOCK_NB) host |= LOCK_NB;
-    if (lin & SHIM_LIN_LOCK_UN) host |= LOCK_UN;
-    return flock(fd, host);
 }
 
 // mkfifo(): cosmo ships mknod() but not the POSIX wrapper over it. Nothing

@@ -1,37 +1,26 @@
 // The socket half of the Linux-personality shim.
 //
-// Four things cross this boundary: SOCK_CLOEXEC/SOCK_NONBLOCK mixed into
-// socket types, the sockopt (level, name) space, the MSG_* send/recv flags,
-// and the AF_* address family — as the socket() domain argument AND as the
-// family field inside every sockaddr. All are runtime constants under cosmo
-// (WSA's on Windows); the Rust world bakes in musl's values.
-//
-// The sockaddr structs themselves need no repacking: cosmo's sockaddr_in6 is
-// declared "Linux+NT ABI" and matches musl field for field — only the family
-// VALUE diverges (AF_INET6 is 10 on Linux, 23 on Windows, 30 on XNU). So
-// address-taking calls rewrite the family forward on a local copy, and
-// address-returning calls (accept, getsockname, recvfrom, getaddrinfo's
-// result chain) rewrite it back in place.
-//
-// getaddrinfo/getnameinfo are cosmo's third_party/musl build: struct
-// addrinfo layout and the AI_*/NI_*/EAI_* values are musl's own, so only the
-// family fields flowing through them need help.
-//
-// Values come from tables.h (`cargo xtask gen-shim`).
+// Socket types, address families, sockopt names, MSG_* flags and POLL* bits
+// are Linux's on both sides now, and cosmo converts sockaddr, msghdr and
+// cmsghdr for the BSDs itself. What is left here is emulation and policy:
+// the AF_PACKET socket shim/packet.c builds on NT, epoll's edge-triggered
+// bookkeeping, a socketpair that NT's poll reports writable, NT's
+// nonblocking send, and a parking lot for sockopts WinSock refuses while a
+// connect is in flight.
 
 #define _COSMO_SOURCE // for libc/dce.h's IsWindows()
 
 #include <errno.h>
 #include <fcntl.h>
-#include <limits.h>
-#include <netdb.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
 #include <sys/random.h>
 #include <sys/socket.h>
-#include <uchar.h>
+#include <sys/un.h>
 #include <unistd.h>
 #include <libc/dce.h>
 #include <pthread.h>
@@ -39,102 +28,6 @@
 #include <libc/calls/internal.h>
 #include <libc/intrin/fds.h>
 #include <libc/sysv/pib.h>
-#include <libc/sysv/consts/af.h>
-#include <libc/sysv/consts/sock.h>
-#include <libc/sysv/consts/so.h>
-#include <libc/sysv/consts/sol.h>
-#include <libc/sysv/consts/tcp.h>
-#include <libc/sysv/consts/ip.h>
-#include <libc/sysv/consts/ipv6.h>
-#include <libc/sysv/consts/msg.h>
-#include <libc/sysv/consts/iff.h>
-#include <ifaddrs.h>
-
-#include "tables.h"
-
-// ---------------------------------------------------------------------------
-// Address families. Unknown values pass through raw in both directions —
-// pre-shim behavior for families the table doesn't know.
-
-static int af_to_host(int lin) {
-#define X(name, linval) if (lin == (linval)) return (int)(name);
-    SHIM_AF_TABLE(X)
-#undef X
-    return lin;
-}
-
-static int af_to_linux(int host) {
-#define X(name, linval) if (host == (int)(name)) return (linval);
-    SHIM_AF_TABLE(X)
-#undef X
-    return host;
-}
-
-// Forward: rewrite the family on a stack copy (the caller's buffer is const).
-// `sa_family` is a uint16 at offset 0 in every sockaddr variant.
-struct fam_copy {
-    char buf[128]; // covers sockaddr_storage
-};
-
-#define SUN_PATH_OFF 2
-#define SUN_PATH_MAX 108
-
-// cosmo's own path translation, the one open() and friends go through.
-int __mkntpath(const char *, char16_t *);
-
-// sockaddr_un is the one address that carries a filename, and cosmo hands
-// sun_path to Winsock exactly as given. So an AF_UNIX socket bound to
-// anything but a relative path fails on Windows, reported as WSAENETDOWN,
-// which surfaces in Rust as "Network is down" for what is really a filename
-// in the wrong syntax. Running it through __mkntpath first turns /C/Users/...
-// and /tmp/... into what NT expects; Winsock takes the result and echoes it
-// back verbatim from getsockname, so a bind/connect pair stays consistent.
-//
-// Bailing out leaves the path as it was, which is no worse than not
-// translating: non-ASCII can't be expressed in sun_path's bytes, and a
-// translation that outgrows 108 bytes has nowhere to go.
-static void unix_path_to_nt(struct fam_copy *tmp, unsigned *len) {
-    char *path = tmp->buf + SUN_PATH_OFF;
-    unsigned avail = *len > SUN_PATH_OFF ? *len - SUN_PATH_OFF : 0;
-    if (!avail || !*path) return; // unnamed, or Linux's abstract namespace
-    if (!memchr(path, '\0', avail)) return;
-
-    char16_t wide[PATH_MAX];
-    int n = __mkntpath(path, wide);
-    if (n < 0 || n >= SUN_PATH_MAX) return;
-    for (int i = 0; i < n; i++)
-        if (wide[i] > 0x7f) return;
-    for (int i = 0; i < n; i++)
-        path[i] = (char)wide[i];
-    path[n] = '\0';
-    *len = SUN_PATH_OFF + (unsigned)n + 1;
-}
-
-static const void *addr_to_host(const void *addr, unsigned *len, struct fam_copy *tmp) {
-    if (!addr || *len < 2 || *len > sizeof(tmp->buf)) return addr;
-    memcpy(tmp->buf, addr, *len);
-    unsigned short *fam = (unsigned short *)tmp->buf;
-    *fam = (unsigned short)af_to_host(*fam);
-    if (IsWindows() && *fam == AF_UNIX) unix_path_to_nt(tmp, len);
-    return tmp->buf;
-}
-
-// Reverse: patch the family in place after the host filled the buffer in.
-static void addr_to_linux(void *addr, const unsigned *len) {
-    if (!addr || !len || *len < 2) return;
-    unsigned short *fam = (unsigned short *)addr;
-    *fam = (unsigned short)af_to_linux(*fam);
-}
-
-// SOCK_STREAM/DGRAM/... are the same numbers everywhere; only the two
-// high-bit modifiers musl borrows from O_* need translating.
-static int type_to_host(int lin, int *out) {
-    int host = lin & ~(SHIM_LIN_SOCK_CLOEXEC | SHIM_LIN_SOCK_NONBLOCK);
-    if (lin & SHIM_LIN_SOCK_CLOEXEC) host |= SOCK_CLOEXEC;
-    if (lin & SHIM_LIN_SOCK_NONBLOCK) host |= SOCK_NONBLOCK;
-    *out = host;
-    return 0;
-}
 
 // Defined in winsock.c; keeps Windows from tearing Winsock down at exit while
 // other threads are still using it. Hooked here because these two are the only
@@ -161,11 +54,6 @@ int __ape_shim_packet_bind(int fd, const void *addr, unsigned len);
 long __ape_shim_packet_recv(int fd, void *buf, unsigned long n, void *addr,
                             unsigned *alen);
 
-// musl's AF_PACKET. Left out of SHIM_AF_TABLE on purpose, since cosmo's
-// constant resolves to -1 on NT and translating to it would defeat the
-// emulation.
-#define SHIM_LIN_AF_PACKET 17
-
 // Data as well as EAGAIN re-arms the read side: a real kernel reports a
 // fresh edge when new bytes arrive later, so a consumer that stops at a
 // short read instead of draining to EAGAIN must keep getting events. EOF
@@ -189,18 +77,16 @@ static long send_result(int fd, long r, unsigned long want) {
     return r;
 }
 
-int __ape_shim_socket(int domain, int lin_type, int protocol) {
-    int type;
-    type_to_host(lin_type, &type);
+int __ape_shim_socket(int domain, int type, int protocol) {
     __ape_shim_pin_winsock();
     // NT has no packet socket, so shim/packet.c builds one out of a raw
     // socket. Only there: on every other host AF_PACKET is the host's own.
-    if (IsWindows() && domain == SHIM_LIN_AF_PACKET) {
-        int fd = __ape_shim_packet_socket(lin_type, protocol);
+    if (IsWindows() && domain == AF_PACKET) {
+        int fd = __ape_shim_packet_socket(type, protocol);
         if (fd >= 0) __ape_shim_epoll_note_new_fd(fd);
         return fd;
     }
-    int fd = socket(af_to_host(domain), type, protocol);
+    int fd = socket(domain, type, protocol);
     if (fd >= 0) __ape_shim_epoll_note_new_fd(fd);
     return fd;
 }
@@ -233,25 +119,22 @@ static int nt_unix_pair(int type, int sv[2]) {
     unsigned char nonce[16];
     if (getrandom(nonce, sizeof nonce, 0) != (long)sizeof nonce) return -1;
 
-    // /tmp is what cosmo maps to the host's temp directory.
-    char path[64];
-    int plen = snprintf(path, sizeof path, "/tmp/ape-sp-%d-%02x%02x%02x%02x.sock",
-                        (int)getpid(), nonce[0], nonce[1], nonce[2], nonce[3]);
-    if (plen < 0 || plen >= (int)sizeof path) return -1;
-
-    struct fam_copy sa;
+    // /tmp is what cosmo maps to the host's temp directory; bind() turns it
+    // into the spelling Winsock wants.
+    struct sockaddr_un sa;
     memset(&sa, 0, sizeof sa);
-    *(unsigned short *)sa.buf = (unsigned short)AF_UNIX;
-    unsigned salen = SUN_PATH_OFF + (unsigned)plen + 1;
-    memcpy(sa.buf + SUN_PATH_OFF, path, (unsigned long)plen + 1);
-    unix_path_to_nt(&sa, &salen);
+    sa.sun_family = AF_UNIX;
+    int plen = snprintf(sa.sun_path, sizeof sa.sun_path, "/tmp/ape-sp-%d-%02x%02x%02x%02x.sock",
+                        (int)getpid(), nonce[0], nonce[1], nonce[2], nonce[3]);
+    if (plen < 0 || plen >= (int)sizeof sa.sun_path) return -1;
+    unsigned salen = offsetof(struct sockaddr_un, sun_path) + (unsigned)plen + 1;
 
     int srv = -1, cli = -1, acc = -1, err;
     if ((srv = socket(AF_UNIX, type, 0)) < 0) goto fail;
-    if (bind(srv, (const struct sockaddr *)sa.buf, salen) < 0) goto fail;
+    if (bind(srv, (const struct sockaddr *)&sa, salen) < 0) goto fail;
     if (listen(srv, 4) < 0) goto fail;
     if ((cli = socket(AF_UNIX, type, 0)) < 0) goto fail;
-    if (connect(cli, (const struct sockaddr *)sa.buf, salen) < 0) goto fail;
+    if (connect(cli, (const struct sockaddr *)&sa, salen) < 0) goto fail;
     if (io_all(cli, nonce, sizeof nonce, 1) < 0) goto fail;
 
     for (int tries = 0; tries < 8 && acc < 0; tries++) {
@@ -266,7 +149,7 @@ static int nt_unix_pair(int type, int sv[2]) {
     if (acc < 0) { errno = ECONNABORTED; goto fail; }
 
     close(srv);
-    unlink(path);
+    unlink(sa.sun_path);
     sv[0] = cli;
     sv[1] = acc;
     return 0;
@@ -276,7 +159,7 @@ fail:
     if (srv >= 0) close(srv);
     if (cli >= 0) close(cli);
     if (acc >= 0) close(acc);
-    unlink(path);
+    unlink(sa.sun_path);
     errno = err;
     return -1;
 }
@@ -292,20 +175,17 @@ fail:
 // Without this, mio's UnixStream::pair() fails, which takes down every tokio
 // program built with the signal feature -- enable_all() stands up the signal
 // driver whether or not the program ever waits on a signal.
-int __ape_shim_socketpair(int domain, int lin_type, int protocol, int sv[2]) {
-    int type;
-    type_to_host(lin_type, &type);
+int __ape_shim_socketpair(int domain, int type, int protocol, int sv[2]) {
     int nonblock = type & SOCK_NONBLOCK;
     type &= ~SOCK_NONBLOCK;
 
     __ape_shim_pin_winsock();
-    int host_domain = af_to_host(domain);
     int made = -1;
-    if (IsWindows() && host_domain == AF_UNIX && (type & ~SOCK_CLOEXEC) == SOCK_STREAM)
+    if (IsWindows() && domain == AF_UNIX && (type & ~SOCK_CLOEXEC) == SOCK_STREAM)
         made = nt_unix_pair(type, sv);
     // Falling back rather than failing: cosmo's own pair is what shipped
     // before, and it is still better than no pair at all.
-    if (made < 0 && socketpair(host_domain, type, protocol, sv) < 0) {
+    if (made < 0 && socketpair(domain, type, protocol, sv) < 0) {
         // XNU's AF_UNIX has no SOCK_SEQPACKET and says so with
         // EPROTONOSUPPORT. std asks for one on every linux target, as the
         // channel a failed exec reports its errno back on, so without this
@@ -314,12 +194,12 @@ int __ape_shim_socketpair(int domain, int lin_type, int protocol, int sv[2]) {
         // carries that exchange whole, one write and then EOF from the
         // CLOEXEC close. What it gives up is message boundaries, so a caller
         // that sends two records back to back may read them as one.
-        if (!(host_domain == AF_UNIX && (type & ~SOCK_CLOEXEC) == SOCK_SEQPACKET &&
+        if (!(domain == AF_UNIX && (type & ~SOCK_CLOEXEC) == SOCK_SEQPACKET &&
               (errno == EPROTONOSUPPORT || errno == ESOCKTNOSUPPORT ||
                errno == EPROTOTYPE)))
             return -1;
         int stream = (type & SOCK_CLOEXEC) | SOCK_STREAM;
-        if (socketpair(host_domain, stream, protocol, sv) < 0) return -1;
+        if (socketpair(domain, stream, protocol, sv) < 0) return -1;
     }
     if (nonblock) {
         for (int i = 0; i < 2; i++) {
@@ -338,13 +218,9 @@ int __ape_shim_socketpair(int domain, int lin_type, int protocol, int sv[2]) {
     return 0;
 }
 
-int __ape_shim_accept4(int fd, void *addr, unsigned *len, int lin_flags) {
-    int flags = 0;
-    if (lin_flags & SHIM_LIN_SOCK_CLOEXEC) flags |= SOCK_CLOEXEC;
-    if (lin_flags & SHIM_LIN_SOCK_NONBLOCK) flags |= SOCK_NONBLOCK;
+int __ape_shim_accept4(int fd, void *addr, unsigned *len, int flags) {
     int r = accept4(fd, addr, len, flags);
     if (r >= 0) {
-        addr_to_linux(addr, len);
         __ape_shim_epoll_note_new_fd(r);
         __ape_shim_epoll_rearm_in(fd); // more connections may be pending
     } else if (errno == EAGAIN) {
@@ -356,7 +232,6 @@ int __ape_shim_accept4(int fd, void *addr, unsigned *len, int lin_flags) {
 int __ape_shim_accept(int fd, void *addr, unsigned *len) {
     int r = accept(fd, addr, len);
     if (r >= 0) {
-        addr_to_linux(addr, len);
         __ape_shim_epoll_note_new_fd(r);
         __ape_shim_epoll_rearm_in(fd); // more connections may be pending
     } else if (errno == EAGAIN) {
@@ -366,74 +241,10 @@ int __ape_shim_accept(int fd, void *addr, unsigned *len) {
 }
 
 int __ape_shim_bind(int fd, const void *addr, unsigned len) {
-    struct fam_copy tmp;
     // A packet socket binds to an interface index, not to an address, so
     // shim/packet.c resolves it and turns the capture on.
     if (__ape_shim_packet_is(fd)) return __ape_shim_packet_bind(fd, addr, len);
-    const void *host = addr_to_host(addr, &len, &tmp);
-    return bind(fd, host, len);
-}
-
-int __ape_shim_connect(int fd, const void *addr, unsigned len) {
-    struct fam_copy tmp;
-    const void *host = addr_to_host(addr, &len, &tmp);
-    return connect(fd, host, len);
-}
-
-int __ape_shim_getsockname(int fd, void *addr, unsigned *len) {
-    int r = getsockname(fd, addr, len);
-    if (r == 0) addr_to_linux(addr, len);
-    return r;
-}
-
-int __ape_shim_getpeername(int fd, void *addr, unsigned *len) {
-    int r = getpeername(fd, addr, len);
-    if (r == 0) addr_to_linux(addr, len);
-    return r;
-}
-
-// The sockopt space: translate (level, name) from musl's numbering to the
-// host's. SOL_SOCKET is its own level value; the IPPROTO_* levels are real
-// protocol numbers, identical everywhere. Unknown names pass through raw,
-// matching pre-shim behavior rather than inventing failures for exotic
-// options.
-struct opt {
-    short lin;
-    const int *host;
-};
-
-#define X(name, lin) { lin, &name },
-static const struct opt kSo[] = { SHIM_SO_TABLE(X) };
-static const struct opt kTcp[] = { SHIM_TCP_TABLE(X) };
-static const struct opt kIp[] = { SHIM_IP_TABLE(X) };
-static const struct opt kIpv6[] = { SHIM_IPV6_TABLE(X) };
-#undef X
-
-static int lookup(const struct opt *t, size_t n, int lin) {
-    for (size_t i = 0; i < n; i++)
-        if (t[i].lin == lin) return *t[i].host;
-    return lin;
-}
-#define LOOKUP(t, lin) lookup(t, sizeof(t) / sizeof(t[0]), lin)
-
-static void sockopt_to_host(int *level, int *name) {
-    switch (*level) {
-        case SHIM_LIN_SOL_SOCKET:
-            *level = SOL_SOCKET;
-            *name = LOOKUP(kSo, *name);
-            break;
-        case SHIM_LIN_IPPROTO_TCP:
-            *name = LOOKUP(kTcp, *name);
-            break;
-        case SHIM_LIN_IPPROTO_IP:
-            *name = LOOKUP(kIp, *name);
-            break;
-        case SHIM_LIN_IPPROTO_IPV6:
-            *name = LOOKUP(kIpv6, *name);
-            break;
-        default:
-            break; // other levels are protocol numbers; pass through
-    }
+    return bind(fd, addr, len);
 }
 
 // ---------------------------------------------------------------------------
@@ -523,18 +334,14 @@ static int deferred_lookup(int fd, int level, int name, int *val) {
 }
 
 int __ape_shim_setsockopt(int fd, int level, int name, const void *val, unsigned len) {
-    // SO_REUSEPORT has no Windows equivalent (cosmo publishes it as 0 there,
-    // which the NT layer rejects with ENOPROTOOPT), and WinSock's
-    // SO_REUSEADDR already allows rebinding a port. On Linux the option
-    // always succeeds, so accept it as a no-op instead of failing callers
-    // that treat the error as fatal.
-    if (level == SHIM_LIN_SOL_SOCKET && name == SHIM_LIN_SO_REUSEPORT &&
-        !SO_REUSEPORT)
-        return 0;
+    // SO_REUSEPORT has no Windows equivalent (cosmo answers ENOPROTOOPT
+    // there), and WinSock's SO_REUSEADDR already allows rebinding a port.
+    // On Linux the option always succeeds, so accept it as a no-op instead
+    // of failing callers that treat the error as fatal.
+    if (IsWindows() && level == SOL_SOCKET && name == SO_REUSEPORT) return 0;
     // SOL_PACKET options succeed as no-ops, since promiscuity is already on
     // and refusing would abort a capture that does work.
     if (__ape_shim_packet_sockopt(fd, level)) return 0;
-    sockopt_to_host(&level, &name);
     int r = setsockopt(fd, level, name, val, len);
     if (r == -1 && errno == EINVAL && IsWindows() && val && len == sizeof(int) &&
         sock_is_connecting(fd)) {
@@ -547,30 +354,28 @@ int __ape_shim_setsockopt(int fd, int level, int name, const void *val, unsigned
 // BSD-derived kernels answer a boolean option with their own flag bit
 // (on XNU TCP_NODELAY reads back as 4 and SO_KEEPALIVE as 8); Linux
 // answers 0 or 1, and callers compare against 1.
-static int sockopt_is_boolean(int lin_level, int lin_name) {
-    if (lin_level == SHIM_LIN_SOL_SOCKET)
-        switch (lin_name) {
-            case SHIM_LIN_SO_REUSEADDR:
-            case SHIM_LIN_SO_DONTROUTE:
-            case SHIM_LIN_SO_BROADCAST:
-            case SHIM_LIN_SO_KEEPALIVE:
-            case SHIM_LIN_SO_OOBINLINE:
-            case SHIM_LIN_SO_REUSEPORT:
-            case SHIM_LIN_SO_ACCEPTCONN:
+static int sockopt_is_boolean(int level, int name) {
+    if (level == SOL_SOCKET)
+        switch (name) {
+            case SO_REUSEADDR:
+            case SO_DONTROUTE:
+            case SO_BROADCAST:
+            case SO_KEEPALIVE:
+            case SO_OOBINLINE:
+            case SO_REUSEPORT:
+            case SO_ACCEPTCONN:
                 return 1;
         }
-    if (lin_level == SHIM_LIN_IPPROTO_TCP)
-        switch (lin_name) {
-            case SHIM_LIN_TCP_NODELAY:
-            case SHIM_LIN_TCP_CORK:
+    if (level == IPPROTO_TCP)
+        switch (name) {
+            case TCP_NODELAY:
+            case TCP_CORK:
                 return 1;
         }
     return 0;
 }
 
 int __ape_shim_getsockopt(int fd, int level, int name, void *val, unsigned *len) {
-    int lin_level = level, lin_name = name;
-    sockopt_to_host(&level, &name);
     int parked;
     if (val && len && *len >= sizeof(int) && deferred_lookup(fd, level, name, &parked)) {
         *(int *)val = parked;
@@ -579,25 +384,19 @@ int __ape_shim_getsockopt(int fd, int level, int name, void *val, unsigned *len)
     }
     int r = getsockopt(fd, level, name, val, len);
     if (r == 0 && IsBsd() && val && len && *len == sizeof(int) &&
-        sockopt_is_boolean(lin_level, lin_name)) {
+        sockopt_is_boolean(level, name)) {
         *(int *)val = !!*(int *)val;
     }
     return r;
 }
 
-// MSG_* flags: OOB/PEEK/DONTROUTE are 1/2/4 everywhere and pass through; the
-// rest are runtime. Untranslatable or unknown bits are dropped — for send
-// flags they are hints, and failing hard here would break retry loops.
-#define LIN_MSG_FIXED 0x7
+// MSG_* bits cosmo has no name for are dropped rather than refused: for
+// send flags they are hints, and failing hard would break retry loops.
+#define MSG_KNOWN (MSG_OOB | MSG_PEEK | MSG_DONTROUTE | MSG_DONTWAIT | MSG_WAITALL | \
+                   MSG_NOSIGNAL | MSG_TRUNC | MSG_CTRUNC)
 
-static int msg_to_host(int lin) {
-    int host = lin & LIN_MSG_FIXED;
-    lin &= ~LIN_MSG_FIXED;
-#define X(name, linval) \
-    if (lin & (linval)) { host |= name; lin &= ~(linval); }
-    SHIM_MSG_TABLE(X)
-#undef X
-    return host;
+static int msg_flags(int lin) {
+    return lin & MSG_KNOWN;
 }
 
 // MSG_NOSIGNAL only ever means "don't raise SIGPIPE", and NT has no SIGPIPE
@@ -613,8 +412,8 @@ static int msg_to_host(int lin) {
 // with both ends parked, against 0 in 20 once the flag was left alone. cosmo
 // evidently does read the bit somewhere in its NT send path, so the only
 // sends that get their flags touched here are the ones that already failed.
-static int nosignal_retry(int host_flags, long r) {
-    return r < 0 && IsWindows() && (host_flags & MSG_NOSIGNAL) && errno == EINVAL;
+static int nosignal_retry(int flags, long r) {
+    return r < 0 && IsWindows() && (flags & MSG_NOSIGNAL) && errno == EINVAL;
 }
 
 // ---------------------------------------------------------------------------
@@ -656,7 +455,7 @@ unsigned long __ape_shim_nt_clamp(int fd, unsigned long n) {
 long __ape_shim_send(int fd, const void *buf, unsigned long n, int flags) {
     __ape_shim_nt_sockopt_replay(fd);
     if (__ape_shim_nt_wants_eagain(fd)) return send_result(fd, -1, n);
-    int host = msg_to_host(flags);
+    int host = msg_flags(flags);
     unsigned long len = __ape_shim_nt_clamp(fd, n);
     long r = send(fd, buf, len, host);
     if (nosignal_retry(host, r)) r = send(fd, buf, len, host & ~MSG_NOSIGNAL);
@@ -665,14 +464,12 @@ long __ape_shim_send(int fd, const void *buf, unsigned long n, int flags) {
 
 long __ape_shim_sendto(int fd, const void *buf, unsigned long n, int flags,
                        const void *addr, unsigned alen) {
-    struct fam_copy tmp;
     __ape_shim_nt_sockopt_replay(fd);
     if (__ape_shim_nt_wants_eagain(fd)) return send_result(fd, -1, n);
-    int host = msg_to_host(flags);
+    int host = msg_flags(flags);
     unsigned long len = __ape_shim_nt_clamp(fd, n);
-    const void *to = addr_to_host(addr, &alen, &tmp);
-    long r = sendto(fd, buf, len, host, to, alen);
-    if (nosignal_retry(host, r)) r = sendto(fd, buf, len, host & ~MSG_NOSIGNAL, to, alen);
+    long r = sendto(fd, buf, len, host, addr, alen);
+    if (nosignal_retry(host, r)) r = sendto(fd, buf, len, host & ~MSG_NOSIGNAL, addr, alen);
     return send_result(fd, r, n);
 }
 
@@ -681,136 +478,14 @@ long __ape_shim_recv(int fd, void *buf, unsigned long n, int flags) {
     // front of them, and may come from either of the two sockets behind it.
     if (__ape_shim_packet_is(fd))
         return recv_result(fd, __ape_shim_packet_recv(fd, buf, n, NULL, NULL));
-    return recv_result(fd, recv(fd, buf, n, msg_to_host(flags)));
+    return recv_result(fd, recv(fd, buf, n, msg_flags(flags)));
 }
 
 long __ape_shim_recvfrom(int fd, void *buf, unsigned long n, int flags,
                          void *addr, unsigned *alen) {
     if (__ape_shim_packet_is(fd))
         return recv_result(fd, __ape_shim_packet_recv(fd, buf, n, addr, alen));
-    long r = recvfrom(fd, buf, n, msg_to_host(flags), addr, alen);
-    if (r >= 0) addr_to_linux(addr, alen);
-    return recv_result(fd, r);
-}
-
-// ---------------------------------------------------------------------------
-// sendmsg/recvmsg. struct msghdr is byte-compatible with musl's on LE
-// (cosmo declares it "Linux+NT ABI"; musl's int+pad pairs line up with
-// cosmo's u64/u32+pad), so the values inside it are what get rewritten: the
-// MSG_* flags argument, the msg_name family, recvmsg's msg_flags output,
-// and the control payload's cmsg_level (SOL_SOCKET is a runtime constant,
-// same trap as SO_ERROR's payload). cmsg_type: SCM_RIGHTS is 1 on both
-// sides; IPPROTO_IP/IPV6 types go through the sockopt tables; anything else
-// passes raw. The cmsghdr LAYOUT, however, is only linux-shaped on hosts
-// whose kernel takes it (Linux, cosmo's NT layer): cosmo forwards
-// msg_control untouched, so on the BSDs — whose cmsghdr is 12 bytes with
-// its own alignment — the shim additionally converts the layout both ways.
-
-static int msg_to_linux(int host) {
-    int lin = host & LIN_MSG_FIXED;
-    host &= ~LIN_MSG_FIXED;
-#define X(name, linval) \
-    if (host & name) { lin |= (linval); host &= ~(int)name; }
-    SHIM_MSG_TABLE(X)
-#undef X
-    return lin;
-}
-
-static int lookup_to_linux(const struct opt *t, size_t n, int host) {
-    for (size_t i = 0; i < n; i++)
-        if (*t[i].host == host) return t[i].lin;
-    return host;
-}
-#define LOOKUP_REV(t, host) lookup_to_linux(t, sizeof(t) / sizeof(t[0]), host)
-
-// Walk a control buffer (musl and cosmo agree on the linux cmsghdr shape:
-// u32 len, pad, i32 level, i32 type) rewriting level/type in place. Only
-// correct for hosts whose kernel takes the linux layout (Linux, and cosmo's
-// NT emulation); the BSDs get the layout-converting pair below instead.
-static void cmsgs_rewrite(void *control, unsigned long controllen, int to_host) {
-    unsigned char *p = control, *end = p + controllen;
-    while (p + 16 <= end) {
-        unsigned len = *(unsigned *)p;
-        int *level = (int *)(p + 8);
-        int *type = (int *)(p + 12);
-        if (len < 16) break;
-        if (to_host) {
-            if (*level == SHIM_LIN_SOL_SOCKET) *level = SOL_SOCKET;
-            else if (*level == SHIM_LIN_IPPROTO_IP) *type = LOOKUP(kIp, *type);
-            else if (*level == SHIM_LIN_IPPROTO_IPV6) *type = LOOKUP(kIpv6, *type);
-        } else {
-            if (*level == SOL_SOCKET) *level = SHIM_LIN_SOL_SOCKET;
-            else if (*level == SHIM_LIN_IPPROTO_IP) *type = LOOKUP_REV(kIp, *type);
-            else if (*level == SHIM_LIN_IPPROTO_IPV6) *type = LOOKUP_REV(kIpv6, *type);
-        }
-        unsigned long step = (len + 7) & ~7ul; // CMSG_ALIGN
-        if (step == 0 || p + step < p) break;
-        p += step;
-    }
-}
-
-// The BSDs don't share the linux cmsghdr layout — theirs is {u32 cmsg_len;
-// i32 level; i32 type} (12-byte header; XNU aligns entries to 4, the others
-// to 8, vs linux's 16-byte header and 8) — and cosmo's sendmsg/recvmsg pass
-// msg_control through UNtranslated on every host. So on the BSDs the shim
-// converts the layout itself, translating level/type on the way through.
-
-static unsigned long cmsg_align_host(unsigned long n) {
-    unsigned long a = IsXnu() ? 4 : 8;
-    return (n + a - 1) & ~(a - 1);
-}
-
-// Linux control buffer -> BSD layout. Returns the BSD controllen, or -1 if
-// the converted stream wouldn't fit in dstcap.
-static long cmsgs_to_bsd(const unsigned char *src, unsigned long srclen,
-                         unsigned char *dst, unsigned long dstcap) {
-    unsigned long si = 0, di = 0;
-    while (si + 16 <= srclen) {
-        unsigned long len = *(const unsigned long *)(src + si); // incl. 16B hdr
-        if (len < 16 || len > srclen - si) break;
-        unsigned long payload = len - 16;
-        unsigned long blen = 12 + payload;
-        if (cmsg_align_host(blen) > dstcap - di) return -1;
-        int lvl = *(const int *)(src + si + 8);
-        int typ = *(const int *)(src + si + 12);
-        if (lvl == SHIM_LIN_SOL_SOCKET) lvl = SOL_SOCKET;
-        else if (lvl == SHIM_LIN_IPPROTO_IP) typ = LOOKUP(kIp, typ);
-        else if (lvl == SHIM_LIN_IPPROTO_IPV6) typ = LOOKUP(kIpv6, typ);
-        *(unsigned *)(dst + di) = blen;
-        *(int *)(dst + di + 4) = lvl;
-        *(int *)(dst + di + 8) = typ;
-        memcpy(dst + di + 12, src + si + 16, payload);
-        di += cmsg_align_host(blen);
-        si += (len + 7) & ~7ul;
-    }
-    return (long)di;
-}
-
-// BSD control buffer -> linux layout in the caller's buffer. The linux form
-// is larger per entry, so an overfull result is truncated at an entry
-// boundary, which is the same shape MSG_CTRUNC leaves behind.
-static unsigned long cmsgs_to_linux_layout(const unsigned char *src, unsigned long srclen,
-                                           unsigned char *dst, unsigned long dstcap) {
-    unsigned long si = 0, di = 0;
-    while (si + 12 <= srclen) {
-        unsigned blen = *(const unsigned *)(src + si);
-        if (blen < 12 || blen > srclen - si) break;
-        unsigned long payload = blen - 12;
-        unsigned long llen = 16 + payload;
-        if (((llen + 7) & ~7ul) > dstcap - di) break;
-        int lvl = *(const int *)(src + si + 4);
-        int typ = *(const int *)(src + si + 8);
-        if (lvl == SOL_SOCKET) lvl = SHIM_LIN_SOL_SOCKET;
-        else if (lvl == SHIM_LIN_IPPROTO_IP) typ = LOOKUP_REV(kIp, typ);
-        else if (lvl == SHIM_LIN_IPPROTO_IPV6) typ = LOOKUP_REV(kIpv6, typ);
-        *(unsigned long *)(dst + di) = llen;
-        *(int *)(dst + di + 8) = lvl;
-        *(int *)(dst + di + 12) = typ;
-        memmove(dst + di + 16, src + si + 12, payload);
-        di += (llen + 7) & ~7ul;
-        si += cmsg_align_host(blen);
-    }
-    return di;
+    return recv_result(fd, recvfrom(fd, buf, n, msg_flags(flags), addr, alen));
 }
 
 static unsigned long msg_total(const struct msghdr *msg) {
@@ -825,128 +500,12 @@ long __ape_shim_sendmsg(int fd, const struct msghdr *msg, int flags) {
     unsigned long want = msg_total(msg);
     __ape_shim_nt_sockopt_replay(fd);
     if (__ape_shim_nt_wants_eagain(fd)) return send_result(fd, -1, want);
-    if (!msg) {
-        int host = msg_to_host(flags);
-        long r = sendmsg(fd, msg, host);
-        if (nosignal_retry(host, r)) r = sendmsg(fd, msg, host & ~MSG_NOSIGNAL);
-        return send_result(fd, r, want);
-    }
-    struct msghdr m = *msg;
-    struct fam_copy name_tmp;
-    if (m.msg_name)
-        m.msg_name = (void *)addr_to_host(m.msg_name, &m.msg_namelen, &name_tmp);
-    // control payload: rewrite on a copy — the caller's buffer is logically
-    // const. Oversized control data passes through untranslated rather than
-    // failing (SOL_SOCKET is 1 == Linux on every cosmo host except the BSDs'
-    // 0xffff, and cmsgs beyond this size are exotic).
-    unsigned char ctl_tmp[1024];
-    if (m.msg_control && m.msg_controllen <= sizeof(ctl_tmp)) {
-        if (IsBsd()) {
-            long n = cmsgs_to_bsd(m.msg_control, m.msg_controllen,
-                                  ctl_tmp, sizeof(ctl_tmp));
-            if (n >= 0) {
-                m.msg_control = n ? ctl_tmp : NULL;
-                m.msg_controllen = n;
-            }
-        } else {
-            memcpy(ctl_tmp, m.msg_control, m.msg_controllen);
-            cmsgs_rewrite(ctl_tmp, m.msg_controllen, 1);
-            m.msg_control = ctl_tmp;
-        }
-    }
-    int host = msg_to_host(flags);
-    long r = sendmsg(fd, &m, host);
-    if (nosignal_retry(host, r)) r = sendmsg(fd, &m, host & ~MSG_NOSIGNAL);
+    int host = msg_flags(flags);
+    long r = sendmsg(fd, msg, host);
+    if (nosignal_retry(host, r)) r = sendmsg(fd, msg, host & ~MSG_NOSIGNAL);
     return send_result(fd, r, want);
 }
 
 long __ape_shim_recvmsg(int fd, struct msghdr *msg, int flags) {
-    // On the BSDs cosmo's recvmsg runs the caller's msg_name OUTPUT buffer
-    // through sockaddr2bsd as if it were input, and a family it doesn't
-    // recognize (a zeroed buffer, or musl's AF_INET6 left by a previous
-    // call) is answered EPFNOSUPPORT before any syscall (recvfrom converts
-    // through a local copy instead and doesn't have this). Linux semantics
-    // never read the buffer, so seed it with the socket's own host-coded
-    // family, which is what any received address will be anyway.
-    if (IsBsd() && msg && msg->msg_name && msg->msg_namelen >= 2) {
-        struct sockaddr_storage ss;
-        unsigned sl = sizeof(ss);
-        if (getsockname(fd, (struct sockaddr *)&ss, &sl) == 0 && sl >= 2)
-            *(unsigned short *)msg->msg_name = ss.ss_family;
-    }
-    // msg_controllen is capacity going in, actual length coming out; the
-    // BSD->linux expansion below writes back into the caller's buffer and
-    // needs the original capacity.
-    unsigned long ctl_cap = msg ? msg->msg_controllen : 0;
-    long r = recv_result(fd, recvmsg(fd, msg, msg_to_host(flags)));
-    if (r >= 0 && msg) {
-        if (msg->msg_name && msg->msg_namelen >= 2) {
-            unsigned short *fam = msg->msg_name;
-            *fam = (unsigned short)af_to_linux(*fam);
-        }
-        if (msg->msg_control && msg->msg_controllen) {
-            if (IsBsd()) {
-                unsigned char tmp[1024];
-                unsigned long n = msg->msg_controllen;
-                if (n <= sizeof(tmp)) {
-                    memcpy(tmp, msg->msg_control, n);
-                    msg->msg_controllen =
-                        cmsgs_to_linux_layout(tmp, n, msg->msg_control, ctl_cap);
-                }
-            } else {
-                cmsgs_rewrite(msg->msg_control, msg->msg_controllen, 0);
-            }
-        }
-        msg->msg_flags = msg_to_linux(msg->msg_flags);
-    }
-    return r;
-}
-
-// ---------------------------------------------------------------------------
-// Name resolution. Same addrinfo layout on both sides (cosmo ships musl's
-// netdb); the family field is the only host-coded thing passing through.
-
-int __ape_shim_getaddrinfo(const char *node, const char *service,
-                           const struct addrinfo *hints, struct addrinfo **res) {
-    struct addrinfo h;
-    if (hints) {
-        h = *hints;
-        h.ai_family = af_to_host(h.ai_family);
-        hints = &h;
-    }
-    int r = getaddrinfo(node, service, hints, res);
-    if (r == 0 && res) {
-        for (struct addrinfo *ai = *res; ai; ai = ai->ai_next) {
-            ai->ai_family = af_to_linux(ai->ai_family);
-            if (ai->ai_addr)
-                ai->ai_addr->sa_family = (unsigned short)af_to_linux(ai->ai_addr->sa_family);
-        }
-    }
-    return r;
-}
-
-int __ape_shim_getnameinfo(const void *addr, unsigned alen, char *host_out,
-                           unsigned hostlen, char *serv, unsigned servlen, int flags) {
-    struct fam_copy tmp;
-    // NI_* flag values are musl's on both sides (cosmo ships musl's netdb).
-    return getnameinfo(addr_to_host(addr, &alen, &tmp), alen, host_out, hostlen,
-                       serv, servlen, flags);
-}
-
-// getifaddrs: the addresses carry the host's AF_* and ifa_flags the host's
-// IFF_* bits.
-int __ape_shim_getifaddrs(struct ifaddrs **out) {
-    int rc = getifaddrs(out);
-    if (rc || IsLinux()) return rc;
-    for (struct ifaddrs *ifa = *out; ifa; ifa = ifa->ifa_next) {
-        struct sockaddr *sas[] = { ifa->ifa_addr, ifa->ifa_netmask, ifa->ifa_broadaddr };
-        for (int i = 0; i < 3; i++)
-            if (sas[i]) sas[i]->sa_family = (unsigned short)af_to_linux(sas[i]->sa_family);
-        unsigned lin = 0;
-#define X(name, linval) if ((name) && (ifa->ifa_flags & (unsigned)(name))) lin |= (linval);
-        SHIM_IFF_TABLE(X)
-#undef X
-        ifa->ifa_flags = lin;
-    }
-    return 0;
+    return recv_result(fd, recvmsg(fd, msg, msg_flags(flags)));
 }

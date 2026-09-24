@@ -7,13 +7,16 @@
 //! passing through the shim without repacking. It also guards the
 //! hand-aligned aarch64 stat in patches/libc.patch; if that patch is wrong,
 //! the assert here names the field that moved.
-//!
-//! struct termios is absent on purpose. Its layouts genuinely differ, so
-//! shim/termios.c repacks it and carries its own asserts.
 
 use std::mem::{align_of, offset_of, size_of};
 
 const _: () = {
+    assert!(offset_of!(libc::termios, c_iflag) == 0);
+    assert!(offset_of!(libc::termios, c_line) == 16);
+    assert!(offset_of!(libc::termios, c_cc) == 17);
+    assert!(offset_of!(libc::termios, __c_ispeed) == 52);
+    assert!(offset_of!(libc::termios, __c_ospeed) == 56);
+    assert!(size_of::<libc::termios>() == 60);
     assert!(offset_of!(libc::timespec, tv_sec) == 0);
     assert!(offset_of!(libc::timespec, tv_nsec) == 8);
     assert!(size_of::<libc::timespec>() == 16);

@@ -28,10 +28,6 @@
 #include <libc/nt/struct/ipadapteraddresses.h>
 #include <libc/nt/winsock.h>
 
-// musl's AF_PACKET. Deliberately not in tables.h, since cosmo's constant
-// resolves to -1 on NT and translating to it would defeat this file.
-#define SHIM_LIN_AF_PACKET 17
-
 // SOL_PACKET and its option namespace, likewise musl's.
 #define SHIM_LIN_SOL_PACKET 263
 
@@ -332,8 +328,8 @@ static void fill_sll(void *addr, unsigned *alen, int ifindex, unsigned et) {
     if (!addr || !alen) return;
     unsigned char sll[20];
     memset(sll, 0, sizeof sll);
-    sll[0] = SHIM_LIN_AF_PACKET & 0xff;
-    sll[1] = (SHIM_LIN_AF_PACKET >> 8) & 0xff;
+    sll[0] = AF_PACKET & 0xff;
+    sll[1] = (AF_PACKET >> 8) & 0xff;
     sll[2] = (unsigned char)(et >> 8); // sll_protocol, network byte order
     sll[3] = (unsigned char)(et & 0xff);
     memcpy(sll + 4, &ifindex, sizeof ifindex);

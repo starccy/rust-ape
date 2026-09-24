@@ -37,12 +37,8 @@
 //     past uc_sigmask (cosmo: 8-byte set + fpu state; musl: 128-byte set +
 //     __fpregs_mem) but nothing addresses those through the struct.
 //
-// struct termios is covered differently. It genuinely differs (musl has
-// c_line, NCCS 32, speeds at 52/56; cosmo has no c_line, NCCS 20, size 44,
-// plus runtime V*/ICANON-class constants), so it is repacked like
-// sigaction. shim/termios.c rebuilds it field by field and pins the
-// Linux-side shapes with its own asserts; the asserts further down pin the
-// cosmo-side shape that repack writes into.
+// struct termios is musl's shape on the cosmo side too (the fork changed
+// it), so it passes through like the rest; the asserts below pin that.
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -146,17 +142,17 @@ _Static_assert(sizeof(pthread_attr_t) == 64, "cosmo pthread_attr_t size");
 _Static_assert(sizeof(sem_t) == 256, "cosmo sem_t size");
 _Static_assert(_Alignof(sem_t) == 8, "cosmo sem_t alignment");
 
-// cosmo's termios, the repack target of shim/termios.c: no c_line, NCCS 20,
-// speeds as fields. If any of this drifts, the repack corrupts.
 #include <termios.h>
 CHECK(termios, c_iflag, 0);
 CHECK(termios, c_oflag, 4);
 CHECK(termios, c_cflag, 8);
 CHECK(termios, c_lflag, 12);
-CHECK(termios, c_cc, 16);
-CHECK(termios, _c_ispeed, 36);
-CHECK(termios, _c_ospeed, 40);
-_Static_assert(sizeof(struct termios) == 44, "cosmo termios size");
+CHECK(termios, c_line, 16);
+CHECK(termios, c_cc, 17);
+CHECK(termios, _c_ispeed, 52);
+CHECK(termios, _c_ospeed, 56);
+_Static_assert(NCCS == 32, "cosmo NCCS");
+_Static_assert(sizeof(struct termios) == 60, "cosmo termios size");
 
 CHECK(ucontext, uc_flags, 0);
 CHECK(ucontext, uc_link, 8);

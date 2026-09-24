@@ -43,7 +43,6 @@ RUST_TARGET = "x86_64-unknown-linux-musl"
 # in the report. Add entries only with an explanation of where the delta is
 # absorbed.
 ALLOWLIST = {
-    "termios": "shim/termios.c repacks between musl and cosmo layouts",
     "sigaction": "shim/signal.c repacks via lin_sigaction, musl's shape",
 }
 

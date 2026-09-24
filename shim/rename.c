@@ -21,8 +21,6 @@
 #include <libc/nt/struct/filerenameinformation.h>
 #include <libc/sysv/consts/at.h>
 
-#include "tables.h"
-
 int __mkntpathat(int dirfd, const char *path, char16_t file[]);
 
 // FILE_RENAME_FLAG_*, which cosmo has no names for. They occupy the DWORD
@@ -45,10 +43,6 @@ int __mkntpathat(int dirfd, const char *path, char16_t file[]);
 // instead of renaming it. Verified on 10.0.26200 by trying all four numbers
 // and checking which file survived with which contents.
 #define SHIM_NT_FILE_RENAME_INFO_EX 22
-
-static int at_fdcwd(int dirfd) {
-    return dirfd == SHIM_LIN_AT_FDCWD ? AT_FDCWD : dirfd;
-}
 
 // Returns 0 on success, -1 without disturbing errno on failure.
 static int posix_rename_nt(int olddirfd, const char *oldpath, int newdirfd,
@@ -107,6 +101,5 @@ int __ape_shim_rename(const char *oldpath, const char *newpath) {
 
 int __ape_shim_renameat(int olddirfd, const char *oldpath, int newdirfd,
                         const char *newpath) {
-    return rename_common(at_fdcwd(olddirfd), oldpath, at_fdcwd(newdirfd),
-                         newpath);
+    return rename_common(olddirfd, oldpath, newdirfd, newpath);
 }

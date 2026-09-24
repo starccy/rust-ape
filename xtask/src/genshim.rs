@@ -85,6 +85,7 @@ pub(crate) fn cosmo_name(libc_name: &str) -> &str {
 #[serde(deny_unknown_fields)]
 struct Manifest {
     singles: Vec<String>,
+    #[serde(default)]
     table: Vec<Table>,
 }
 

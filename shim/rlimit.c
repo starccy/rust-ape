@@ -1,5 +1,6 @@
 // prlimit for the Linux-personality shim. RLIMIT_* and struct rlimit are
-// the same on both sides, so getrlimit and setrlimit need no help.
+// the same on both sides, so getrlimit and setrlimit need no help, and
+// neither does getrusage now.
 
 #include <errno.h>
 #include <stddef.h>
@@ -11,7 +12,6 @@
 #include <libc/sysv/consts/nr.h>
 
 #include "syscall.h"
-#include "tables.h"
 
 // prlimit() has no cosmo counterpart, and reaching into *another* process's
 // limits is a Linux-only ability to begin with. Two paths therefore:
@@ -34,9 +34,4 @@ int __ape_shim_prlimit(pid_t pid, int lin, const struct rlimit *neu,
     if (!IsLinux()) return errno = ENOSYS, -1;
     return (int)__ape_syscall_ret(
         __ape_raw_syscall(__NR_prlimit, pid, lin, (long)neu, (long)old, 0));
-}
-
-int __ape_shim_getrusage(int who, struct rusage *ru) {
-    if (who == SHIM_LIN_RUSAGE_THREAD) who = RUSAGE_THREAD;
-    return getrusage(who, ru);
 }
