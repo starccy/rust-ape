@@ -376,9 +376,6 @@ fn cargo_build(
     // * rustix_use_libc: keep rustix off its raw-syscall backend, which cosmo
     // can't translate away from Linux.
     //
-    // * mio_unsupported_force_waker_pipe: mio's default waker
-    // on Linux is an eventfd, which cosmo doesn't have.
-    //
     // Passed as env because RUSTFLAGS there outranks anything
     // in a project's .cargo/config.toml, so nobody can drop these by
     // accident.
@@ -390,8 +387,7 @@ fn cargo_build(
     // With --target set, RUSTFLAGS reaches target units only, so host build
     // scripts keep linking the real libc symbols.
     rustflags.push_str(
-        "--cfg rustix_use_libc \
-         --cfg mio_unsupported_force_waker_pipe --cfg rust_ape_shim",
+        "--cfg rustix_use_libc --cfg rust_ape_shim",
     );
     // -mtiny reaches the final cosmocc invocation through the linker wrapper
     // and swaps in the lib/tiny runtime, which has no --strace/--ftrace.

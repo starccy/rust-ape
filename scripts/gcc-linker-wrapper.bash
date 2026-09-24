@@ -39,6 +39,11 @@ if [ "$tiny" = 1 ]; then
     args+=("-Wl,-u,zipos")
 fi
 
+# The fork's /proc and /sys emulation (libc/procfs/) is reached through weak
+# references, so nothing pulls it in unless something names the anchor. Every
+# binary gets it: std's current_exe and the monitoring crates read /proc.
+args+=("-Wl,-u,procfs")
+
 # The Linux-personality shim (shim/*.c): the patched std/libc/errno crates
 # resolve __ape_shim_* to it. Compiled here, cached per arch, so an edited
 # shim is always what gets linked; the temp + mv keeps parallel links from
@@ -54,13 +59,14 @@ shopt -s globstar nullglob
 shim_hdrs=("$SDK_ROOT"/shim/**/*.h)
 for shim_src in "$SDK_ROOT"/shim/**/*.c; do
     # subdirectory sources keep their directory in the cache name
-    # (procfs/core/tree.c -> shim-procfs-core-tree-...) so basenames cannot collide
+    # (a/b.c -> shim-a-b-...) so basenames cannot collide
     rel=${shim_src#"$SDK_ROOT"/shim/}
     rel=${rel%.c}
     shim_obj="$SDK_ROOT/generated/shim-${rel//\//-}-$ARCH$mode.o"
     stale=0
     # a regenerated tables.h must rebuild every object, not just edited .c files
-    for dep in "$shim_src" "${shim_hdrs[@]}"; do
+    # a repackaged toolchain can change the structs the shim indexes into
+    for dep in "$shim_src" "${shim_hdrs[@]}" "$SDK_ROOT/vendor/cosmocc/$ARCH-linux-cosmo/lib/libcosmo.a"; do
         [ ! -f "$shim_obj" ] || [ "$dep" -nt "$shim_obj" ] && stale=1
     done
     if [ "$stale" = 1 ]; then

@@ -37,111 +37,7 @@ diff a/libc/src/unix/linux_like/linux/mod.rs b/libc/src/unix/linux_like/linux/mo
  
  // <linux/seccomp.h>
  pub const SECCOMP_MODE_DISABLED: c_uint = 0;
-@@ -3529,24 +3531,31 @@
-     #[cfg_attr(gnu_file_offset_bits64, link_name = "posix_fallocate64")]
-     pub fn posix_fallocate(fd: c_int, offset: off_t, len: off_t) -> c_int;
-     pub fn readahead(fd: c_int, offset: off64_t, count: size_t) -> ssize_t;
-+    // cosmo: no xattr wrappers at all, only the __NR_* numbers. The shim
-+    // issues the raw syscall on Linux and answers ENOTSUP elsewhere, since
-+    // no other host has this API in this shape.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_getxattr")]
-     pub fn getxattr(
-         path: *const c_char,
-         name: *const c_char,
-         value: *mut c_void,
-         size: size_t,
-     ) -> ssize_t;
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_lgetxattr")]
-     pub fn lgetxattr(
-         path: *const c_char,
-         name: *const c_char,
-         value: *mut c_void,
-         size: size_t,
-     ) -> ssize_t;
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_fgetxattr")]
-     pub fn fgetxattr(
-         filedes: c_int,
-         name: *const c_char,
-         value: *mut c_void,
-         size: size_t,
-     ) -> ssize_t;
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_setxattr")]
-     pub fn setxattr(
-         path: *const c_char,
-         name: *const c_char,
-@@ -3554,6 +3563,7 @@
-         size: size_t,
-         flags: c_int,
-     ) -> c_int;
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_lsetxattr")]
-     pub fn lsetxattr(
-         path: *const c_char,
-         name: *const c_char,
-@@ -3561,6 +3571,7 @@
-         size: size_t,
-         flags: c_int,
-     ) -> c_int;
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_fsetxattr")]
-     pub fn fsetxattr(
-         filedes: c_int,
-         name: *const c_char,
-@@ -3568,11 +3579,17 @@
-         size: size_t,
-         flags: c_int,
-     ) -> c_int;
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_listxattr")]
-     pub fn listxattr(path: *const c_char, list: *mut c_char, size: size_t) -> ssize_t;
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_llistxattr")]
-     pub fn llistxattr(path: *const c_char, list: *mut c_char, size: size_t) -> ssize_t;
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_flistxattr")]
-     pub fn flistxattr(filedes: c_int, list: *mut c_char, size: size_t) -> ssize_t;
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_removexattr")]
-     pub fn removexattr(path: *const c_char, name: *const c_char) -> c_int;
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_lremovexattr")]
-     pub fn lremovexattr(path: *const c_char, name: *const c_char) -> c_int;
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_fremovexattr")]
-     pub fn fremovexattr(filedes: c_int, name: *const c_char) -> c_int;
-     pub fn signalfd(fd: c_int, mask: *const crate::sigset_t, flags: c_int) -> c_int;
-     pub fn timerfd_create(clockid: crate::clockid_t, flags: c_int) -> c_int;
-@@ -3608,6 +3625,8 @@
-         timeout: *const crate::timespec,
-     ) -> c_int;
-     pub fn sigwaitinfo(set: *const sigset_t, info: *mut siginfo_t) -> c_int;
-+    // cosmo: the shim keeps epoll's books.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_accept4")]
-     pub fn accept4(fd: c_int, addr: *mut crate::sockaddr, len: *mut socklen_t, flg: c_int)
-         -> c_int;
-     pub fn reboot(how_to: c_int) -> c_int;
-@@ -3640,6 +3659,7 @@
-     pub fn vhangup() -> c_int;
-     pub fn sync();
-     pub fn syncfs(fd: c_int) -> c_int;
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_syscall")]
-     pub fn syscall(num: c_long, ...) -> c_long;
-     pub fn sched_setaffinity(
-         pid: crate::pid_t,
-@@ -3647,13 +3667,20 @@
-         cpuset: *const crate::cpu_set_t,
-     ) -> c_int;
-     pub fn epoll_create(size: c_int) -> c_int;
-+    // cosmo: epoll was deleted upstream in 2024; shim/epoll.c puts it back,
-+    // as the raw syscalls on Linux and over cosmo's poll() elsewhere. Only
-+    // the three mio and polling actually call are redirected; epoll_create
-+    // above is the obsolete form nothing uses.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_epoll_create1")]
-     pub fn epoll_create1(flags: c_int) -> c_int;
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_epoll_wait")]
-     pub fn epoll_wait(
-         epfd: c_int,
-         events: *mut crate::epoll_event,
-         maxevents: c_int,
-         timeout: c_int,
-     ) -> c_int;
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_epoll_ctl")]
-     pub fn epoll_ctl(epfd: c_int, op: c_int, fd: c_int, event: *mut crate::epoll_event) -> c_int;
-     pub fn unshare(flags: c_int) -> c_int;
-     pub fn umount(target: *const c_char) -> c_int;
-@@ -3715,6 +3742,8 @@
+@@ -3715,6 +3717,8 @@
          groups: *mut crate::gid_t,
          ngroups: *mut c_int,
      ) -> c_int;
@@ -150,7 +46,7 @@ diff a/libc/src/unix/linux_like/linux/mod.rs b/libc/src/unix/linux_like/linux/mo
      pub fn posix_spawn(
          pid: *mut crate::pid_t,
          path: *const c_char,
-@@ -3723,6 +3752,8 @@
+@@ -3723,6 +3727,8 @@
          argv: *const *mut c_char,
          envp: *const *mut c_char,
      ) -> c_int;
@@ -265,21 +161,11 @@ diff a/libc/src/unix/linux_like/linux/musl/mod.rs b/libc/src/unix/linux_like/lin
      }
  
      pub struct sysinfo {
-@@ -757,6 +773,9 @@
- extern "C" {
-     pub fn getrlimit(resource: c_int, rlim: *mut crate::rlimit) -> c_int;
-     pub fn setrlimit(resource: c_int, rlim: *const crate::rlimit) -> c_int;
-+    // cosmo: no prlimit(); the shim serves the pid-means-me case through
-+    // get/setrlimit and answers ENOSYS for another process.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_prlimit")]
-     pub fn prlimit(
-         pid: crate::pid_t,
-         resource: c_int,
-@@ -817,7 +836,11 @@
+@@ -817,7 +833,11 @@
      pub fn mlock2(addr: *const c_void, len: size_t, flags: c_uint) -> c_int;
      pub fn malloc_usable_size(ptr: *mut c_void) -> size_t;
  
-+    // cosmo: same NT executable-suffix retry as stat, plus the emulated /proc tree.
++    // cosmo: same NT executable-suffix retry as stat.
 +    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_euidaccess")]
      pub fn euidaccess(pathname: *const c_char, mode: c_int) -> c_int;
 +    // cosmo: same.
@@ -290,39 +176,11 @@ diff a/libc/src/unix/linux_like/linux/musl/mod.rs b/libc/src/unix/linux_like/lin
 diff a/libc/src/unix/linux_like/linux_l4re_shared.rs b/libc/src/unix/linux_like/linux_l4re_shared.rs
 --- a/libc/src/unix/linux_like/linux_l4re_shared.rs
 +++ b/libc/src/unix/linux_like/linux_l4re_shared.rs
-@@ -1728,6 +1728,9 @@
-     #[cfg_attr(gnu_time_bits64, link_name = "__shmctl64")]
-     pub fn shmctl(shmid: c_int, cmd: c_int, buf: *mut crate::shmid_ds) -> c_int;
- 
-+    // cosmo: on NT a PROT_NONE anonymous mapping is only reserved (see
-+    // shim/mmap.c); the shim commits the pages before raising protection.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_mprotect")]
-     pub fn mprotect(addr: *mut c_void, len: size_t, prot: c_int) -> c_int;
-     pub fn __errno_location() -> *mut c_int;
- 
-@@ -1755,6 +1758,8 @@
-     pub fn madvise(addr: *mut c_void, len: size_t, advice: c_int) -> c_int;
- 
-     pub fn msync(addr: *mut c_void, len: size_t, flags: c_int) -> c_int;
-+    // cosmo: the shim reads packet sockets itself and keeps epoll's books.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_recvfrom")]
-     pub fn recvfrom(
-         socket: c_int,
-         buf: *mut c_void,
-@@ -1791,6 +1796,8 @@
-     pub fn prctl(option: c_int, ...) -> c_int;
-     #[cfg_attr(gnu_time_bits64, link_name = "__ppoll64")]
-     #[cfg_attr(musl_redir_time64, link_name = "__ppoll_time64")]
-+    // cosmo: the shim owns the wait on NT and retries oversized arrays in chunks.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_ppoll")]
-     pub fn ppoll(
-         fds: *mut crate::pollfd,
-         nfds: crate::nfds_t,
-@@ -1824,6 +1831,8 @@
+@@ -1824,6 +1824,8 @@
      pub fn sigwait(set: *const crate::sigset_t, sig: *mut c_int) -> c_int;
      pub fn getgrgid(gid: crate::gid_t) -> *mut crate::group;
      pub fn popen(command: *const c_char, mode: *const c_char) -> *mut crate::FILE;
-+    // cosmo: same NT executable-suffix retry as stat, plus the emulated /proc tree.
++    // cosmo: same NT executable-suffix retry as stat.
 +    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_faccessat")]
      pub fn faccessat(dirfd: c_int, pathname: *const c_char, mode: c_int, flags: c_int) -> c_int;
      pub fn dl_iterate_phdr(
@@ -359,37 +217,7 @@ diff a/libc/src/unix/linux_like/mod.rs b/libc/src/unix/linux_like/mod.rs
      }
  
      pub struct if_nameindex {
-@@ -1753,6 +1762,8 @@
- 
-         extern "C" {
-             #[cfg_attr(gnu_time_bits64, link_name = "__ioctl_time64")]
-+            // cosmo: the shim re-syncs the NT console's mouse mode after TCSETS.
-+            #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_ioctl")]
-             pub fn ioctl(fd: c_int, request: Ioctl, ...) -> c_int;
-         }
-     }
-@@ -1927,6 +1938,8 @@
-     pub fn memalign(align: size_t, size: size_t) -> *mut c_void;
-     pub fn setgroups(ngroups: size_t, ptr: *const crate::gid_t) -> c_int;
-     #[cfg(not(target_os = "l4re"))]
-+    // cosmo: the shim keeps epoll's books for the new pair.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_pipe2")]
-     pub fn pipe2(fds: *mut c_int, flags: c_int) -> c_int;
-     #[cfg_attr(gnu_file_offset_bits64, link_name = "statfs64")]
-     pub fn statfs(path: *const c_char, buf: *mut statfs) -> c_int;
-@@ -1958,7 +1971,11 @@
-     #[cfg(not(target_os = "l4re"))]
-     pub fn ptsname_r(fd: c_int, buf: *mut c_char, buflen: size_t) -> c_int;
-     pub fn clearenv() -> c_int;
-+    // cosmo: no waitid at all. The shim issues the raw syscall on Linux and
-+    // builds it out of wait4 elsewhere, so it takes Linux-coded idtype and
-+    // options and fills a Linux-coded siginfo.
-     #[cfg(not(target_os = "l4re"))]
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_waitid")]
-     pub fn waitid(
-         idtype: idtype_t,
-         id: id_t,
-@@ -2005,6 +2022,8 @@
+@@ -2005,6 +2014,8 @@
  
      // DIFF(main): changed to `*const *mut` in e77f551de9
      #[cfg(not(target_os = "l4re"))]
@@ -398,34 +226,7 @@ diff a/libc/src/unix/linux_like/mod.rs b/libc/src/unix/linux_like/mod.rs
      pub fn execvpe(
          file: *const c_char,
          argv: *const *const c_char,
-@@ -2016,18 +2035,26 @@
-     pub fn getifaddrs(ifap: *mut *mut crate::ifaddrs) -> c_int;
-     #[cfg(not(target_os = "l4re"))]
-     pub fn freeifaddrs(ifa: *mut crate::ifaddrs);
-+    // cosmo: the shim binds packet sockets itself.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_bind")]
-     pub fn bind(
-         socket: c_int,
-         address: *const crate::sockaddr,
-         address_len: crate::socklen_t,
-     ) -> c_int;
- 
-+    // cosmo: NT ignores O_NONBLOCK on socket writes; the shim emulates it (poll gate).
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_writev")]
-     pub fn writev(fd: c_int, iov: *const crate::iovec, iovcnt: c_int) -> ssize_t;
-     pub fn readv(fd: c_int, iov: *const crate::iovec, iovcnt: c_int) -> ssize_t;
- 
-     #[cfg_attr(gnu_time_bits64, link_name = "__sendmsg64")]
-+    // cosmo: the shim emulates nonblocking sends on NT and keeps epoll's books.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_sendmsg")]
-     pub fn sendmsg(fd: c_int, msg: *const crate::msghdr, flags: c_int) -> ssize_t;
-     #[cfg_attr(gnu_time_bits64, link_name = "__recvmsg64")]
-+    // cosmo: the shim keeps epoll's books.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_recvmsg")]
-     pub fn recvmsg(fd: c_int, msg: *mut crate::msghdr, flags: c_int) -> ssize_t;
-     pub fn uname(buf: *mut crate::utsname) -> c_int;
- 
-@@ -2098,6 +2125,8 @@
+@@ -2098,6 +2109,8 @@
              pub fn fstat64(fildes: c_int, buf: *mut stat64) -> c_int;
              #[cfg_attr(gnu_time_bits64, link_name = "__fstatat64_time64")]
              #[cfg(not(target_os = "l4re"))]
@@ -434,105 +235,10 @@ diff a/libc/src/unix/linux_like/mod.rs b/libc/src/unix/linux_like/mod.rs
              pub fn fstatat64(
                  dirfd: c_int,
                  pathname: *const c_char,
-@@ -2105,10 +2134,14 @@
-                 flags: c_int,
-             ) -> c_int;
-             pub fn ftruncate64(fd: c_int, length: off64_t) -> c_int;
-+            // cosmo: same as lseek on LP64; goes through its shim.
-+            #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_lseek")]
-             pub fn lseek64(fd: c_int, offset: off64_t, whence: c_int) -> off64_t;
-             #[cfg_attr(gnu_time_bits64, link_name = "__lstat64_time64")]
-             #[cfg(not(target_os = "l4re"))]
-             pub fn lstat64(path: *const c_char, buf: *mut stat64) -> c_int;
-+            // cosmo: same as mmap on LP64; goes through its shim.
-+            #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_mmap")]
-             pub fn mmap64(
-                 addr: *mut c_void,
-                 len: size_t,
-@@ -2117,7 +2150,11 @@
-                 fd: c_int,
-                 offset: off64_t,
-             ) -> *mut c_void;
-+            // cosmo: same as open on LP64; goes through its shim.
-+            #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_open")]
-             pub fn open64(path: *const c_char, oflag: c_int, ...) -> c_int;
-+            // cosmo: same as openat on LP64; goes through its shim.
-+            #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_openat")]
-             pub fn openat64(fd: c_int, path: *const c_char, oflag: c_int, ...) -> c_int;
-             pub fn posix_fadvise64(
-                 fd: c_int,
 diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
 --- a/libc/src/unix/mod.rs
 +++ b/libc/src/unix/mod.rs
-@@ -666,6 +666,10 @@
-     pub fn fflush(file: *mut FILE) -> c_int;
-     pub fn fclose(file: *mut FILE) -> c_int;
-     pub fn remove(filename: *const c_char) -> c_int;
-+    // cosmo: the NT path (MoveFileEx) can't replace a destination that is
-+    // still held open; the shim retries an EACCES rename with POSIX
-+    // semantics (FileRenameInfoEx).
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_rename")]
-     pub fn rename(oldname: *const c_char, newname: *const c_char) -> c_int;
-     #[cfg_attr(gnu_file_offset_bits64, link_name = "tmpfile64")]
-     pub fn tmpfile() -> *mut FILE;
-@@ -806,6 +810,8 @@
-     #[cfg_attr(target_os = "illumos", link_name = "__xnet_socket")]
-     #[cfg_attr(target_os = "solaris", link_name = "__xnet7_socket")]
-     #[cfg_attr(target_os = "espidf", link_name = "lwip_socket")]
-+    // cosmo: the shim emulates AF_PACKET on NT and keeps epoll's books.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_socket")]
-     pub fn socket(domain: c_int, ty: c_int, protocol: c_int) -> c_int;
-     #[cfg(not(all(target_arch = "powerpc", target_vendor = "nintendo")))]
-     #[cfg_attr(
-@@ -831,6 +837,8 @@
-     )]
-     #[cfg_attr(target_os = "espidf", link_name = "lwip_accept")]
-     #[cfg_attr(target_os = "aix", link_name = "naccept")]
-+    // cosmo: the shim keeps epoll's books.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_accept")]
-     pub fn accept(socket: c_int, address: *mut sockaddr, address_len: *mut socklen_t) -> c_int;
-     #[cfg(not(all(target_arch = "powerpc", target_vendor = "nintendo")))]
-     #[cfg_attr(
-@@ -852,6 +860,9 @@
-         -> c_int;
-     #[cfg_attr(target_os = "espidf", link_name = "lwip_setsockopt")]
-     #[cfg_attr(gnu_time_bits64, link_name = "__setsockopt64")]
-+    // cosmo: the shim parks options WinSock refuses during a connect and
-+    // answers the SOL_PACKET ones itself.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_setsockopt")]
-     pub fn setsockopt(
-         socket: c_int,
-         level: c_int,
-@@ -867,6 +878,9 @@
-         any(target_os = "illumos", target_os = "solaris"),
-         link_name = "__xnet_socketpair"
-     )]
-+    // cosmo: the shim builds the pair itself on NT and retries SEQPACKET as a
-+    // stream pair on XNU.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_socketpair")]
-     pub fn socketpair(
-         domain: c_int,
-         type_: c_int,
-@@ -883,6 +897,8 @@
-         link_name = "__xnet_sendto"
-     )]
-     #[cfg_attr(target_os = "espidf", link_name = "lwip_sendto")]
-+    // cosmo: the shim emulates nonblocking sends on NT and keeps epoll's books.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_sendto")]
-     pub fn sendto(
-         socket: c_int,
-         buf: *const c_void,
-@@ -920,6 +936,9 @@
-         link_name = "fstat64"
-     )]
-     #[cfg_attr(musl_redir_time64, link_name = "__fstat_time64")]
-+    // cosmo: an emulated /proc content descriptor has no handle behind it;
-+    // the shim answers from the text (shim/open.c).
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_fstat")]
-     pub fn fstat(fildes: c_int, buf: *mut stat) -> c_int;
- 
-     pub fn mkdir(path: *const c_char, mode: mode_t) -> c_int;
-@@ -939,6 +958,9 @@
+@@ -939,6 +939,9 @@
          link_name = "stat64"
      )]
      #[cfg_attr(musl_redir_time64, link_name = "__stat_time64")]
@@ -542,90 +248,25 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn stat(path: *const c_char, buf: *mut stat) -> c_int;
  
      pub fn pclose(stream: *mut crate::FILE) -> c_int;
-@@ -954,6 +976,9 @@
-         link_name = "open$UNIX2003"
-     )]
-     #[cfg_attr(gnu_file_offset_bits64, link_name = "open64")]
-+    // cosmo: the shim answers the emulated /proc tree and keeps epoll's
-+    // books (shim/open.c).
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_open")]
-     pub fn open(path: *const c_char, oflag: c_int, ...) -> c_int;
-     #[cfg_attr(
-         all(target_os = "macos", target_arch = "x86"),
-@@ -970,6 +995,9 @@
-         all(not(gnu_time_bits64), gnu_file_offset_bits64),
-         link_name = "__fcntl_time64"
-     )]
-+    // cosmo: the shim keeps epoll's books for dups and answers the
-+    // emulated /proc descriptors (shim/open.c).
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_fcntl")]
-     pub fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
- 
-     #[cfg_attr(
-@@ -981,6 +1009,8 @@
-         link_name = "opendir$INODE64$UNIX2003"
-     )]
-     #[cfg_attr(target_os = "netbsd", link_name = "__opendir30")]
-+    // cosmo: listing an emulated /proc/<pid> fills its entries first (shim/open.c).
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_opendir")]
-     pub fn opendir(dirname: *const c_char) -> *mut crate::DIR;
-     #[cfg_attr(
-         all(target_os = "macos", target_arch = "x86_64"),
-@@ -990,6 +1020,7 @@
-         all(target_os = "macos", target_arch = "x86"),
-         link_name = "fdopendir$INODE64$UNIX2003"
-     )]
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_fdopendir")]
-     pub fn fdopendir(fd: c_int) -> *mut crate::DIR;
- 
-     #[cfg_attr(
-@@ -1002,6 +1033,8 @@
-         link_name = "readdir@FBSD_1.0"
-     )]
-     #[cfg_attr(gnu_file_offset_bits64, link_name = "readdir64")]
-+    // cosmo: d_type of the /proc emulation's link entries
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_readdir")]
-     pub fn readdir(dirp: *mut crate::DIR) -> *mut crate::dirent;
-     #[cfg_attr(
-         all(target_os = "macos", target_arch = "x86"),
-@@ -1029,6 +1062,8 @@
-         flags: c_int,
-     ) -> c_int;
-     #[cfg_attr(gnu_file_offset_bits64, link_name = "openat64")]
-+    // cosmo: same /proc tree and epoll bookkeeping as open.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_openat")]
-     pub fn openat(dirfd: c_int, pathname: *const c_char, flags: c_int, ...) -> c_int;
-     #[cfg_attr(
-         all(target_os = "macos", not(target_arch = "aarch64")),
-@@ -1045,6 +1080,9 @@
+@@ -1045,6 +1048,8 @@
      )]
      #[cfg(not(target_os = "l4re"))]
      #[cfg_attr(musl_redir_time64, link_name = "__fstatat_time64")]
-+    // cosmo: the emulated /proc tree, the NT executable-suffix retry, and a
-+    // POSIX corner cosmo's NT lstat gets wrong (shim/open.c).
++    // cosmo: the NT executable-suffix retry (shim/open.c).
 +    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_fstatat")]
      pub fn fstatat(dirfd: c_int, pathname: *const c_char, buf: *mut stat, flags: c_int) -> c_int;
      #[cfg(not(target_os = "l4re"))]
      pub fn linkat(
-@@ -1057,6 +1095,8 @@
-     #[cfg(not(target_os = "l4re"))]
-     pub fn mkdirat(dirfd: c_int, pathname: *const c_char, mode: mode_t) -> c_int;
-     #[cfg(not(target_os = "l4re"))]
-+    // cosmo: same POSIX-semantics retry as rename above.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_renameat")]
-     pub fn renameat(
-         olddirfd: c_int,
-         oldpath: *const c_char,
-@@ -1068,6 +1108,8 @@
+@@ -1068,6 +1073,8 @@
      #[cfg(not(target_os = "l4re"))]
      pub fn unlinkat(dirfd: c_int, pathname: *const c_char, flags: c_int) -> c_int;
  
-+    // cosmo: same NT executable-suffix retry as stat, plus the emulated /proc tree.
++    // cosmo: same NT executable-suffix retry as stat.
 +    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_access")]
      pub fn access(path: *const c_char, amode: c_int) -> c_int;
      pub fn alarm(seconds: c_uint) -> c_uint;
      pub fn chdir(dir: *const c_char) -> c_int;
-@@ -1095,12 +1137,18 @@
+@@ -1095,12 +1102,18 @@
      pub fn execlp(file: *const c_char, arg0: *const c_char, ...) -> c_int;
  
      // DIFF(main): changed to `*const *mut` in e77f551de9
@@ -644,44 +285,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn execvp(c: *const c_char, argv: *const *const c_char) -> c_int;
  
      pub fn fork() -> pid_t;
-@@ -1109,6 +1157,8 @@
-     pub fn getegid() -> gid_t;
-     pub fn geteuid() -> uid_t;
-     pub fn getgid() -> gid_t;
-+    // cosmo: no group list on Windows; the shim answers with the process's own.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_getgroups")]
-     pub fn getgroups(ngroups_max: c_int, groups: *mut gid_t) -> c_int;
-     #[cfg_attr(target_os = "illumos", link_name = "getloginx")]
-     pub fn getlogin() -> *mut c_char;
-@@ -1126,6 +1176,8 @@
-     #[cfg_attr(target_os = "solaris", link_name = "__link_xpg4")]
-     pub fn link(src: *const c_char, dst: *const c_char) -> c_int;
-     #[cfg_attr(gnu_file_offset_bits64, link_name = "lseek64")]
-+    // cosmo: a rewind of an emulated /proc file regenerates it (shim/open.c).
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_lseek")]
-     pub fn lseek(fd: c_int, offset: off_t, whence: c_int) -> off_t;
-     pub fn pathconf(path: *const c_char, name: c_int) -> c_long;
-     pub fn pipe(fds: *mut c_int) -> c_int;
-@@ -1185,6 +1237,8 @@
-         all(target_os = "macos", target_arch = "x86"),
-         link_name = "write$UNIX2003"
-     )]
-+    // cosmo: NT ignores O_NONBLOCK on socket writes; the shim emulates it (poll gate).
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_write")]
-     pub fn write(fd: c_int, buf: *const c_void, count: size_t) -> ssize_t;
-     #[cfg_attr(
-         all(target_os = "macos", target_arch = "x86"),
-@@ -1225,6 +1279,9 @@
-         link_name = "mmap$UNIX2003"
-     )]
-     #[cfg_attr(gnu_file_offset_bits64, link_name = "mmap64")]
-+    // cosmo: on NT the shim only reserves a PROT_NONE anonymous span instead
-+    // of committing it (shim/mmap.c).
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_mmap")]
-     pub fn mmap(
-         addr: *mut c_void,
-         len: size_t,
-@@ -1257,6 +1314,8 @@
+@@ -1257,6 +1270,8 @@
          link_name = "lstat64"
      )]
      #[cfg_attr(musl_redir_time64, link_name = "__lstat_time64")]
@@ -690,7 +294,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn lstat(path: *const c_char, buf: *mut stat) -> c_int;
  
      #[cfg_attr(
-@@ -1284,6 +1343,9 @@
+@@ -1284,6 +1299,9 @@
      #[cfg_attr(gnu_file_offset_bits64, link_name = "ftruncate64")]
      pub fn ftruncate(fd: c_int, length: off_t) -> c_int;
  
@@ -700,7 +304,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn signal(signum: c_int, handler: sighandler_t) -> sighandler_t;
  
      #[cfg_attr(target_os = "netbsd", link_name = "__getrusage50")]
-@@ -1320,6 +1382,8 @@
+@@ -1320,6 +1338,8 @@
          attr: *const crate::pthread_attr_t,
          stacksize: *mut size_t,
      ) -> c_int;
@@ -709,42 +313,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn pthread_attr_setstacksize(attr: *mut crate::pthread_attr_t, stack_size: size_t)
          -> c_int;
      pub fn pthread_attr_setdetachstate(attr: *mut crate::pthread_attr_t, state: c_int) -> c_int;
-@@ -1429,6 +1493,8 @@
-     )]
-     #[cfg_attr(target_os = "espidf", link_name = "lwip_getsockopt")]
-     #[cfg_attr(gnu_time_bits64, link_name = "__getsockopt64")]
-+    // cosmo: the shim answers parked options and flattens the BSDs' boolean replies.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_getsockopt")]
-     pub fn getsockopt(
-         sockfd: c_int,
-         level: c_int,
-@@ -1562,12 +1628,16 @@
-         link_name = "send$UNIX2003"
-     )]
-     #[cfg_attr(target_os = "espidf", link_name = "lwip_send")]
-+    // cosmo: the shim emulates nonblocking sends on NT and keeps epoll's books.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_send")]
-     pub fn send(socket: c_int, buf: *const c_void, len: size_t, flags: c_int) -> ssize_t;
-     #[cfg_attr(
-         all(target_os = "macos", target_arch = "x86"),
-         link_name = "recv$UNIX2003"
-     )]
-     #[cfg_attr(target_os = "espidf", link_name = "lwip_recv")]
-+    // cosmo: the shim reads packet sockets itself and keeps epoll's books.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_recv")]
-     pub fn recv(socket: c_int, buf: *mut c_void, len: size_t, flags: c_int) -> ssize_t;
-     #[cfg_attr(
-         all(target_os = "macos", target_arch = "x86"),
-@@ -1579,6 +1649,8 @@
-         all(target_os = "macos", target_arch = "x86"),
-         link_name = "poll$UNIX2003"
-     )]
-+    // cosmo: the shim owns the wait on NT and retries oversized arrays in chunks.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_poll")]
-     pub fn poll(fds: *mut pollfd, nfds: nfds_t, timeout: c_int) -> c_int;
-     #[cfg_attr(
-         all(target_os = "macos", target_arch = "x86_64"),
-@@ -1627,6 +1699,9 @@
+@@ -1627,6 +1647,9 @@
      pub fn sigismember(set: *const sigset_t, signum: c_int) -> c_int;
  
      #[cfg_attr(target_os = "netbsd", link_name = "__sigprocmask14")]
@@ -754,25 +323,7 @@ diff a/libc/src/unix/mod.rs b/libc/src/unix/mod.rs
      pub fn sigprocmask(how: c_int, set: *const sigset_t, oldset: *mut sigset_t) -> c_int;
      #[cfg_attr(target_os = "netbsd", link_name = "__sigpending14")]
      pub fn sigpending(set: *mut sigset_t) -> c_int;
-@@ -1634,6 +1709,8 @@
-     #[cfg_attr(target_os = "solaris", link_name = "__sysconf_xpg7")]
-     pub fn sysconf(name: c_int) -> c_long;
- 
-+    // cosmo: has mknod() but not this wrapper over it; the shim supplies it.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_mkfifo")]
-     pub fn mkfifo(path: *const c_char, mode: mode_t) -> c_int;
- 
-     #[cfg_attr(gnu_file_offset_bits64, link_name = "fseeko64")]
-@@ -2086,6 +2163,8 @@
-         all(target_os = "linux", target_env = "gnu", target_arch = "sparc64"),
-         link_name = "tcsetattr@GLIBC_2.2"
-     )]
-+    // cosmo: the shim re-syncs the NT console's mouse mode afterwards.
-+    #[cfg_attr(rust_ape_shim, link_name = "__ape_shim_tcsetattr")]
-     pub fn tcsetattr(fd: c_int, optional_actions: c_int, termios: *const crate::termios) -> c_int;
-     pub fn tcflow(fd: c_int, action: c_int) -> c_int;
-     pub fn tcflush(fd: c_int, action: c_int) -> c_int;
-@@ -2306,6 +2385,9 @@
+@@ -2306,6 +2329,9 @@
              pub fn open_memstream(ptr: *mut *mut c_char, sizeloc: *mut size_t) -> *mut FILE;
              pub fn atexit(cb: extern "C" fn()) -> c_int;
              #[cfg_attr(target_os = "netbsd", link_name = "__sigaction14")]

@@ -1,9 +1,10 @@
 // Struct-layout audit, C side. No code, only compile-time asserts.
 //
-// The shim translates VALUES at the libc boundary; STRUCTS it mostly passes
-// through, relying on the two layouts being identical. That is true today
-// but could silently stop being true after a cosmocc or libc upgrade, so
-// the load-bearing structs are pinned here field by field. This file asserts
+// The values crossing the libc boundary are Linux's on both sides now, and
+// the STRUCTS mostly pass through, relying on the two layouts being
+// identical. That is true today but could silently stop being true after a
+// cosmocc or libc upgrade, so the load-bearing structs are pinned here
+// field by field. This file asserts
 // cosmo's offsets against literal numbers, and struct_layout_check.rs (built
 // for both Rust targets) asserts the musl/libc-crate side against the same
 // numbers. If both compile, the two worlds agree; if one drifts, the build
@@ -28,7 +29,7 @@
 //     overwritten. struct statvfs goes the other way and is fine.
 //   - struct timespec: the {i64, i64} everyone already relies on.
 //   - struct flock: identical up to musl's tail padding (cosmo's l_sysid
-//     lives there); only l_type VALUES differ, translated in open.c.
+//     lives there).
 //   - ucontext_t/mcontext_t: cosmo lays both out in the Linux kernel ABI
 //     shape (on aarch64 it even pads uc_sigmask+__unused to 136 bytes so
 //     uc_mcontext lands at musl's offset 176). Signal handlers receive

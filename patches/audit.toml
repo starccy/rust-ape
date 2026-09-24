@@ -23,16 +23,28 @@ SCM_TIMESTAMP = "SOL_SOCKET cmsg types other than SCM_RIGHTS pass raw; nothing h
 
 [allow.fn]
 getaddrinfo = "families, socket types and protocols are Linux's in cosmo; IPPROTO_MAX is only a bound"
+socket = "same"
+socketpair = "same"
+setsockopt = "sockopt names are Linux's in cosmo; IPPROTO_MAX is only a bound"
+getsockopt = "same"
+sendmsg = "SCM_RIGHTS is the one cmsg type cosmo converts; the other SCM_* names are explained under allow.const"
+recvmsg = "same"
 openpty = "struct termios is Linux's shape and values in cosmo now"
 forkpty = "same"
 getifaddrs = "IFF_* come back Linux's from cosmo; the SIOC* names in this family belong to ioctl"
 sigaltstack = "cosmo takes Linux's SS_* itself; the two sizes are explained under allow.const"
 listen = "SOMAXCONN is only ever a number here"
+getgroups = "takes a count"
 sched_getaffinity = "takes the caller's own set size in bytes"
 sched_setaffinity = "same"
 pthread_getaffinity_np = "same"
 pthread_setaffinity_np = "same"
 splice = "cosmo only has it on Linux, where the flags are Linux's own"
+tee = "same"
+vmsplice = "same"
+timerfd_gettime = "takes a struct"
+timer_gettime = "same"
+if_indextoname = "takes an index"
 copy_file_range = "cosmo only has it on Linux, and flags has to be 0"
 mount = "MS_* are Linux mount flags; elsewhere mount takes other arguments altogether"
 reboot = "not something a portable program calls; the RB_* values only match on Linux"
@@ -94,6 +106,7 @@ prefixes = ["CLOCK_"]
 functions = [
     "clock_gettime", "clock_getres", "clock_settime", "clock_nanosleep",
     "pthread_condattr_setclock", "pthread_condattr_getclock", "timer_create",
+    "timerfd_create",
     "pthread_mutex_clocklock", "pthread_cond_clockwait", "sem_clockwait",
 ]
 
@@ -140,12 +153,14 @@ functions = ["madvise", "posix_madvise"]
 
 [[family]]
 prefixes = ["MS_ASYNC", "MS_SYNC", "MS_INVALIDATE"]
+except = ["MS_SYNCHRONOUS"]
 functions = ["msync"]
 
 # the mount flags share the prefix
 [[family]]
+# except is a prefix too, and MS_SYNC would take MS_SYNCHRONOUS with it
 prefixes = ["MS_"]
-except = ["MS_ASYNC", "MS_SYNC", "MS_INVALIDATE"]
+except = ["MS_ASYNC", "MS_INVALIDATE"]
 functions = ["mount", "umount2"]
 
 [[family]]
@@ -408,11 +423,15 @@ functions = ["epoll_create1", "epoll_ctl", "epoll_wait", "epoll_pwait"]
 
 [[family]]
 prefixes = ["IN_"]
-functions = ["inotify_init1", "inotify_add_watch"]
+functions = ["inotify_init1", "inotify_add_watch", "inotify_rm_watch"]
 
 [[family]]
 prefixes = ["EFD_"]
 functions = ["eventfd"]
+
+[[family]]
+prefixes = ["TFD_"]
+functions = ["timerfd_create", "timerfd_settime"]
 
 [[family]]
 prefixes = ["MFD_"]

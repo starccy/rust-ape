@@ -7,48 +7,4 @@
 #ifndef RUST_APE_SHIM_TABLES_H_
 #define RUST_APE_SHIM_TABLES_H_
 
-/* one-off Linux values the shim logic handles specially */
-#if defined(__x86_64__)
-#define SHIM_LIN_SYS_waitid 247
-#elif defined(__aarch64__)
-#define SHIM_LIN_SYS_waitid 95
-#endif
-#if defined(__x86_64__)
-#define SHIM_LIN_SYS_futex 202
-#elif defined(__aarch64__)
-#define SHIM_LIN_SYS_futex 98
-#endif
-#define SHIM_LIN_FUTEX_WAIT 0
-#define SHIM_LIN_FUTEX_WAKE 1
-#define SHIM_LIN_FUTEX_PRIVATE_FLAG 128
-#define SHIM_LIN_FUTEX_CLOCK_REALTIME 256
-#define SHIM_LIN_FUTEX_WAIT_BITSET 9
-#define SHIM_LIN_FUTEX_WAKE_BITSET 10
-#define SHIM_LIN_FUTEX_BITSET_MATCH_ANY -1
-#if defined(__x86_64__)
-#define SHIM_LIN_SYS_getrandom 318
-#elif defined(__aarch64__)
-#define SHIM_LIN_SYS_getrandom 278
-#endif
-#if defined(__x86_64__)
-#define SHIM_LIN_SYS_fchmod 91
-#elif defined(__aarch64__)
-#define SHIM_LIN_SYS_fchmod 52
-#endif
-#if defined(__x86_64__)
-#define SHIM_LIN_SYS_fchmodat 268
-#elif defined(__aarch64__)
-#define SHIM_LIN_SYS_fchmodat 53
-#endif
-#if defined(__x86_64__)
-#define SHIM_LIN_SYS_fchown 93
-#elif defined(__aarch64__)
-#define SHIM_LIN_SYS_fchown 55
-#endif
-#if defined(__x86_64__)
-#define SHIM_LIN_SYS_copy_file_range 326
-#elif defined(__aarch64__)
-#define SHIM_LIN_SYS_copy_file_range 285
-#endif
-
 #endif /* RUST_APE_SHIM_TABLES_H_ */

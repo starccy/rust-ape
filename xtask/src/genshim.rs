@@ -319,7 +319,9 @@ pub fn run(args: &GenShimArgs) -> Result<()> {
     };
 
     // SHIM_LIN_* singles first, then the tables.
-    let _ = writeln!(h, "\n/* one-off Linux values the shim logic handles specially */");
+    if !singles.is_empty() {
+        let _ = writeln!(h, "\n/* one-off Linux values the shim logic handles specially */");
+    }
     for &name in &singles {
         let x = value("x86_64", name)?;
         let a = value("aarch64", name)?;

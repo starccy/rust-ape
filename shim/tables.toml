@@ -4,18 +4,7 @@
 
 # Linux values the shim handles one by one. They come out as bare
 # SHIM_LIN_<name> defines, with no cosmo-side table.
-singles = [
-    # waitid has no cosmo wrapper; on Linux the shim issues the raw syscall
-    "SYS_waitid",
-    # raw syscall rerouting: futex (std's parker, parking_lot & friends)
-    # and getrandom (the getrandom crate's syscall path)
-    "SYS_futex", "FUTEX_WAIT", "FUTEX_WAKE", "FUTEX_PRIVATE_FLAG",
-    "FUTEX_CLOCK_REALTIME", "FUTEX_WAIT_BITSET", "FUTEX_WAKE_BITSET",
-    "FUTEX_BITSET_MATCH_ANY", "SYS_getrandom",
-    # rustix's libc backend bypasses libc for a few file calls on Linux
-    # and issues the raw syscall instead
-    "SYS_fchmod", "SYS_fchmodat", "SYS_fchown", "SYS_copy_file_range",
-]
+singles = []
 
 # One [[table]] per X-macro would go here. None are left: every family
 # cosmo takes is Linux-coded at compile time now, which `cargo xtask audit`
