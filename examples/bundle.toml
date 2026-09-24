@@ -1,0 +1,23 @@
+# Data packed into every example's zip store; see cosmo's zipos-remap.c and
+# examples/src/bin/path_remap.rs. The paths are made up so no host can
+# have them, which keeps the remap active everywhere.
+[[bundle]]
+source = "bundle/rust-ape-remap-test"
+paths = ["/usr/share/rust-ape-remap-test", "/etc/rust-ape-remap-alias"]
+
+# The IANA database chrono's Local needs behind the zone name cosmo puts in
+# TZ on Windows. Content is whatever the build machine has (CI: ubuntu's
+# tzdata). Only local_time asks for it, and it is 1.6 MB compressed.
+[[bundle]]
+source = "/usr/share/zoneinfo"
+paths = ["/usr/share/zoneinfo"]
+bins = ["local_time"]
+
+# The trust roots the certificate crates read from /etc/ssl. One file is
+# enough: openssl-probe's first candidate on a linux target is
+# ca-certificates.crt, and cert.pem is the other common spelling. Windows
+# has neither, macOS has cert.pem of its own and keeps it.
+[[bundle]]
+source = "/etc/ssl/certs/ca-certificates.crt"
+paths = ["/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/cert.pem"]
+bins = ["native_certs"]

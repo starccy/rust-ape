@@ -19,7 +19,8 @@ libc = "0.2"
 sha2 = "0.11.0"
 blake3 = "1.8.6"
 md-5 = "0.11.0"
-ureq = "3.4.0"
+ureq = { version = "3.4.0", features = ["platform-verifier"] }
+rustls-native-certs = "0.8"
 # Carries crossterm, whose default event source is mio. tui_demo reaches it
 # through ratatui::crossterm rather than a direct dependency, so there is one
 # crossterm in the tree and it is the mio one. This used to be pinned to

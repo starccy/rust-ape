@@ -1,6 +1,6 @@
 use crate::config::{self, PATCHED_CRATES, TARGETS};
 use crate::metadata::{self, Metadata};
-use crate::util;
+use crate::{bundle, util};
 use anyhow::{Context, Result, bail};
 use clap::Args;
 use std::fs;
@@ -86,6 +86,8 @@ pub fn run(args: &BuildArgs) -> Result<()> {
     verify_patches(&root, &meta)?;
 
     let targets = pack_targets(&meta, args)?;
+    // validated up front so a bad bundle.toml fails before the long build
+    let bundle_spec = bundle::load(&project)?;
     if args.output.is_some() && targets.len() > 1 {
         bail!(
             "--output names one file but {} binaries are being built ({}); pass --bin to pick one",
@@ -134,6 +136,10 @@ pub fn run(args: &BuildArgs) -> Result<()> {
             fs::create_dir_all(parent)?;
         }
         apelink(&root, &project, profile, target, &output, args.tiny)?;
+        if let Some(spec) = &bundle_spec {
+            let dbg = dbg_path(&project, profile, target, TARGETS[0].0);
+            bundle::apply_to_build(spec, &dbg, &output, &target.name)?;
+        }
         println!("==> {} ({} bytes)", output.display(), fs::metadata(&output)?.len());
     }
 
@@ -455,6 +461,15 @@ fn cargo_build(
     util::run(&mut cmd)
 }
 
+/// The per-arch ELF cargo produced, which apelink fuses into the fat APE.
+fn dbg_path(project: &Path, profile: &str, target: &PackTarget, triple: &str) -> PathBuf {
+    let mut dir = project.join("target").join(triple).join(profile);
+    if target.example {
+        dir = dir.join("examples");
+    }
+    dir.join(format!("{}.com.dbg", target.name))
+}
+
 fn apelink(
     root: &Path,
     project: &Path,
@@ -464,14 +479,8 @@ fn apelink(
     tiny: bool,
 ) -> Result<()> {
     let bin = root.join("vendor/cosmocc/bin");
-    let dbg = |triple: &str| {
-        let mut dir = project.join("target").join(triple).join(profile);
-        if target.example {
-            dir = dir.join("examples");
-        }
-        dir.join(format!("{}.com.dbg", target.name))
-    };
-    let inputs: Vec<PathBuf> = TARGETS.iter().map(|&(triple, _)| dbg(triple)).collect();
+    let inputs: Vec<PathBuf> =
+        TARGETS.iter().map(|&(triple, _)| dbg_path(project, profile, target, triple)).collect();
     for p in &inputs {
         if !p.is_file() {
             bail!("{} not found. wrong binary name? pass --bin", p.display());

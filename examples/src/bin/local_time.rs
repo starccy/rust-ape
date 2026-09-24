@@ -6,6 +6,11 @@
 //! quietly becomes UTC. Same shape as the certificate store, with one piece of
 //! luck attached -- cosmo puts the host's zone *name* in `TZ` on Windows, so
 //! what is missing is only the database behind the name.
+//!
+//! That database rides along in the zip store (see examples/bundle.toml):
+//! chrono asks for /usr/share/zoneinfo/<name>, cosmo serves it from /zip on
+//! any host that lacks the directory. So chrono now has to agree
+//! with libc everywhere, and this asserts it.
 
 use std::ffi::CStr;
 use std::path::Path;
@@ -82,18 +87,15 @@ fn main() {
 
     println!("\noffsets: libc {libc_off:+}s, chrono {chrono_off:+}s, jiff {jiff_off:+}s");
 
-    // chrono has no way to bundle a database, so on a Windows box outside UTC
-    // it reports UTC while cosmo knows better. A POSIX-form TZ
-    // ("PST8PDT,M3.2.0,M11.1.0") is the escape hatch -- chrono parses the rule
-    // straight out of the variable and needs no database. Reported, not
-    // asserted: the gap is chrono's, and it is documented in the README.
-    if chrono_off != libc_off {
-        println!(
-            "\nwarn: chrono says {chrono_off:+}s where the host is at {libc_off:+}s ({libc_zone}). \
-             It resolved neither /etc/localtime nor the IANA name in TZ. \
-             Set TZ to a POSIX rule string to fix it without a database."
-        );
-    }
+    // chrono cannot compile a database in; the bundled /usr/share/zoneinfo
+    // is what lets it resolve the IANA name in TZ off Linux. Before the
+    // bundle this was a warning on Windows.
+    assert_eq!(
+        chrono_off, libc_off,
+        "the host is at {libc_off:+}s ({libc_zone}) but chrono says {chrono_off:+}s. \
+         It resolved neither /etc/localtime nor the IANA name in TZ through the \
+         bundled zoneinfo. Is the bundle in this binary (unzip -l)?"
+    );
 
     // jiff, with the database compiled in, has everything it needs on every
     // host: the name from cosmo's TZ and the rules from the bundle.
