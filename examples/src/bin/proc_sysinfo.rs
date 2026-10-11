@@ -331,6 +331,126 @@ fn direct(rep: &mut Report) {
         })(),
     );
 
+    // --- the second tier: smaps, fdinfo, the routing files, partitions
+    rep.check(
+        "self-smaps",
+        (|| {
+            let smaps = read("/proc/self/smaps")?;
+            let regions = smaps.lines().filter(|l| l.starts_with("VmFlags:")).count();
+            let rss: u64 = smaps
+                .lines()
+                .filter_map(|l| l.strip_prefix("Rss:"))
+                .filter_map(|v| v.trim().split(' ').next()?.parse::<u64>().ok())
+                .sum();
+            if regions == 0 || rss == 0 {
+                return Err(format!("{regions} regions, Rss sum {rss} kB"));
+            }
+            let rollup = field("/proc/self/smaps_rollup", "Rss")?;
+            if rollup == 0 {
+                return Err("smaps_rollup Rss is 0".into());
+            }
+            Ok(format!(
+                "{regions} regions, Rss {rss} kB, rollup Rss {rollup} kB"
+            ))
+        })(),
+    );
+    rep.check(
+        "self-fdinfo",
+        (|| {
+            let dir = e("tempdir", tempfile::tempdir())?;
+            let path = dir.path().join("f");
+            let mut f = e("create", fs::File::create(&path))?;
+            e("write", std::io::Write::write_all(&mut f, b"hello"))?;
+            let fd = f.as_raw_fd();
+            let info = read(&format!("/proc/self/fdinfo/{fd}"))?;
+            let pos = field(&format!("/proc/self/fdinfo/{fd}"), "pos")?;
+            if pos != 5 {
+                return Err(format!("pos {pos} after writing 5 bytes: {info:?}"));
+            }
+            let flags = info
+                .lines()
+                .find_map(|l| l.strip_prefix("flags:"))
+                .map(|v| u32::from_str_radix(v.trim(), 8))
+                .ok_or("no flags line")?
+                .map_err(|e| format!("flags: {e}"))?;
+            if flags & 3 != 1 {
+                return Err(format!("flags 0{flags:o} lack O_WRONLY"));
+            }
+            let names: Vec<String> = e("read_dir fdinfo", fs::read_dir("/proc/self/fdinfo"))?
+                .flatten()
+                .map(|d| d.file_name().to_string_lossy().into_owned())
+                .collect();
+            if !names.iter().any(|n| n == &fd.to_string()) {
+                return Err(format!("fdinfo/ lacks {fd}: {names:?}"));
+            }
+            drop(f);
+            if fs::metadata(format!("/proc/self/fdinfo/{fd}")).is_ok() {
+                return Err(format!("fdinfo/{fd} still there after close"));
+            }
+            Ok(format!("pos 5, flags 0{flags:o}, listed then gone"))
+        })(),
+    );
+    rep.check(
+        "net-route-arp-snmp",
+        (|| {
+            let route = read("/proc/net/route")?;
+            let mut lines = route.lines();
+            let head = lines.next().unwrap_or("");
+            if !head.starts_with("Iface\tDestination\tGateway") {
+                return Err(format!("route header {head:?}"));
+            }
+            let rows: Vec<&str> = lines.filter(|l| !l.trim().is_empty()).collect();
+            for r in &rows {
+                if r.split('\t').count() < 11 {
+                    return Err(format!("route row {r:?}"));
+                }
+            }
+            has("/proc/net/arp", "IP address       HW type")?;
+            let snmp = read("/proc/net/snmp")?;
+            for proto in ["Ip:", "Icmp:", "Tcp:", "Udp:"] {
+                let mut it = snmp.lines().filter(|l| l.starts_with(proto));
+                let (names, vals) = (it.next(), it.next());
+                let (names, vals) = match (names, vals) {
+                    (Some(n), Some(v)) => (n, v),
+                    _ => return Err(format!("snmp lacks the {proto} pair")),
+                };
+                let nn = names.split_whitespace().count();
+                let nv = vals.split_whitespace().count();
+                if nn != nv || nv < 5 {
+                    return Err(format!("snmp {proto} {nn} names vs {nv} values"));
+                }
+                if !vals
+                    .split_whitespace()
+                    .skip(1)
+                    .all(|v| v.parse::<i64>().is_ok())
+                {
+                    return Err(format!("snmp {proto} values {vals:?}"));
+                }
+            }
+            Ok(format!("{} routes, arp and snmp parse", rows.len()))
+        })(),
+    );
+    rep.check(
+        "partitions",
+        (|| {
+            let s = read("/proc/partitions")?;
+            if !s.starts_with("major minor  #blocks  name") {
+                return Err(format!("header {:?}", s.lines().next()));
+            }
+            let rows: Vec<&str> = s.lines().skip(2).filter(|l| !l.is_empty()).collect();
+            for r in &rows {
+                let f: Vec<&str> = r.split_whitespace().collect();
+                if f.len() != 4 || f[2].parse::<u64>().is_err() {
+                    return Err(format!("row {r:?}"));
+                }
+            }
+            if rows.is_empty() {
+                return Err("no rows".into());
+            }
+            Ok(format!("{} block devices", rows.len()))
+        })(),
+    );
+
     // --- listing, and the dirfd-relative spelling procfs-style crates use
     rep.check(
         "proc-listing",

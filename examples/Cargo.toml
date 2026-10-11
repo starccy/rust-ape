@@ -7,7 +7,25 @@ edition = "2024"
 publish = false
 
 [dependencies]
-ape = { path = "../ape" }
+ape = { path = "../crates/ape" }
+# host_layout: the test library declared like a -sys crate
+lp-sys = { path = "lp-sys" }
+# host_com. The windows-* crates are compiled as Windows code by the rustc
+# wrapper, see xtask/src/host/rustcwrap/.
+windows = { version = "0.62", features = [
+    "Win32_Media_Audio", "Win32_Media_Audio_Endpoints", "Win32_System_Com", "Win32_System_Com_StructuredStorage",
+    "Win32_System_Threading", "Win32_System_Variant", "Win32_Devices_FunctionDiscovery", "Win32_UI_Shell_PropertiesSystem",
+    "Win32_Foundation",
+    # host_gui
+    "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_Graphics_Gdi", "Win32_Graphics_Direct3D",
+    "Win32_Graphics_Direct3D11", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_System_LibraryLoader",
+    "Win32_System_Console",
+] }
+windows-core = "0.62"
+# host_gui: the Linux window and its frames, unmodified; X11 and Wayland
+# are reached through libloading's dlopen
+winit = "0.30"
+softbuffer = "0.4"
 # Pulls in async-io, async-process and polling
 smol = "2"
 # Pulls in getrandom.
@@ -43,9 +61,9 @@ tokio = { version = "1", features = ["full"] }
 # tokio_codec only.
 tokio-util = { version = "0.7", features = ["full"] }
 futures-util = { version = "0.3", features = ["sink"] }
-# reqwest_client. The TLS stack is assembled by hand because reqwest's default
-# aws-lc-rs guards its assembly on __linux__, which cosmocc undefines, leaving
-# an object with no symbol table. ring's asm is guarded on __ELF__ instead.
+# reqwest_client, on rustls with the ring backend, which uses the AES and SHA
+# instructions on arm64 where aws-lc-rs here doesn't. reqwest's defaults
+# build too.
 reqwest = { version = "0.13.4", default-features = false, features = [
     "json", "charset", "http2", "query", "form", "multipart", "stream",
     "cookies", "gzip", "brotli", "deflate", "zstd", "blocking", "socks",
@@ -55,9 +73,9 @@ rustls = { version = "0.23", default-features = false, features = [
 webpki-roots = "1"
 serde = { version = "1", features = ["derive"] }
 flate2 = "1"
-# reqwest's zstd feature reaches zstd-sys, whose huf_decompress_amd64.S hits
-# the same __linux__ trap. Named only to turn `no_asm` on through feature
-# unification.
+# reqwest's zstd feature reaches zstd-sys. Named only to turn `no_asm` on
+# through feature unification, which picks the same C path its __linux__
+# guarded assembly leaves anyway.
 zstd-sys = { version = "2", features = ["no_asm"] }
 # local_time. chrono's Local reads TZ and /etc/localtime and parses the TZif
 # itself; there is no way to compile a database in, which is exactly the gap
@@ -73,6 +91,21 @@ zip = { version = "8.6.0", default-features = false }
 # shim/procfs/ emulates on other platforms. The example is that emulation's
 # acceptance test in-tree.
 sysinfo = "0.39"
+# host_link. Without the bundled feature it links the system's libsqlite3,
+# which the build can only find as a shared object, so the linker wrapper
+# swaps it for stubs that load the host's copy at runtime.
+libsqlite3-sys = "0.35"
+# jemalloc_churn. The allocator ripgrep uses on this target.
+tikv-jemallocator = "0.7"
+# mimalloc_churn. The allocator ruff and biome use on Windows, C built by cc.
+mimalloc = { version = "0.1", default-features = false, features = ["v2"] }
+
+# host_link: SQLite comes with Windows 10 and later under this name
+[package.metadata.rust-ape.host-libs]
+sqlite3 = { windows = ["winsqlite3.dll", "sqlite3.dll"] }
+# host_layout: the test library once more, declared by lp-sys the way a
+# -sys crate does; the builds are in the zip store, see bundle.toml
+lp = { linux = ["/usr/lib/rust-ape-layout-test/liblp-x86_64.so", "/usr/lib/rust-ape-layout-test/liblp-aarch64.so"], macos = ["/usr/lib/rust-ape-layout-test/liblp.dylib"], windows = ["/usr/lib/rust-ape-layout-test/lp.dll"] }
 
 [patch.crates-io]
 libc = { path = "../vendor/patches/libc" }

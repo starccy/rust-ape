@@ -1,14 +1,15 @@
-//! The epoll shim (shim/epoll.c), exercised directly rather than through mio.
+//! epoll, exercised directly rather than through mio.
 //!
-//! cosmo deleted epoll in 2024, so these three entry points are the shim's
-//! own: raw syscalls on Linux, an emulation over cosmo's poll() elsewhere.
-//! Everything here is what mio's selector actually does to them, in the order
-//! it does it, so a break shows up as a failed assert rather than as an async
+//! The fork provides it three ways: the raw syscalls on Linux, a kqueue on
+//! XNU and the BSDs, and an interest list over poll() on Windows. Everything
+//! here is what mio's selector actually does to them, in the order it does
+//! it, so a break shows up as a failed assert rather than as an async
 //! runtime that quietly stops waking up.
 //!
-//! EPOLLET is asked for the way mio asks for it, but nothing below depends on
-//! edge semantics: the emulation is level-triggered on purpose and reporting
-//! an event twice is allowed. Reporting it zero times is not.
+//! Reporting an event twice is allowed where the host's model differs (a
+//! kqueue keeps one filter per direction). Reporting it zero times is not,
+//! and neither is reporting an idle socket's writability over and over,
+//! which is the case that once kept tokio at 100% CPU.
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -199,7 +200,115 @@ fn main() {
         "two pending listeners came back as {tokens:?}"
     );
     println!("two fds reported independently, tokens {tokens:?}");
+    ctl(ep, libc::EPOLL_CTL_DEL, a.as_raw_fd(), 0, 0);
+    ctl(ep, libc::EPOLL_CTL_DEL, b.as_raw_fd(), 0, 0);
 
+    // An idle socket registered EPOLLOUT|EPOLLET reports once and then stays
+    // quiet. mio registers every stream this way and tokio clears the
+    // readiness only on WouldBlock, so a second report here means a reactor
+    // that never sleeps.
+    let (mut w, _r) = {
+        let l = TcpListener::bind("127.0.0.1:0").expect("bind w");
+        let c = TcpStream::connect(l.local_addr().unwrap()).expect("connect w");
+        let (s, _) = l.accept().expect("accept w");
+        (c, s)
+    };
+    w.set_nonblocking(true).expect("set_nonblocking w");
+    const OUT: u32 = libc::EPOLLOUT as u32 | libc::EPOLLET as u32;
+    ctl(ep, libc::EPOLL_CTL_ADD, w.as_raw_fd(), OUT, 0x0a7);
+    let (events, token) = only(&wait(ep, 8, 2000), "idle socket never reported writable");
+    assert_eq!(token, 0x0a7);
+    assert_ne!(
+        events & libc::EPOLLOUT as u32,
+        0,
+        "writable but not for writing: {events:#x}"
+    );
+    assert!(
+        wait(ep, 8, 100).is_empty(),
+        "EPOLLOUT|EPOLLET reported an idle socket twice"
+    );
+    // A write may cost one more report where the host's edge is the send
+    // buffer changing (kqueue does that; Linux does not), but never a
+    // stream of them.
+    w.write_all(b"ping").expect("write w");
+    let after_write = wait(ep, 8, 100).len();
+    assert!(
+        after_write <= 1,
+        "a write on an idle socket produced {after_write} reports"
+    );
+    assert!(
+        wait(ep, 8, 100).is_empty(),
+        "the socket kept reporting writable after a write"
+    );
+    println!(
+        "idle EPOLLOUT|EPOLLET reported once and then stayed quiet ({after_write} after a write)"
+    );
+
+    // An eventfd written from another thread wakes a wait, which is how
+    // mio's waker reaches the reactor.
+    let efd = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
+    assert!(efd >= 0, "eventfd: {}", std::io::Error::last_os_error());
+    ctl(
+        ep,
+        libc::EPOLL_CTL_ADD,
+        efd,
+        libc::EPOLLIN as u32 | libc::EPOLLET as u32,
+        0xe0,
+    );
+    let t = std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        let one: u64 = 1;
+        assert_eq!(
+            unsafe { libc::write(efd, &one as *const u64 as *const _, 8) },
+            8
+        );
+    });
+    let started = std::time::Instant::now();
+    let (_, token) = only(&wait(ep, 8, 5000), "the eventfd write never woke the wait");
+    t.join().unwrap();
+    assert_eq!(token, 0xe0);
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "woke late: {:?}",
+        started.elapsed()
+    );
+    let mut got: u64 = 0;
+    assert_eq!(
+        unsafe { libc::read(efd, &mut got as *mut u64 as *mut _, 8) },
+        8
+    );
+    assert_eq!(got, 1);
+    assert!(
+        wait(ep, 8, 50).is_empty(),
+        "a drained eventfd still reports"
+    );
+    println!(
+        "eventfd written from another thread woke the wait after {:?}",
+        started.elapsed()
+    );
+
+    // Closing a registered fd removes it, with no EPOLL_CTL_DEL. tokio drops
+    // sockets exactly like this.
+    let l = TcpListener::bind("127.0.0.1:0").expect("bind c");
+    let c = TcpStream::connect(l.local_addr().unwrap()).expect("connect c");
+    let (mut s, _) = l.accept().expect("accept c");
+    ctl(ep, libc::EPOLL_CTL_ADD, s.as_raw_fd(), READ, 0xc10);
+    s.write_all(b"bye").expect("write c");
+    drop(c);
+    drop(s);
+    assert!(wait(ep, 8, 100).is_empty(), "a closed fd still reports");
+    println!("closed fd left the set on its own");
+
+    assert_eq!(unsafe { libc::close(efd) }, 0, "close(efd)");
     assert_eq!(unsafe { libc::close(ep) }, 0, "close(epfd)");
+    assert_eq!(
+        unsafe { libc::epoll_wait(ep, std::ptr::null_mut(), 1, 0) },
+        -1
+    );
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::EBADF)
+    );
+    println!("closed epoll fd answers EBADF");
     println!("\nepoll probe ok");
 }

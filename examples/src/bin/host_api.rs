@@ -21,8 +21,9 @@
 //! arm64 as well, so step 3 has to be gated on the arch or the arm64 half
 //! won't build.
 //!
-//! The last section is about callbacks, which is where the ceiling is lower
-//! than it looks. Read it before designing anything around them.
+//! The last section is a callback on a thread Windows starts, which runs Rust
+//! like any other thread. For libraries rather than Win32 itself, see
+//! host_dlopen.rs and `#[ape::host_library]`.
 
 use std::ffi::{c_char, c_void};
 
@@ -68,7 +69,6 @@ unsafe extern "C" {
     ) -> *mut c_void;
     fn WaitForSingleObject(handle: *mut c_void, ms: u32) -> u32;
     fn CloseHandle(handle: *mut c_void) -> i32;
-    fn SetEvent(handle: *mut c_void) -> i32;
 }
 
 fn windows() {
@@ -93,7 +93,7 @@ fn windows() {
     #[cfg(target_arch = "x86_64")]
     {
         by_procaddress();
-        doorbell();
+        host_thread_callback();
     }
     #[cfg(not(target_arch = "x86_64"))]
     println!("the GetProcAddress and callback sections need the win64 ABI, which is x86_64 only");
@@ -126,78 +126,68 @@ fn by_procaddress() {
     }
 }
 
-/// Callbacks, and the reason this one only rings a bell.
+/// A callback on a thread the host created.
 ///
-/// The host can call back into us and the arguments arrive intact. What the
-/// callback may then do depends on who created the thread. On a thread cosmo
-/// set up, everything works. On a thread the host created, which is every
-/// `CALLBACK_FUNCTION` audio callback, window procedure and IO completion
-/// routine, cosmo's libc is off limits: its thread block was never installed
-/// there and even a bare `write` faults.
-///
-/// Win32 itself is still fine, because cosmo's thunks only shuffle registers.
-/// So the callback stores what it has and rings an event, and a thread cosmo
-/// owns does the real work. Audio and GUI APIs take `CALLBACK_EVENT` and
-/// `CALLBACK_WINDOW` for exactly this reason.
+/// Every `CALLBACK_FUNCTION` audio callback, window procedure and IO completion
+/// routine runs on a thread like this. The thread gets cosmo's thread state
+/// the first time it runs our code, so the callback can allocate, format and
+/// print, and its thread locals are dropped when the thread exits.
 #[cfg(target_arch = "x86_64")]
-fn doorbell() {
-    use std::sync::atomic::{AtomicU64, Ordering};
+fn host_thread_callback() {
+    use std::cell::Cell;
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    static EVENT: AtomicU64 = AtomicU64::new(0);
-    static PAYLOAD: AtomicU64 = AtomicU64::new(0);
-    const TOKEN: u64 = 0xc0ffee;
+    static DROPS: AtomicUsize = AtomicUsize::new(0);
+    static SEEN: Mutex<Option<String>> = Mutex::new(None);
 
-    unsafe extern "win64" fn ring(param: *mut c_void) -> u32 {
-        // Atomics and Win32, nothing else. No allocation, no formatting, no
-        // println!, no libc.
-        PAYLOAD.store(param as u64, Ordering::SeqCst);
-        unsafe { SetEvent(EVENT.load(Ordering::SeqCst) as *mut c_void) };
+    struct Counted(Cell<u64>);
+    impl Drop for Counted {
+        fn drop(&mut self) {
+            DROPS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    thread_local! {
+        static LOCAL: Counted = const { Counted(Cell::new(0)) };
+    }
+
+    unsafe extern "win64" fn callback(param: *mut c_void) -> u32 {
+        LOCAL.with(|l| l.0.set(param as u64));
+        let msg = format!(
+            "hello from host thread {:?}, param 0x{:x}",
+            std::thread::current().id(),
+            param as u64
+        );
+        println!("  {msg}");
+        *SEEN.lock().unwrap() = Some(msg);
         0
     }
 
     unsafe {
-        let k32 = LoadLibraryA(c"kernel32.dll".as_ptr() as *const u8);
-        let p = GetProcAddress(k32, c"CreateEventW".as_ptr() as *const u8);
-        assert!(!p.is_null(), "GetProcAddress(CreateEventW) came back null");
-        let create_event: unsafe extern "win64" fn(
-            *mut c_void,
-            i32,
-            i32,
-            *const u16,
-        ) -> *mut c_void = std::mem::transmute(p);
-
-        let ev = create_event(std::ptr::null_mut(), 1, 0, std::ptr::null());
-        assert!(!ev.is_null(), "CreateEventW failed");
-        EVENT.store(ev as u64, Ordering::SeqCst);
-
         let mut tid = 0;
         let thread = CreateThread(
             std::ptr::null_mut(),
             0,
-            ring as *mut c_void,
-            TOKEN as *mut c_void,
+            callback as *mut c_void,
+            0xc0ffee as *mut c_void,
             0,
             &mut tid,
         );
         assert!(!thread.is_null(), "CreateThread failed");
-
-        // Back on our own thread, so the whole libc is available again.
-        let waited = WaitForSingleObject(ev, 10_000);
+        let waited = WaitForSingleObject(thread, 10_000);
         assert_eq!(
             waited, 0,
-            "the callback never rang, WaitForSingleObject said {waited}"
+            "the host thread never finished, WaitForSingleObject said {waited}"
         );
-        assert_eq!(
-            PAYLOAD.load(Ordering::SeqCst),
-            TOKEN,
-            "the callback got the wrong argument"
-        );
-        println!("callback on a host thread rang the doorbell, handed over 0x{TOKEN:x}");
-
-        WaitForSingleObject(thread, 10_000);
         CloseHandle(thread);
-        CloseHandle(ev);
     }
+    assert!(SEEN.lock().unwrap().is_some(), "the callback didn't run");
+    assert_eq!(
+        DROPS.load(Ordering::SeqCst),
+        1,
+        "the thread local wasn't dropped"
+    );
+    println!("callback on a host thread ran Rust code, and its thread local was dropped");
 }
 
 // ------------------------------------------------------------- everywhere else
@@ -252,9 +242,8 @@ fn elsewhere() {
             );
             continue;
         }
-        // Every symbol has to go through the trampoline before it is called:
-        // the foreign library expects the host's calling convention and TLS,
-        // not cosmo's.
+        // cosmo_dltramp makes sure the calling thread runs with the host's
+        // thread block, which the library's own code expects.
         let sym = unsafe { cosmo_dlsym(lib, c"sqrt".as_ptr()) };
         if sym.is_null() {
             println!("cosmo_dlopen({name:?}) ok, but it has no sqrt");

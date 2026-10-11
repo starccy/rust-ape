@@ -1,9 +1,7 @@
 //! Threads and the synchronization primitives built on them.
 //!
-//! Naming a thread goes through `pthread_setname_np`, which returns
-//! ENOSYS off Linux.
-//! library.patch makes that non-fatal, so a name coming back here means
-//! the thread was named and a missing one is still fine.
+//! Naming a thread goes through `pthread_setname_np`, which std asserts on
+//! in debug builds, so cosmo has to answer it on every host it runs on.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Barrier, Mutex, mpsc};

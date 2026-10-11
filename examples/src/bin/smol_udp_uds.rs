@@ -1,10 +1,9 @@
 //! The socket families the other smol examples don't cover: UDP, and AF_UNIX
 //! both by path and as a pair.
 //!
-//! The AF_UNIX half leans on three NT workarounds in `shim/socket.c`: a
-//! socketpair built from a real listener, `SOCK_NONBLOCK` applied afterwards,
-//! and `sun_path` run through cosmo's path translation. Without any one of
-//! them the Windows side of this hangs or fails to bind.
+//! On Windows the stream half is winsock's own AF_UNIX and the datagram
+//! half is the fork's emulation over loopback UDP; nothing here knows the
+//! difference.
 
 use std::time::Duration;
 
@@ -23,11 +22,7 @@ fn main() {
         std::fs::create_dir_all(&dir).expect("create_dir_all");
         uds_path(&dir).await;
         uds_pair().await;
-        if ape::is_windows() {
-            println!("skipping unix datagrams: NT's AF_UNIX has no SOCK_DGRAM");
-        } else {
-            uds_datagram(&dir).await;
-        }
+        uds_datagram(&dir).await;
         std::fs::remove_dir_all(&dir).expect("remove_dir_all");
     });
 

@@ -21,3 +21,18 @@ bins = ["local_time"]
 source = "/etc/ssl/certs/ca-certificates.crt"
 paths = ["/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/cert.pem"]
 bins = ["native_certs"]
+
+# A read-only database that the host's SQLite opens by itself, which it
+# can only do through ape::host::host_path(); see host_sqlite.rs. build.rs
+# makes it from data/cities.sql.
+[[bundle]]
+source = "bundle/rust-ape-host-data"
+paths = ["/usr/share/rust-ape-host-data"]
+bins = ["host_sqlite"]
+
+# The test library host_layout loads, one build per host, made by
+# lp-sys/build.rs from data/layout-test/lp.c
+[[bundle]]
+source = "bundle/rust-ape-layout-test"
+paths = ["/usr/lib/rust-ape-layout-test"]
+bins = ["host_layout"]

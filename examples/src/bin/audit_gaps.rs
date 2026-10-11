@@ -3,6 +3,7 @@
 
 use std::fs::{self, File, FileTimes};
 use std::os::fd::AsRawFd;
+use std::os::unix::fs::MetadataExt;
 use std::time::{Duration, SystemTime};
 
 fn main() {
@@ -236,6 +237,115 @@ fn main() {
             );
         }
         println!("rusage and sched ok (policy {policy})");
+    }
+
+    // syscall(): statx, renameat2 and syncfs are routed to the libc now.
+    // rustix's libc backend and std-on-gnu reach statx this way; the
+    // fork answers from fstatat off Linux, with btime when the host has it.
+    // The libc crate only declares the struct for glibc targets.
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct StatxTimestamp {
+        tv_sec: i64,
+        tv_nsec: u32,
+        _pad: i32,
+    }
+    #[repr(C)]
+    struct Statx {
+        stx_mask: u32,
+        stx_blksize: u32,
+        stx_attributes: u64,
+        stx_nlink: u32,
+        stx_uid: u32,
+        stx_gid: u32,
+        stx_mode: u16,
+        _pad0: u16,
+        stx_ino: u64,
+        stx_size: u64,
+        stx_blocks: u64,
+        stx_attributes_mask: u64,
+        stx_atime: StatxTimestamp,
+        stx_btime: StatxTimestamp,
+        stx_ctime: StatxTimestamp,
+        stx_mtime: StatxTimestamp,
+        stx_rdev_major: u32,
+        stx_rdev_minor: u32,
+        stx_dev_major: u32,
+        stx_dev_minor: u32,
+        _pad2: [u64; 14],
+    }
+    const STATX_BASIC_STATS: u32 = 0x7ff;
+    const STATX_BTIME: u32 = 0x800;
+    assert_eq!(std::mem::size_of::<Statx>(), 256);
+    unsafe {
+        let c = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
+        let mut sx: Statx = std::mem::zeroed();
+        let rc = libc::syscall(
+            libc::SYS_statx,
+            libc::AT_FDCWD,
+            c.as_ptr(),
+            0,
+            STATX_BASIC_STATS | STATX_BTIME,
+            &mut sx as *mut Statx,
+        );
+        assert_eq!(
+            rc,
+            0,
+            "syscall(SYS_statx): {}",
+            std::io::Error::last_os_error()
+        );
+        let st = f.metadata().unwrap();
+        assert_eq!(sx.stx_mask & STATX_BASIC_STATS, STATX_BASIC_STATS);
+        assert_eq!(sx.stx_size, st.len(), "statx size");
+        assert_eq!(sx.stx_mtime.tv_sec, st.mtime(), "statx mtime");
+        let rc = libc::syscall(
+            libc::SYS_statx,
+            0,
+            std::ptr::null::<libc::c_char>(),
+            0,
+            STATX_BASIC_STATS,
+            std::ptr::null_mut::<Statx>(),
+        );
+        assert_eq!(
+            (rc, std::io::Error::last_os_error().raw_os_error()),
+            (-1, Some(libc::EFAULT)),
+            "statx with null buffer, std's availability probe"
+        );
+        let moved = dir.join("moved");
+        let m = std::ffi::CString::new(moved.as_os_str().as_encoded_bytes()).unwrap();
+        let rc = libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            c.as_ptr(),
+            libc::AT_FDCWD,
+            m.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        );
+        assert_eq!(
+            rc,
+            0,
+            "syscall(SYS_renameat2): {}",
+            std::io::Error::last_os_error()
+        );
+        assert!(
+            moved.exists() && !path.exists(),
+            "renameat2 did not move the file"
+        );
+        let rc = libc::syscall(libc::SYS_syncfs, f.as_raw_fd());
+        assert_eq!(
+            rc,
+            0,
+            "syscall(SYS_syncfs): {}",
+            std::io::Error::last_os_error()
+        );
+        println!(
+            "syscall statx/renameat2/syncfs ok (btime {})",
+            if sx.stx_mask & STATX_BTIME != 0 {
+                "present"
+            } else {
+                "absent"
+            }
+        );
     }
 
     drop(rw);

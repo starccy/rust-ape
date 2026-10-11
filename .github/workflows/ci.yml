@@ -43,6 +43,9 @@ jobs:
 
       - run: cargo xtask setup
 
+      # lld for host_layout's test library, sqlite3 for host_sqlite's database
+      - run: sudo apt-get install -y --no-install-recommends lld sqlite3
+
       # every shim symbol must be referenced by a patch or by libcosmo.a
       - run: ./patches/check-symbols.sh
 

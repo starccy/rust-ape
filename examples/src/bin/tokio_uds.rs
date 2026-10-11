@@ -1,8 +1,8 @@
 //! Unix domain sockets on the runtime.
 //!
-//! Datagrams don't work on Windows: `socket(AF_UNIX, SOCK_DGRAM)` is answered with
-//! WSAEAFNOSUPPORT, Windows' AF_UNIX being stream-only, so that part only runs
-//! off Windows.
+//! Windows' AF_UNIX is stream-only; the fork carries the datagrams over
+//! loopback UDP, with the bound path left as a socket file, so this runs
+//! the same everywhere.
 //!
 //! Paths go through the shim, which runs sun_path through cosmo's own
 //! translation before Winsock sees it.
@@ -29,11 +29,7 @@ fn main() {
 
         streams(&dir).await;
         pairs().await;
-        if ape::is_windows() {
-            println!("skipping datagrams: NT's AF_UNIX has no SOCK_DGRAM");
-        } else {
-            datagrams(&dir).await;
-        }
+        datagrams(&dir).await;
 
         tokio::fs::remove_dir_all(&dir)
             .await

@@ -10,6 +10,7 @@
 use std::fs::{self, File, FileTimes, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::time::{Duration, SystemTime};
 
 fn main() {
@@ -122,6 +123,53 @@ fn main() {
     fs::remove_dir_all(&tree).expect("remove_dir_all");
     assert!(!tree.exists(), "remove_dir_all left the tree behind");
     println!("unlinkat AT_REMOVEDIR ok");
+
+    // O_PATH names a file without opening it: fstat, fstatat and openat
+    // work through the descriptor, read does not. The fork hands NT a
+    // FILE_READ_ATTRIBUTES handle and XNU an O_EVTONLY one; before that it
+    // was a plain read open, which needs read permission and blocks on a
+    // fifo. O_NOFOLLOW on top opens a symlink as itself. Straight through
+    // libc::open, since on musl targets O_ACCMODE contains O_PATH (it is
+    // O_SEARCH there) and std's custom_flags masks it away.
+    let sub = dir.path().join("sub");
+    fs::create_dir(&sub).expect("mkdir sub");
+    fs::write(sub.join("inner"), b"i").expect("write inner");
+    let open_path = |p: &std::path::Path, extra: i32| -> File {
+        let c = std::ffi::CString::new(p.as_os_str().as_encoded_bytes()).unwrap();
+        let fd = unsafe { libc::open(c.as_ptr(), libc::O_PATH | libc::O_CLOEXEC | extra) };
+        assert!(
+            fd >= 0,
+            "open({}, O_PATH): {}",
+            p.display(),
+            std::io::Error::last_os_error()
+        );
+        unsafe { File::from_raw_fd(fd) }
+    };
+    let d = open_path(&sub, libc::O_DIRECTORY);
+    assert!(d.metadata().expect("fstat O_PATH dir").is_dir());
+    let fl = unsafe { libc::fcntl(d.as_raw_fd(), libc::F_GETFL) };
+    assert!(fl != -1 && fl & libc::O_PATH != 0, "F_GETFL lost O_PATH");
+    let mut st = std::mem::MaybeUninit::<libc::stat>::uninit();
+    let rc = unsafe { libc::fstatat(d.as_raw_fd(), c"inner".as_ptr(), st.as_mut_ptr(), 0) };
+    assert_eq!(rc, 0, "fstatat through an O_PATH dirfd");
+    let mut byte = [0u8; 1];
+    let err = (&d).read(&mut byte).expect_err("read on an O_PATH fd");
+    // XNU has no descriptor kind that refuses reads, so there the open is
+    // O_EVTONLY and reading the directory fails as any directory read does
+    let want = if ape::is_xnu() {
+        libc::EISDIR
+    } else {
+        libc::EBADF
+    };
+    assert_eq!(err.raw_os_error(), Some(want), "read gave {err}");
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink("sub/inner", &link).expect("symlink");
+    let l = open_path(&link, libc::O_NOFOLLOW);
+    assert!(
+        l.metadata().expect("fstat link").file_type().is_symlink(),
+        "O_PATH|O_NOFOLLOW followed the link"
+    );
+    println!("O_PATH ok");
 
     println!("\nopen flags ok");
 }

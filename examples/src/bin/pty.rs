@@ -7,9 +7,10 @@
 //!
 //! No terminal is required to run this. openpty makes a new one.
 //!
-//! Windows has no pty at all, so this example reports rather than fails
-//! there. cosmo imports CreatePseudoConsole but never wires it to openpty,
-//! which answers ENOSYS.
+//! On Windows the fork builds the pty on ConPTY: openpty makes a
+//! pseudoconsole between two pipes, and the child is attached to it at
+//! spawn time. portable-pty takes its unix path here (fork, setsid,
+//! TIOCSCTTY, exec), which the fork routes through a holder process.
 
 use std::io::Read;
 use std::time::Duration;
@@ -28,15 +29,7 @@ fn main() {
         pixel_width: 0,
         pixel_height: 0,
     };
-    let pair = match sys.openpty(size) {
-        Ok(p) => p,
-        Err(e) if ape::is_windows() => {
-            println!("openpty: {e}");
-            println!("\npty skipped, cosmo has no pty on NT");
-            return;
-        }
-        Err(e) => panic!("openpty: {e}"),
-    };
+    let pair = sys.openpty(size).expect("openpty");
     println!("openpty: 24x80");
 
     let (prog, args): (&str, &[&str]) = if ape::is_windows() {

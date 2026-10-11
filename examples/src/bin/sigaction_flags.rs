@@ -415,7 +415,12 @@ fn main() {
             !out.status.success(),
             "overflow child {pad} exited cleanly?!"
         );
-        let tail = &stderr[stderr.len().saturating_sub(3000)..];
+        // the trace has '→' in it, so the cut has to land on a char boundary
+        let mut start = stderr.len().saturating_sub(3000);
+        while !stderr.is_char_boundary(start) {
+            start += 1;
+        }
+        let tail = &stderr[start..];
         assert!(
             stderr.contains("overflowed its stack"),
             "pad {pad}: no overflow message; std's detector is blind at this \

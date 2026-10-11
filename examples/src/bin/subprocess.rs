@@ -3,9 +3,9 @@
 //! The child is this same binary re-invoked with an argument. The async
 //! flavors live in `tokio_process.rs` and `smol_process.rs`.
 //!
-//! Also exercises `waitid`, which cosmo does not have and shim/wait.c builds
-//! out of wait4 off Linux, checking the siginfo it fills since that is what
-//! a caller inspects.
+//! Also exercises `waitid`, checking the siginfo it fills since that is
+//! what a caller inspects. Cosmo builds it on the host's waitid or wait6 off
+//! Linux, and on the process tracker on Windows.
 
 use std::io::Write;
 use std::process::{Command, Stdio};

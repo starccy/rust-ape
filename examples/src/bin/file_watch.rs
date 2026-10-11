@@ -1,8 +1,8 @@
 //! Watching the filesystem through `notify`, which means inotify.
 //!
-//! cosmo has no inotify, so shim/inotify.c answers the real syscalls on
-//! Linux or a scan-and-diff emulation everywhere else. Set
-//! RUST_APE_INOTIFY_EMULATE=1 to run the emulation on a machine that
+//! The fork's libc/stdio/inotify.c answers with the real syscalls on
+//! Linux and a scan-and-diff emulation everywhere else. Set
+//! COSMOPOLITAN_INOTIFY_EMULATE=1 to run the emulation on a machine that
 //! has the real thing.
 //!
 //! The emulation reports less than the kernel does, which is what shapes the

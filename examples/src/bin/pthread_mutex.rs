@@ -1,7 +1,7 @@
 //! pthread_mutex_t declared by the libc crate and driven by cosmo.
 //!
-//! The size of `pthread_mutex_t` differed between musl and cosmo; 
-//! it has now been standardized to match the musl size. 
+//! The size of `pthread_mutex_t` differed between musl and cosmo;
+//! it has now been standardized to match the musl size.
 //! Test the correctness in this example.
 
 use std::cell::UnsafeCell;
