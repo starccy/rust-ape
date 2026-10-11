@@ -4,6 +4,7 @@ mod cli;
 mod host;
 mod metadata;
 mod scaffold;
+mod test;
 mod toolchain;
 mod util;
 
@@ -25,6 +26,8 @@ enum Cmd {
     Generate(cli::generate::GenerateArgs),
     /// Build both targets and apelink them into one fat APE
     Build(cli::build::BuildArgs),
+    /// Build the test binaries as APEs and run them, like cargo test
+    Test(cli::test::TestArgs),
     /// Append the files bundle.toml lists to an already built APE
     Bundle(cli::bundle::BundleArgs),
     /// Check libc crate constants and direct libc imports against cosmo
@@ -48,6 +51,7 @@ fn main() -> Result<()> {
         Cmd::Setup(args) => cli::setup::run(&args),
         Cmd::Generate(args) => cli::generate::run(&args),
         Cmd::Build(args) => cli::build::run(&args),
+        Cmd::Test(args) => cli::test::run(&args),
         Cmd::Bundle(args) => cli::bundle::run(&args),
         Cmd::Audit(args) => cli::audit::run(&args),
         Cmd::HostBindings(args) => cli::host_bindings::run(&args),
