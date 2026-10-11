@@ -46,6 +46,71 @@ fn main() {
         }
     }
 
+    // The XDG base directories point where the host keeps such things,
+    // unless they were set already
+    let xdg = |k: &str| env::var(k).ok();
+    if ape::is_windows() {
+        let (roaming, local) = (env::var("APPDATA").ok(), env::var("LOCALAPPDATA").ok());
+        println!(
+            "  XDG_DATA_HOME={:?} XDG_CACHE_HOME={:?}",
+            xdg("XDG_DATA_HOME"),
+            xdg("XDG_CACHE_HOME")
+        );
+        if roaming.is_some() {
+            assert_eq!(xdg("XDG_DATA_HOME"), roaming);
+            assert_eq!(xdg("XDG_CONFIG_HOME"), roaming);
+        }
+        if local.is_some() {
+            assert_eq!(xdg("XDG_CACHE_HOME"), local);
+        }
+        for k in ["XDG_DATA_HOME", "XDG_CACHE_HOME"] {
+            if let Some(d) = xdg(k) {
+                assert!(
+                    std::path::Path::new(&d).is_dir(),
+                    "{k}={d} isn't a directory"
+                );
+            }
+        }
+    } else if ape::is_xnu() {
+        let home = env::var("HOME").unwrap();
+        println!(
+            "  XDG_DATA_HOME={:?} XDG_CACHE_HOME={:?}",
+            xdg("XDG_DATA_HOME"),
+            xdg("XDG_CACHE_HOME")
+        );
+        assert_eq!(
+            xdg("XDG_DATA_HOME"),
+            Some(format!("{home}/Library/Application Support"))
+        );
+        assert_eq!(
+            xdg("XDG_CACHE_HOME"),
+            Some(format!("{home}/Library/Caches"))
+        );
+    }
+
+    // and ~/.config/user-dirs.dirs, where XDG_CONFIG_HOME says, is made up
+    // from where the host keeps the documents folder and the rest
+    if ape::is_windows() || ape::is_xnu() {
+        let path = format!("{}/user-dirs.dirs", env::var("XDG_CONFIG_HOME").unwrap());
+        let text = std::fs::read_to_string(&path).expect("reading user-dirs.dirs");
+        let size = std::fs::metadata(&path)
+            .expect("stat of user-dirs.dirs")
+            .len();
+        assert_eq!(size, text.len() as u64);
+        let docs = text
+            .lines()
+            .find_map(|l| l.strip_prefix("XDG_DOCUMENTS_DIR=\"")?.strip_suffix('"'))
+            .expect("no XDG_DOCUMENTS_DIR");
+        println!(
+            "  user-dirs.dirs: {} dirs, documents in {docs}",
+            text.lines().count()
+        );
+        assert!(
+            std::path::Path::new(docs).is_dir(),
+            "{docs} isn't a directory"
+        );
+    }
+
     // Writing it, and reading it back.
     assert!(env::var_os(VAR).is_none(), "{VAR} was already set");
     unsafe { env::set_var(VAR, "hello") };
