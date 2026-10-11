@@ -21,6 +21,9 @@ __ape_shim_posix_spawnp
 __ape_shim_sigaction
 __ape_shim_signal
 __ape_shim_stat
+__cxa_thread_atexit_impl
+__dso_handle
+__emutls_get_address
 __errno_location
 __xpg_strerror_r
 _exit
@@ -114,7 +117,6 @@ pthread_attr_setstacksize
 pthread_create
 pthread_detach
 pthread_getattr_np
-pthread_getspecific
 pthread_join
 pthread_key_create
 pthread_key_delete
