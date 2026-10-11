@@ -1,19 +1,17 @@
-use crate::config::{self, PATCHED_CRATES};
+use crate::toolchain::config::{self, PATCHED_CRATES};
 use crate::util;
 use anyhow::{Context, Result, bail};
-use clap::Args;
 use std::fs;
 
-#[derive(Args)]
-pub struct GenerateArgs {
+/// What the command was asked to do; cli/generate.rs has the flags.
+pub struct Options {
     /// Directory for the new project (must not exist, or be empty)
     pub path: std::path::PathBuf,
     /// Package name (defaults to the directory name)
-    #[arg(long)]
     pub name: Option<String>,
 }
 
-pub fn run(args: &GenerateArgs) -> Result<()> {
+pub fn run(args: &Options) -> Result<()> {
     let root = util::repo_root();
     if args.path.exists() && fs::read_dir(&args.path)?.next().is_some() {
         bail!("directory is not empty: {}", args.path.display());
@@ -73,7 +71,7 @@ ape = {{ path = "{ape}" }}
 # tells you which `cargo update --precise` fixes it.
 [patch.crates-io]
 {patches}"#,
-            ape = root.join("ape").display()
+            ape = root.join("crates/ape").display()
         ),
     )?;
     fs::write(

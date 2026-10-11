@@ -7,8 +7,12 @@ publish = false
 [dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.4", features = ["derive", "env"] }
+prettyplease = "0.3.0"
+proc-macro2 = { version = "1.0.107", features = ["span-locations"] }
+quote = "1.0.47"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.11.0"
+syn = { version = "3.0.6", features = ["full", "visit", "visit-mut", "extra-traits"] }
 toml = "1.1.4"
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }

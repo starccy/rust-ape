@@ -160,3 +160,49 @@ pub fn write_stamp(stamp_file: &Path, value: &str) -> Result<()> {
 pub fn git_init(dir: &Path) -> Result<()> {
     run(Command::new("git").arg("init").arg(dir))
 }
+
+/// Every file under `dir` with the extension `ext`, recursively.
+pub fn walk(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) -> Result<()> {
+    let Ok(rd) = fs::read_dir(dir) else {
+        return Ok(());
+    };
+    for e in rd {
+        let p = e?.path();
+        if p.is_dir() {
+            walk(&p, ext, out)?;
+        } else if p.extension().is_some_and(|x| x == ext) {
+            out.push(p);
+        }
+    }
+    Ok(())
+}
+
+/// Joins string literals and `const &str`s into one `&'static str`.
+macro_rules! concat_strs {
+    ($($s:expr),* $(,)?) => {{
+        const STRS: &[&str] = &[$($s),*];
+        const LEN: usize = {
+            let (mut len, mut i) = (0, 0);
+            while i < STRS.len() { len += STRS[i].len(); i += 1; }
+            len
+        };
+        const BYTES: [u8; LEN] = {
+            let mut out = [0u8; LEN];
+            let (mut out_i, mut i) = (0, 0);
+            while i < STRS.len() {
+                let s = STRS[i].as_bytes();
+                let mut j = 0;
+                while j < s.len() { out[out_i] = s[j]; out_i += 1; j += 1; }
+                i += 1;
+            }
+            out
+        };
+        const OUT: &str = match str::from_utf8(&BYTES) {
+            Ok(s) => s,
+            Err(_) => unreachable!(),
+        };
+        OUT
+    }};
+}
+
+pub(crate) use concat_strs;

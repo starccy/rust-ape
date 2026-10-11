@@ -1,6 +1,6 @@
 //! The slice of `cargo metadata` we actually read.
 
-use crate::config;
+use crate::toolchain::config;
 use crate::util;
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -14,6 +14,7 @@ pub struct Metadata {
     /// dependency graph in `packages`.
     pub workspace_members: Vec<String>,
     pub resolve: Resolve,
+    pub target_directory: std::path::PathBuf,
 }
 
 #[derive(Deserialize)]
@@ -25,6 +26,9 @@ pub struct Package {
     /// how we tell a patched crate from one that slipped back to crates.io.
     pub source: Option<String>,
     pub targets: Vec<Target>,
+    /// `[package.metadata]` from Cargo.toml
+    #[serde(default)]
+    pub metadata: Option<serde_json::Value>,
 }
 
 #[derive(Deserialize)]
@@ -32,6 +36,8 @@ pub struct Target {
     pub name: String,
     /// "bin", "lib", "test"
     pub kind: Vec<String>,
+    /// The crate root, main.rs for a bin
+    pub src_path: std::path::PathBuf,
 }
 
 #[derive(Deserialize)]

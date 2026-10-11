@@ -24,11 +24,11 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: cache
-          key: cosmocc-lab-${{ hashFiles('xtask/src/config.rs') }}
+          key: cosmocc-lab-${{ hashFiles('xtask/src/toolchain/config.rs') }}
 
       - name: Build macos-probe.com
         run: |
-          ver=$(sed -n 's/.*COSMOCC_VERSION[^"]*"\([^"]*\)".*/\1/p' xtask/src/config.rs | head -1)
+          ver=$(sed -n 's/.*COSMOCC_VERSION[^"]*"\([^"]*\)".*/\1/p' xtask/src/toolchain/config.rs | head -1)
           mkdir -p cache
           zip="cache/cosmocc-$ver.zip"
           [ -f "$zip" ] || curl -fsSL -o "$zip" "https://cosmo.zip/pub/cosmocc/cosmocc-$ver.zip"

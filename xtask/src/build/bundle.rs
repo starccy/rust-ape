@@ -34,28 +34,25 @@
 //! `bundle.toml` is present, so a rebuild never loses the bundle. The
 //! subcommand exists for applying one to a binary built earlier.
 
-use anyhow::{Context, Result, bail};
-use clap::Args;
-use serde::Deserialize;
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result, bail};
+use serde::Deserialize;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, DateTime, ZipArchive, ZipWriter};
 
 pub const MANIFEST: &str = ".bundle-info";
 const ROOT: &str = ".bundle";
 
-#[derive(Args)]
-pub struct BundleArgs {
+/// What the command was asked to do; cli/bundle.rs has the flags.
+pub struct Options {
     /// The APE binary to append the bundle to
-    #[arg(value_name = "BINARY")]
     pub binary: PathBuf,
     /// Project directory holding bundle.toml (default: the current directory)
-    #[arg(long, value_name = "DIR")]
     pub project: Option<PathBuf>,
     /// Binary name to match `bins` against (default: the file name minus .com)
-    #[arg(long, value_name = "NAME")]
     pub bin: Option<String>,
 }
 
@@ -75,7 +72,7 @@ struct Entry {
     bins: Vec<String>,
 }
 
-pub fn run(args: &BundleArgs) -> Result<()> {
+pub fn run(args: &Options) -> Result<()> {
     let project = match &args.project {
         Some(p) => p.clone(),
         None => std::env::current_dir()?,

@@ -27,7 +27,7 @@ jobs:
       - uses: actions/cache@v6
         with:
           path: cache
-          key: sdk-${{ runner.os }}-${{ hashFiles('xtask/src/config.rs') }}
+          key: sdk-${{ runner.os }}-${{ hashFiles('xtask/src/toolchain/config.rs') }}
 
       - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
@@ -58,6 +58,10 @@ jobs:
             echo "::error::apelink dropped Apple Silicon support; macos-latest would fail"
             exit 1
           fi
+
+      # every libc constant and import this build uses, against cosmo's
+      # value on each host; also fails when std's libc imports change
+      - run: cargo xtask audit
 
       - uses: actions/upload-artifact@v7
         with:

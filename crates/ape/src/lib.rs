@@ -6,6 +6,11 @@
 use std::ffi::CStr;
 use std::ffi::{c_char, c_int, c_long, c_ulong};
 
+pub mod host;
+
+/// The attribute macros, see each one's documentation.
+pub use ape_macros::{host_callback, host_library};
+
 // ------------------------------- host platform -------------------------------
 
 /// The host operating system, mirroring cosmo's `__hostos` bitmask (libc/dce.h).

@@ -1,7 +1,9 @@
-use crate::concat::concat_strs;
-use crate::util;
-use anyhow::{Context, Result, bail};
 use std::sync::OnceLock;
+
+use anyhow::{Context, Result, bail};
+
+use crate::util;
+use crate::util::concat_strs;
 
 /// `[toolchain] channel` from rust-toolchain.toml.
 pub fn rust_channel() -> Result<&'static str> {
@@ -119,7 +121,7 @@ pub fn check_std_libc() -> Result<()> {
     if *have != want {
         bail!(
             "std of {} depends on libc {want}, but patches/libc.patch is for libc {have}.\n\
-             Rebase the patch onto {want} and update PATCHED_CRATES in xtask/src/config.rs",
+             Rebase the patch onto {want} and update PATCHED_CRATES in xtask/src/toolchain/config.rs",
             rust_channel()?
         );
     }

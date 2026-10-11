@@ -1,9 +1,11 @@
-use crate::config::{self, PATCHED_CRATES};
-use crate::util::{self, apply_patch, download, rm_rf, sha256_file, up_to_date, write_stamp};
-use anyhow::{Context, Result, bail};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use anyhow::{Context, Result, bail};
+
+use crate::toolchain::config::{self, PATCHED_CRATES};
+use crate::util::{self, apply_patch, download, rm_rf, sha256_file, up_to_date, write_stamp};
 
 struct Dirs {
     patches: PathBuf,

@@ -1,24 +1,23 @@
-use crate::config;
-use crate::fetch;
-use crate::util;
-use anyhow::{Context, Result, bail};
-use clap::Args;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
-#[derive(Args)]
-pub struct SetupArgs {
+use anyhow::{Context, Result, bail};
+
+use crate::toolchain::config;
+use crate::toolchain::fetch;
+use crate::util;
+
+/// What the command was asked to do; cli/setup.rs has the flags.
+pub struct Options {
     /// Ignore stamps and rebuild everything under vendor/
-    #[arg(long)]
     pub force: bool,
     /// Use a locally built toolchain instead of the pinned release zip
-    #[arg(long, env = "RUST_APE_COSMOCC", value_name = "DIR")]
     pub cosmocc: Option<PathBuf>,
 }
 
 /// setup = restore vendor/ + materialize.
-pub fn run(args: &SetupArgs) -> Result<()> {
+pub fn run(args: &Options) -> Result<()> {
     fetch::run(args.force, args.cosmocc.as_deref())?;
     materialize()?;
     println!("setup done");
@@ -34,8 +33,11 @@ fn materialize() -> Result<()> {
     fs::create_dir_all(&generated)?;
 
     let wrapper = root.join("scripts/gcc-linker-wrapper.bash");
-    if !wrapper.is_file() {
-        bail!("missing {}", wrapper.display());
+    let cc_wrapper = root.join("scripts/cc-wrapper.bash");
+    for w in [&wrapper, &cc_wrapper] {
+        if !w.is_file() {
+            bail!("missing {}", w.display());
+        }
     }
 
     for &(triple, arch) in config::TARGETS {
@@ -63,6 +65,16 @@ fn materialize() -> Result<()> {
             ),
         )?;
         fs::set_permissions(&ar_shim, fs::Permissions::from_mode(0o755))?;
+
+        let cc_shim = generated.join(format!("cc-{arch}.bash"));
+        fs::write(
+            &cc_shim,
+            format!(
+                "#!/usr/bin/env bash\n# Written by `cargo xtask setup`; edits will be overwritten.\nexport ARCH={arch}\nexec \"{}\" \"$@\"\n",
+                cc_wrapper.display()
+            ),
+        )?;
+        fs::set_permissions(&cc_shim, fs::Permissions::from_mode(0o755))?;
 
         let template = root.join("targets").join(format!("{triple}.json"));
         let json = fs::read_to_string(&template)

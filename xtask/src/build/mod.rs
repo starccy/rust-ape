@@ -1,11 +1,21 @@
-use crate::config::{self, PATCHED_CRATES, TARGETS};
-use crate::metadata::{self, Metadata};
-use crate::{bundle, util};
-use anyhow::{Context, Result, bail};
-use clap::Args;
+pub mod bundle;
+mod std_cache;
+pub mod subsystem;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use anyhow::{Context, Result, bail};
+
+use self::std_cache::{
+    clean_std, purge_older_linked, purge_stale_shim_links, purge_windows_macros, std_stamp,
+    verify_std_redirects,
+};
+use crate::host::link;
+use crate::metadata::{self, Metadata};
+use crate::toolchain::config::{self, PATCHED_CRATES, TARGETS};
+use crate::util;
 
 /// Extra flags handed to every C dependency.
 ///
@@ -37,44 +47,33 @@ const C_PREDEFS: &[&str] = &[
     "-DHAVE_ENDIAN_H",
 ];
 
-#[derive(Args)]
-pub struct BuildArgs {
+/// What the command was asked to do; cli/build.rs has the flags.
+pub struct Options {
     /// The project directory to build
-    #[arg(value_name = "PROJECT_DIR")]
     pub project: PathBuf,
-    #[arg(long)]
     pub release: bool,
     /// Link cosmocc's tiny runtime (-mtiny), which drops the built-in
     /// --strace/--ftrace machinery in exchange for a smaller binary
-    #[arg(long)]
     pub tiny: bool,
     /// Force a std/libc rebuild (useful after hand-editing vendor/library)
-    #[arg(long)]
     pub clean_std: bool,
     /// Build only this package of the project's workspace
-    #[arg(long, short = 'p')]
     pub package: Option<String>,
     /// Build and pack only this binary
-    #[arg(long)]
     pub bin: Option<String>,
     /// Build and pack only this example
-    #[arg(long)]
     pub example: Option<String>,
     /// Space or comma separated list of features to activate
-    #[arg(long, short = 'F')]
     pub features: Vec<String>,
     /// Activate all available features
-    #[arg(long)]
     pub all_features: bool,
     /// Do not activate the `default` feature
-    #[arg(long)]
     pub no_default_features: bool,
-    /// Where to write the result (defaults to <project>/target/ape/<profile>/<name>.com)
-    #[arg(long)]
+    /// Where to write the result (defaults to <target dir>/ape/<profile>/<name>.com)
     pub output: Option<PathBuf>,
 }
 
-pub fn run(args: &BuildArgs) -> Result<()> {
+pub fn run(args: &Options) -> Result<()> {
     let root = util::repo_root();
     let project = args
         .project
@@ -84,6 +83,8 @@ pub fn run(args: &BuildArgs) -> Result<()> {
     config::check_std_libc()?;
 
     let meta = metadata::load(&project)?;
+    // cargo's target directory, the workspace's when the project is a member
+    let target_dir = meta.target_directory.clone();
     verify_patches(&root, &meta)?;
 
     let targets = pack_targets(&meta, args)?;
@@ -106,7 +107,7 @@ pub fn run(args: &BuildArgs) -> Result<()> {
     // sources changing, so compare the SDK's stamp against what this project
     // last built with and wipe the cache when they disagree.
     let stamp = std_stamp(&root)?;
-    let marker = project.join("target/ape/.std-stamp");
+    let marker = target_dir.join("ape/.std-stamp");
     let stale = fs::read_to_string(&marker)
         .map(|s| s.trim() != stamp)
         .unwrap_or(true);
@@ -114,15 +115,38 @@ pub fn run(args: &BuildArgs) -> Result<()> {
         if stale && !args.clean_std {
             println!("==> SDK std/libc changed, clearing the build-std cache");
         }
-        clean_std(&project, profile)?;
+        clean_std(&target_dir, profile)?;
     }
 
-    purge_stale_shim_links(&root, &project, profile)?;
+    purge_stale_shim_links(&root, &target_dir, profile)?;
 
+    let host_libs = link::names_from_metadata(&meta)?;
+    let crate_modes = link::crate_modes_from_metadata(&meta)?;
+    // what [package.metadata.rust-ape.host-libs] says reaches the link,
+    // which cargo doesn't redo when it changes (the crates it reaches
+    // are rebuilt through the cfg below)
+    let host_libs_stamp = target_dir.join("ape").join(format!(".host-libs-{profile}"));
+    if fs::read_to_string(&host_libs_stamp).ok().as_deref() != Some(host_libs.as_str()) {
+        for &(triple, _) in TARGETS {
+            purge_older_linked(
+                &target_dir.join(triple).join(profile),
+                std::time::SystemTime::now(),
+            )?;
+        }
+    }
+    purge_windows_macros(&target_dir, profile)?;
     for &(triple, arch) in TARGETS {
         println!("==> building {triple} ({profile})");
-        cargo_build(&root, &project, triple, arch, args)?;
-        verify_std_redirects(&root, &project, profile, triple, arch)?;
+        cargo_build(
+            &root,
+            &project,
+            triple,
+            arch,
+            args,
+            &host_libs,
+            &crate_modes,
+        )?;
+        verify_std_redirects(&target_dir, profile, triple)?;
     }
 
     for target in &targets {
@@ -131,7 +155,7 @@ pub fn run(args: &BuildArgs) -> Result<()> {
             // let example binaries land in target/ape/<profile>/examples/
             // so they don't collide with the main bin
             None => {
-                let mut dir = project.join("target/ape").join(profile);
+                let mut dir = target_dir.join("ape").join(profile);
                 if target.example {
                     dir = dir.join("examples");
                 }
@@ -141,10 +165,16 @@ pub fn run(args: &BuildArgs) -> Result<()> {
         if let Some(parent) = output.parent() {
             fs::create_dir_all(parent)?;
         }
-        apelink(&root, &project, profile, target, &output, args.tiny)?;
+        apelink(&root, &target_dir, profile, target, &output, args.tiny)?;
         if let Some(spec) = &bundle_spec {
-            let dbg = dbg_path(&project, profile, target, TARGETS[0].0);
+            let dbg = dbg_path(&target_dir, profile, target, TARGETS[0].0);
             bundle::apply_to_build(spec, &dbg, &output, &target.name)?;
+        }
+        if let Some(src) = &target.src {
+            if let Some(sub) = subsystem::from_source(src, !args.release)? {
+                subsystem::apply(&output, sub)?;
+                println!("==> windows subsystem: {sub:?}");
+            }
         }
         println!(
             "==> {} ({} bytes)",
@@ -157,6 +187,7 @@ pub fn run(args: &BuildArgs) -> Result<()> {
         fs::create_dir_all(parent)?;
     }
     fs::write(&marker, format!("{stamp}\n"))?;
+    fs::write(&host_libs_stamp, &host_libs)?;
     Ok(())
 }
 
@@ -229,20 +260,31 @@ fn compat_range(version: &str) -> &str {
 struct PackTarget {
     name: String,
     example: bool,
+    src: Option<PathBuf>,
 }
 
-fn pack_targets(meta: &Metadata, args: &BuildArgs) -> Result<Vec<PackTarget>> {
+fn pack_targets(meta: &Metadata, args: &Options) -> Result<Vec<PackTarget>> {
+    let src = |name: &str, kind: &str| {
+        meta.packages
+            .iter()
+            .filter(|p| meta.workspace_members.contains(&p.id))
+            .flat_map(|p| &p.targets)
+            .find(|t| t.name == name && t.kind.iter().any(|k| k == kind))
+            .map(|t| t.src_path.clone())
+    };
     let mut picked = Vec::new();
     if let Some(name) = &args.example {
         picked.push(PackTarget {
             name: name.clone(),
             example: true,
+            src: src(name, "example"),
         });
     }
     if let Some(name) = &args.bin {
         picked.push(PackTarget {
             name: name.clone(),
             example: false,
+            src: src(name, "bin"),
         });
     }
     if !picked.is_empty() {
@@ -275,102 +317,13 @@ fn pack_targets(meta: &Metadata, args: &BuildArgs) -> Result<Vec<PackTarget>> {
         .map(|t| PackTarget {
             name: t.name.clone(),
             example: false,
+            src: Some(t.src_path.clone()),
         })
         .collect();
     if bins.is_empty() {
         bail!("{} has no binaries to build", pkg.name);
     }
     Ok(bins)
-}
-
-/// Identity of everything std is built from: the library and libc stamps.
-fn std_stamp(root: &Path) -> Result<String> {
-    let f = root.join("vendor/.stamps/libc");
-    let libc = fs::read_to_string(&f)
-        .with_context(|| format!("missing {}: run `cargo xtask setup` first", f.display()))?;
-    Ok(format!("{}\n{}", config::rust_channel()?, libc.trim()))
-}
-
-fn purge_stale_shim_links(root: &Path, project: &Path, profile: &str) -> Result<()> {
-    let mut newest = None;
-    let mut note = |m: std::time::SystemTime| {
-        if newest.is_none_or(|n| m > n) {
-            newest = Some(m);
-        }
-    };
-    fn walk(dir: &Path, note: &mut impl FnMut(std::time::SystemTime)) -> Result<()> {
-        for entry in fs::read_dir(dir)? {
-            let entry = entry?;
-            if entry.file_type()?.is_dir() {
-                walk(&entry.path(), note)?;
-            } else {
-                note(entry.metadata()?.modified()?);
-            }
-        }
-        Ok(())
-    }
-    walk(&root.join("shim"), &mut note)?;
-    for &(_, arch) in TARGETS {
-        let lib = root.join(format!("vendor/cosmocc/{arch}-linux-cosmo/lib/libcosmo.a"));
-        if let Ok(m) = lib.metadata() {
-            note(m.modified()?);
-        }
-    }
-    let Some(newest) = newest else { return Ok(()) };
-    for &(triple, _) in TARGETS {
-        purge_older_linked(&project.join("target").join(triple).join(profile), newest)?;
-    }
-    Ok(())
-}
-
-fn purge_older_linked(dir: &Path, newer_than: std::time::SystemTime) -> Result<()> {
-    let Ok(rd) = fs::read_dir(dir) else {
-        return Ok(());
-    };
-    for entry in rd {
-        let entry = entry?;
-        let path = entry.path();
-        if entry.file_type()?.is_dir() {
-            purge_older_linked(&path, newer_than)?;
-        } else if path.to_string_lossy().ends_with(".com.dbg")
-            && entry.metadata()?.modified()? <= newer_than
-        {
-            fs::remove_file(&path)?;
-        }
-    }
-    Ok(())
-}
-
-fn clean_std(project: &Path, profile: &str) -> Result<()> {
-    for &(triple, _) in TARGETS {
-        let base = project.join("target").join(triple).join(profile);
-
-        remove_prefixed(
-            &base.join(".fingerprint"),
-            &["std-", "panic_abort-", "libc-"],
-        )?;
-        remove_prefixed(&base.join("deps"), &["liblibc-", "libc-"])?;
-    }
-    Ok(())
-}
-
-fn remove_prefixed(dir: &Path, prefixes: &[&str]) -> Result<()> {
-    let Ok(rd) = fs::read_dir(dir) else {
-        return Ok(());
-    };
-    for entry in rd {
-        let entry = entry?;
-        let name = entry.file_name().to_string_lossy().into_owned();
-        if prefixes.iter().any(|p| name.starts_with(p)) {
-            let path = entry.path();
-            if path.is_dir() {
-                fs::remove_dir_all(&path)?;
-            } else {
-                fs::remove_file(&path)?;
-            }
-        }
-    }
-    Ok(())
 }
 
 /// set key when it's not already set
@@ -385,7 +338,9 @@ fn cargo_build(
     project: &Path,
     triple: &str,
     arch: &str,
-    args: &BuildArgs,
+    args: &Options,
+    host_libs: &str,
+    crate_modes: &str,
 ) -> Result<()> {
     let target_json = root.join("generated").join(format!("{triple}.json"));
     let cosmo_bin = root.join("vendor/cosmocc/bin");
@@ -409,6 +364,22 @@ fn cargo_build(
     // With --target set, RUSTFLAGS reaches target units only, so host build
     // scripts keep linking the real libc symbols.
     rustflags.push_str("--cfg rustix_use_libc --cfg rust_ape_shim");
+    // cargo doesn't rebuild a crate when RUSTC_WRAPPER changes what it does,
+    // so a new version of the rewrite says so here
+    rustflags.push_str(&format!(
+        " --cfg rust_ape_hostlink_{}",
+        crate::host::rustcwrap::VERSION
+    ));
+    // likewise when the project changes which crates are one host's code,
+    // or which of its libraries exist on which host
+    if crate_modes != "{}" || host_libs != "{}" {
+        use sha2::Digest;
+        let h = sha2::Sha256::digest(format!("{crate_modes}\0{host_libs}").as_bytes());
+        rustflags.push_str(&format!(
+            " --cfg rust_ape_crate_modes_{:02x}{:02x}{:02x}{:02x}",
+            h[0], h[1], h[2], h[3]
+        ));
+    }
     // -mtiny reaches the final cosmocc invocation through the linker wrapper
     // and swaps in the lib/tiny runtime, which has no --strace/--ftrace.
     if args.tiny {
@@ -416,12 +387,25 @@ fn cargo_build(
     }
     cmd.env("RUSTFLAGS", rustflags);
 
+    // the linker wrapper runs `xtask hostlink` for libraries only the host has
+    cmd.env("RUST_APE_XTASK", std::env::current_exe()?);
+    cmd.env("RUST_APE_HOST_LIBS", host_libs);
+    cmd.env("RUST_APE_CRATE_MODES", crate_modes);
+    // and rustc goes through xtask too, which rewrites the declarations
+    // of such libraries into functions calling them the host's way; a
+    // wrapper already set (sccache, say) still runs, after it
+    if let Some(prev) = std::env::var_os("RUSTC_WRAPPER") {
+        cmd.env(crate::host::rustcwrap::NEXT, prev);
+    }
+    cmd.env("RUSTC_WRAPPER", std::env::current_exe()?);
+    cmd.env(crate::host::rustcwrap::ENV, "1");
+
     // C, C++ and asm in dependencies go through cosmocc too, so the ABI matches
     // what they'll run against.
     env_default(
         &mut cmd,
         &format!("CC_{t}"),
-        cosmo_bin.join(format!("{arch}-unknown-cosmo-cc")),
+        root.join("generated").join(format!("cc-{arch}.bash")),
     );
     env_default(
         &mut cmd,
@@ -491,68 +475,9 @@ fn cargo_build(
     util::run(&mut cmd)
 }
 
-/// The std that was just built has to call into the shim. If the libc
-/// patch was dropped from the build-std graph for any reason, std still
-/// links against cosmo's raw sigaction and the layout bug behind
-/// shim/signal.c comes back without a word from cargo, so the rlib is
-/// checked for the one redirect that matters most.
-fn verify_std_redirects(
-    root: &Path,
-    project: &Path,
-    profile: &str,
-    triple: &str,
-    arch: &str,
-) -> Result<()> {
-    let deps = project
-        .join("target")
-        .join(triple)
-        .join(profile)
-        .join("deps");
-    let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
-    for entry in fs::read_dir(&deps)? {
-        let path = entry?.path();
-        let name = path
-            .file_name()
-            .map(|f| f.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        if name.starts_with("libstd-") && name.ends_with(".rlib") {
-            let m = fs::metadata(&path)?.modified()?;
-            if newest.as_ref().is_none_or(|(t, _)| *t < m) {
-                newest = Some((m, path));
-            }
-        }
-    }
-    let Some((_, rlib)) = newest else {
-        bail!("no libstd rlib under {}", deps.display());
-    };
-    let nm = root.join(format!("vendor/cosmocc/bin/{arch}-linux-cosmo-nm"));
-    let out = util::ape_command(&nm)
-        .arg("-u")
-        .arg(&rlib)
-        .output()
-        .context("running nm")?;
-    let text = String::from_utf8_lossy(&out.stdout);
-    let imported: std::collections::BTreeSet<&str> = text
-        .lines()
-        .filter_map(|l| l.split_whitespace().last())
-        .filter(|s| s.starts_with("__ape_shim_"))
-        .collect();
-    if !imported.contains("__ape_shim_sigaction") {
-        bail!(
-            "{} does not call __ape_shim_sigaction, so std was built against an unpatched libc \
-             (shim symbols it does call: {:?}).\n\
-             Check that `cargo build` did not warn that the libc patch was unused, then \
-             `cargo xtask build --clean-std`",
-            rlib.display(),
-            imported
-        );
-    }
-    Ok(())
-}
-
 /// The per-arch ELF cargo produced, which apelink fuses into the fat APE.
-fn dbg_path(project: &Path, profile: &str, target: &PackTarget, triple: &str) -> PathBuf {
-    let mut dir = project.join("target").join(triple).join(profile);
+fn dbg_path(target_dir: &Path, profile: &str, target: &PackTarget, triple: &str) -> PathBuf {
+    let mut dir = target_dir.join(triple).join(profile);
     if target.example {
         dir = dir.join("examples");
     }
@@ -561,7 +486,7 @@ fn dbg_path(project: &Path, profile: &str, target: &PackTarget, triple: &str) ->
 
 fn apelink(
     root: &Path,
-    project: &Path,
+    target_dir: &Path,
     profile: &str,
     target: &PackTarget,
     output: &Path,
@@ -570,7 +495,7 @@ fn apelink(
     let bin = root.join("vendor/cosmocc/bin");
     let inputs: Vec<PathBuf> = TARGETS
         .iter()
-        .map(|&(triple, _)| dbg_path(project, profile, target, triple))
+        .map(|&(triple, _)| dbg_path(target_dir, profile, target, triple))
         .collect();
     for p in &inputs {
         if !p.is_file() {
