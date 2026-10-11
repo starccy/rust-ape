@@ -1,5 +1,4 @@
-//! Struct-layout audit, Rust side. Hand-written (unlike shim_tables_check.rs,
-//! which gen-shim regenerates).
+//! Struct-layout audit, Rust side.
 //!
 //! shim/layouts.c pins cosmo's struct offsets to literal numbers; this file
 //! pins the libc crate's musl side to the same numbers, for both target
@@ -47,9 +46,8 @@ const _: () = {
     assert!(offset_of!(libc::utsname, domainname) == 750);
     assert!(size_of::<libc::utsname>() == 900);
 
-    // The Linux ABI part, which cosmo agrees with field for field, then the
-    // size cosmo's BSD-flavored tail takes it to. Only the size is
-    // load-bearing: it is what keeps statfs() inside the caller's struct.
+    // musl's statfs as it is; the fork keeps f_owner and f_fstypename
+    // inside f_spare.
     assert!(offset_of!(libc::statfs, f_type) == 0);
     assert!(offset_of!(libc::statfs, f_bsize) == 8);
     assert!(offset_of!(libc::statfs, f_blocks) == 16);
@@ -62,18 +60,22 @@ const _: () = {
     assert!(offset_of!(libc::statfs, f_frsize) == 72);
     assert!(offset_of!(libc::statfs, f_flags) == 80);
     assert!(offset_of!(libc::statfs, f_spare) == 88);
-    assert!(size_of::<libc::statfs>() == 144);
-    assert!(size_of::<libc::statfs64>() == 144);
+    assert!(size_of::<libc::statfs>() == 120);
+    assert!(size_of::<libc::statfs64>() == 120);
     // statvfs is the other direction: cosmo's is 88 bytes against musl's
     // 112, so it short-writes, which is safe. Pinned so a cosmocc upgrade
     // that grows it past musl's has to come through here.
     assert!(size_of::<libc::statvfs>() == 112);
 
-    // pthread_attr_t is opaque storage, widened from musl's 56 to cosmo's 64
-    assert!(size_of::<libc::pthread_attr_t>() == 64);
+    assert!(size_of::<libc::pthread_attr_t>() == 56);
 
-    // sem_t is widened from musl's 32 to cosmo's 256 for the same reason:
-    // sem_init() writes the whole cosmo union into the caller's buffer.
+    // widened from musl's 40 to cosmo's 64 in patches/libc.patch;
+    // pthread_mutex.rs is the live check
+    assert!(size_of::<libc::pthread_mutex_t>() == 64);
+    assert!(align_of::<libc::pthread_mutex_t>() == 8);
+
+    // sem_t is widened from musl's 32 to cosmo's 256: sem_init() writes the
+    // whole cosmo union into the caller's buffer.
     assert!(size_of::<libc::sem_t>() == 256);
     assert!(align_of::<libc::sem_t>() == 8);
 
@@ -134,7 +136,48 @@ fn main() {
     );
     assert!(st.st_nlink >= 1);
     println!(
-        "layout check ok (compile-time); live stat: size={} mode={:o} nlink={}",
+        "live stat: size={} mode={:o} nlink={}",
         st.st_size, st.st_mode, st.st_nlink
     );
+
+    // statfs and pthread_getattr_np write into the caller's struct; a
+    // canary right behind it catches a write past musl's size.
+    #[repr(C)]
+    struct Guarded<T> {
+        inner: T,
+        canary: [u8; 64],
+    }
+    let mut fs: Guarded<libc::statfs> = unsafe { std::mem::zeroed() };
+    fs.canary = [0xa5; 64];
+    assert_eq!(unsafe { libc::statfs(c".".as_ptr(), &mut fs.inner) }, 0);
+    assert!(fs.canary == [0xa5; 64], "statfs wrote past musl's struct");
+    assert!(fs.inner.f_bsize > 0 && fs.inner.f_blocks > 0);
+    println!(
+        "live statfs: bsize={} blocks={} namelen={}",
+        fs.inner.f_bsize, fs.inner.f_blocks, fs.inner.f_namelen
+    );
+
+    let mut attr: Guarded<libc::pthread_attr_t> = unsafe { std::mem::zeroed() };
+    attr.canary = [0xa5; 64];
+    let mut stack = std::ptr::null_mut();
+    let mut size = 0;
+    unsafe {
+        assert_eq!(
+            libc::pthread_getattr_np(libc::pthread_self(), &mut attr.inner),
+            0
+        );
+        assert_eq!(
+            libc::pthread_attr_getstack(&attr.inner, &mut stack, &mut size),
+            0
+        );
+        libc::pthread_attr_destroy(&mut attr.inner);
+    }
+    assert!(
+        attr.canary == [0xa5; 64],
+        "pthread_getattr_np wrote past musl's struct"
+    );
+    assert!(size > 0);
+    println!("live pthread_getattr_np: stack size={size}");
+
+    println!("\nlayout check ok");
 }

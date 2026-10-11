@@ -20,7 +20,6 @@ PTHREAD_STACK_MIN = "cosmo's pthread_attr_setstacksize rounds a smaller size up 
 # values with no counterpart to map to
 SCM_CREDENTIALS = "Linux-only ancillary data; std's use sits behind an unstable feature"
 SCM_TIMESTAMP = "SOL_SOCKET cmsg types other than SCM_RIGHTS pass raw; nothing here reads timestamps"
-"SPLICE_F_*" = "splice only exists on Linux in cosmo (ENOSYS elsewhere), so the flags never meet another host's numbering; std passes 0 anyway"
 
 [allow.fn]
 getaddrinfo = "families, socket types and protocols are Linux's in cosmo; IPPROTO_MAX is only a bound"
@@ -48,7 +47,6 @@ timer_gettime = "same"
 if_indextoname = "takes an index"
 copy_file_range = "cosmo only has it on Linux, and flags has to be 0"
 mount = "MS_* are Linux mount flags; elsewhere mount takes other arguments altogether"
-reboot = "not something a portable program calls; the RB_* values only match on Linux"
 getnetbyaddr = "cosmo's is a stub that returns NULL"
 pthread_attr_setstacksize = "PTHREAD_STACK_MIN is only a floor, and cosmo rounds a smaller size up to its own"
 

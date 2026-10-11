@@ -26,18 +26,7 @@ diff a/libc/src/new/common/posix/pthread.rs b/libc/src/new/common/posix/pthread.
 diff a/libc/src/unix/linux_like/linux/mod.rs b/libc/src/unix/linux_like/linux/mod.rs
 --- a/libc/src/unix/linux_like/linux/mod.rs
 +++ b/libc/src/unix/linux_like/linux/mod.rs
-@@ -1289,7 +1289,9 @@
- 
- pub const GRND_NONBLOCK: c_uint = 0x0001;
- pub const GRND_RANDOM: c_uint = 0x0002;
--pub const GRND_INSECURE: c_uint = 0x0004;
-+// cosmo: GRND_INSECURE isn't supported off Linux, and the EINVAL comes back as
-+// a panic. GRND_NONBLOCK is a documented substitute that works everywhere.
-+pub const GRND_INSECURE: c_uint = GRND_NONBLOCK;
- 
- // <linux/seccomp.h>
- pub const SECCOMP_MODE_DISABLED: c_uint = 0;
-@@ -3715,6 +3717,8 @@
+@@ -3715,6 +3715,8 @@
          groups: *mut crate::gid_t,
          ngroups: *mut c_int,
      ) -> c_int;
@@ -46,7 +35,7 @@ diff a/libc/src/unix/linux_like/linux/mod.rs b/libc/src/unix/linux_like/linux/mo
      pub fn posix_spawn(
          pid: *mut crate::pid_t,
          path: *const c_char,
-@@ -3723,6 +3727,8 @@
+@@ -3723,6 +3725,8 @@
          argv: *const *mut c_char,
          envp: *const *mut c_char,
      ) -> c_int;
@@ -95,32 +84,14 @@ diff a/libc/src/unix/linux_like/linux/musl/b64/aarch64/mod.rs b/libc/src/unix/li
 diff a/libc/src/unix/linux_like/linux/musl/b64/mod.rs b/libc/src/unix/linux_like/linux/musl/b64/mod.rs
 --- a/libc/src/unix/linux_like/linux/musl/b64/mod.rs
 +++ b/libc/src/unix/linux_like/linux/musl/b64/mod.rs
-@@ -12,7 +12,16 @@
-     }
- 
-     pub struct pthread_attr_t {
--        __size: [u64; 7],
-+        // cosmo: musl's pthread_attr_t is 56 bytes, cosmo's is 64 -- its
-+        // attr carries extra fields (__sigmask, __sigaltstackaddr, ...).
-+        // pthread_attr_init() whole-struct-assigns and pthread_getattr_np()
-+        // memcpy()s sizeof(cosmo attr), so a musl-sized buffer gets 8 bytes
-+        // written past the end; Rust std keeps it on the stack in
-+        // Thread::new (every spawn) and the stack-bounds probe of every
-+        // thread start, wrecking a neighboring local. Widened for the same
-+        // reason as utsname/statfs: it's opaque storage, only ever passed
-+        // by pointer, and cosmo's own functions define the layout.
-+        __size: [u64; 8],
-     }
- 
-     pub struct sigset_t {
-@@ -49,7 +58,14 @@
+@@ -49,12 +49,24 @@
      }
  
      pub struct sem_t {
 +        // cosmo: musl's sem_t is 32 bytes of ints; cosmo's is a union with
 +        // void *sem_space[32] -- 256 bytes, pointer-aligned -- and
-+        // sem_init() writes the whole thing. Widened like pthread_attr_t:
-+        // opaque storage, only ever passed by pointer, cosmo's functions
++        // sem_init() writes the whole thing. Widened, since it is
++        // opaque storage only ever passed by pointer, and cosmo's functions
 +        // define the layout. The u64 tail also raises the alignment from
 +        // musl's 4 to cosmo's 8.
          __val: [c_int; 8],
@@ -128,40 +99,21 @@ diff a/libc/src/unix/linux_like/linux/musl/b64/mod.rs b/libc/src/unix/linux_like
      }
  }
  
+ pub const __SIZEOF_PTHREAD_RWLOCK_T: usize = 56;
+-pub const __SIZEOF_PTHREAD_MUTEX_T: usize = 40;
++// cosmo: cosmo's pthread_mutex_t is 64 bytes, musl's 40. Past musl's end it
++// keeps the lock and unlock functions it picked for the mutex, which
++// pthread_mutex_lock() calls through once they are set; a musl-sized mutex
++// has them in whatever memory follows it. Widened like sem_t. The static
++// initializer stays all zeros, which is cosmo's PTHREAD_MUTEX_INITIALIZER.
++pub const __SIZEOF_PTHREAD_MUTEX_T: usize = 64;
+ pub const __SIZEOF_PTHREAD_BARRIER_T: usize = 32;
+ 
+ cfg_if! {
 diff a/libc/src/unix/linux_like/linux/musl/mod.rs b/libc/src/unix/linux_like/linux/musl/mod.rs
 --- a/libc/src/unix/linux_like/linux/musl/mod.rs
 +++ b/libc/src/unix/linux_like/linux/musl/mod.rs
-@@ -412,6 +412,18 @@
-         pub f_frsize: c_ulong,
-         pub f_flags: c_ulong,
-         pub f_spare: [c_ulong; 4],
-+        // cosmo: everything above is the Linux ABI, which is where cosmo's
-+        // statfs stops agreeing with musl -- it carries a BSD-flavored tail
-+        // (uint32_t f_owner, char f_fstypename[16]) that takes it to 144
-+        // bytes against musl's 120. Left at 120, statfs()/fstatfs() write 24
-+        // bytes past the end of the caller's struct; on the stack, which is
-+        // the usual idiom, that wrecks whatever the frame keeps next to it
-+        // and the SIGSEGV lands somewhere unrelated. Widened here rather
-+        // than repacked in the shim for the same reason as utsname: these
-+        // are only ever out-parameters, and a short write from a
-+        // musl-sized statfs would be safe anyway.
-+        __f_owner: u32,
-+        __f_fstypename: [c_char; 16],
-     }
- 
-     // MIPS/s390x implementation is special (see arch folders)
-@@ -429,6 +441,10 @@
-         pub f_frsize: c_ulong,
-         pub f_flags: c_ulong,
-         pub f_spare: [c_ulong; 4],
-+        // cosmo: statfs64 is the same struct as statfs here, and cosmo has
-+        // only the one -- widened for the same reason, see statfs above.
-+        __f_owner: u32,
-+        __f_fstypename: [c_char; 16],
-     }
- 
-     pub struct sysinfo {
-@@ -817,7 +833,11 @@
+@@ -817,7 +817,11 @@
      pub fn mlock2(addr: *const c_void, len: size_t, flags: c_uint) -> c_int;
      pub fn malloc_usable_size(ptr: *mut c_void) -> size_t;
  

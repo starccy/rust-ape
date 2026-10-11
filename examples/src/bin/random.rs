@@ -19,6 +19,21 @@ fn main() {
     );
     println!("std RandomState: {} distinct seeds out of 8", seeds.len());
 
+    // GRND_INSECURE straight through the libc crate, as Linux's value.
+    let mut raw = [0u8; 64];
+    let n = unsafe { libc::getrandom(raw.as_mut_ptr().cast(), raw.len(), libc::GRND_INSECURE) };
+    assert_eq!(n, raw.len() as isize, "getrandom(GRND_INSECURE) failed");
+    assert!(raw.iter().any(|&b| b != 0));
+    let n = unsafe {
+        libc::getrandom(
+            raw.as_mut_ptr().cast(),
+            8,
+            libc::GRND_INSECURE | libc::GRND_RANDOM,
+        )
+    };
+    assert_eq!(n, -1, "GRND_INSECURE|GRND_RANDOM should be EINVAL");
+    println!("getrandom(GRND_INSECURE): {}", hex(&raw[..8]));
+
     // The rand crate, which sources its seed through getrandom.
     let mut rng = rand::rng();
 

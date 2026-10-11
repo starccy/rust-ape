@@ -1,45 +1,4 @@
-// Struct-layout audit, C side. No code, only compile-time asserts.
-//
-// The values crossing the libc boundary are Linux's on both sides now, and
-// the STRUCTS mostly pass through, relying on the two layouts being
-// identical. That is true today but could silently stop being true after a
-// cosmocc or libc upgrade, so the load-bearing structs are pinned here
-// field by field. This file asserts
-// cosmo's offsets against literal numbers, and struct_layout_check.rs (built
-// for both Rust targets) asserts the musl/libc-crate side against the same
-// numbers. If both compile, the two worlds agree; if one drifts, the build
-// breaks with the field's name in the error.
-//
-// What's covered and why:
-//   - struct stat: cosmo's "cosmo abi" happens to equal musl x86_64 exactly
-//     (cosmo's st_flags/st_birthtim/st_gen live inside musl's padding). The
-//     libc crate's aarch64 stat is hand-realigned to the same layout by
-//     patches/libc.patch — the Rust-side asserts are what keep that patch
-//     honest.
-//   - struct dirent: cosmo declares the Linux getdents64 ABI, which is
-//     musl's dirent on every arch.
-//   - struct utsname: cosmo's is 150 bytes per field against musl's 65. The
-//     libc crate's declaration is widened to cosmo's in patches/libc.patch,
-//     the same treatment aarch64's stat gets; the asserts on both sides are
-//     what keep that honest.
-//   - struct statfs: identical for the whole Linux ABI, then cosmo adds a
-//     BSD-flavored tail (f_owner, f_fstypename) that takes it from musl's
-//     120 bytes to 144. Widened in patches/libc.patch like utsname, since
-//     a caller who allocates musl's 120 gets 24 bytes of its own frame
-//     overwritten. struct statvfs goes the other way and is fine.
-//   - struct timespec: the {i64, i64} everyone already relies on.
-//   - struct flock: identical up to musl's tail padding (cosmo's l_sysid
-//     lives there).
-//   - ucontext_t/mcontext_t: cosmo lays both out in the Linux kernel ABI
-//     shape (on aarch64 it even pads uc_sigmask+__unused to 136 bytes so
-//     uc_mcontext lands at musl's offset 176). Signal handlers receive
-//     cosmo's pointer straight through the trampoline, so a crate reading
-//     uc_mcontext.gregs[REG_RIP] sees the right slot. The tails differ
-//     past uc_sigmask (cosmo: 8-byte set + fpu state; musl: 128-byte set +
-//     __fpregs_mem) but nothing addresses those through the struct.
-//
-// struct termios is musl's shape on the cosmo side too (the fork changed
-// it), so it passes through like the rest; the asserts below pin that.
+// Compile-time asserts that cosmo's struct layouts match musl's, the C half of struct_layout_check.rs.
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -104,12 +63,6 @@ CHECK(utsname, machine, 600);
 CHECK(utsname, domainname, 750);
 _Static_assert(sizeof(struct utsname) == 900, "cosmo utsname size");
 
-// cosmo's statfs agrees with musl for the whole Linux ABI, then adds
-// f_owner and f_fstypename[16] past f_spare, which takes it from 120 bytes
-// to 144. The libc crate's declaration is widened to 144 in
-// patches/libc.patch, same treatment as utsname; these numbers are what
-// that patch has to keep hitting, because statfs()/fstatfs() write the full
-// 144 into whatever the caller handed over.
 #include <sys/statfs.h>
 #include <sys/statvfs.h>
 CHECK(statfs, f_type, 0);
@@ -124,21 +77,24 @@ CHECK(statfs, f_namelen, 64);
 CHECK(statfs, f_frsize, 72);
 CHECK(statfs, f_flags, 80);
 CHECK(statfs, f_spare, 88);
-_Static_assert(sizeof(struct statfs) == 144, "cosmo statfs size");
+_Static_assert(sizeof(struct statfs) == 120, "cosmo statfs size");
 // The other direction: cosmo's statvfs is smaller than musl's 112, so it
 // short-writes and needs no widening. Pinned so that stops being quiet if
 // a cosmocc upgrade grows it.
 _Static_assert(sizeof(struct statvfs) <= 112,
                "cosmo statvfs outgrew musl's 112 bytes");
 
-// cosmo's pthread_attr_t is 64 bytes against musl's 56
 #include <pthread.h>
-_Static_assert(sizeof(pthread_attr_t) == 64, "cosmo pthread_attr_t size");
+_Static_assert(sizeof(pthread_attr_t) == 56, "cosmo pthread_attr_t size");
+
+// 64 bytes against musl's 40, widened in patches/libc.patch like sem_t
+_Static_assert(sizeof(pthread_mutex_t) == 64, "cosmo pthread_mutex_t size");
+_Static_assert(_Alignof(pthread_mutex_t) == 8, "cosmo pthread_mutex_t alignment");
 
 // cosmo's sem_t is a union padded out by void *sem_space[32] -- 256 bytes,
 // pointer-aligned -- against musl's 32 bytes of ints, and sem_init() writes
 // all of it. Widened to 256 in patches/libc.patch, same treatment as
-// pthread_attr_t.
+// utsname.
 #include <semaphore.h>
 _Static_assert(sizeof(sem_t) == 256, "cosmo sem_t size");
 _Static_assert(_Alignof(sem_t) == 8, "cosmo sem_t alignment");
