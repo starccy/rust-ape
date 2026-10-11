@@ -29,7 +29,9 @@ fn main() {
 /// exit with a code the parent can recognize.
 fn child() {
     let mut line = String::new();
-    std::io::stdin().read_line(&mut line).expect("child read stdin");
+    std::io::stdin()
+        .read_line(&mut line)
+        .expect("child read stdin");
     println!("{GREETING}");
     println!("echo: {}", line.trim_end());
     eprintln!("child stderr");
@@ -66,9 +68,18 @@ fn parent() {
         println!("  child stderr: {line}");
     }
 
-    assert!(stdout.contains(GREETING), "child stdout missing its greeting");
-    assert!(stdout.contains("echo: ping"), "child never saw what we wrote to its stdin");
-    assert!(stderr.contains("child stderr"), "child stderr came back empty");
+    assert!(
+        stdout.contains(GREETING),
+        "child stdout missing its greeting"
+    );
+    assert!(
+        stdout.contains("echo: ping"),
+        "child never saw what we wrote to its stdin"
+    );
+    assert!(
+        stderr.contains("child stderr"),
+        "child stderr came back empty"
+    );
     assert_eq!(
         out.status.code(),
         Some(CHILD_EXIT),
@@ -85,7 +96,11 @@ fn parent() {
         .stdin(Stdio::null())
         .output()
         .expect("second spawn");
-    assert_eq!(out.status.code(), Some(CHILD_EXIT), "second child exited wrong");
+    assert_eq!(
+        out.status.code(),
+        Some(CHILD_EXIT),
+        "second child exited wrong"
+    );
     println!("second child ran with a custom environment");
 
     // Spawning something that isn't there has to fail, not hang.
@@ -104,7 +119,11 @@ fn parent() {
 fn waitid(exe: &str) {
     use std::mem::MaybeUninit;
 
-    fn wait(idtype: libc::idtype_t, id: libc::id_t, options: libc::c_int) -> Result<libc::siginfo_t, i32> {
+    fn wait(
+        idtype: libc::idtype_t,
+        id: libc::id_t,
+        options: libc::c_int,
+    ) -> Result<libc::siginfo_t, i32> {
         let mut si = MaybeUninit::<libc::siginfo_t>::zeroed();
         let rc = unsafe { libc::waitid(idtype, id, si.as_mut_ptr(), options) };
         if rc < 0 {
@@ -125,7 +144,11 @@ fn waitid(exe: &str) {
     // Still blocked on stdin: WNOHANG has nothing to report and says so
     // through a zero si_pid.
     let si = wait(libc::P_PID, pid, libc::WEXITED | libc::WNOHANG).expect("waitid WNOHANG");
-    assert_eq!(unsafe { si.si_pid() }, 0, "WNOHANG reported a running child");
+    assert_eq!(
+        unsafe { si.si_pid() },
+        0,
+        "WNOHANG reported a running child"
+    );
 
     drop(child.stdin.take());
     let si = wait(libc::P_PID, pid, libc::WEXITED).expect("waitid WEXITED");
@@ -148,6 +171,10 @@ fn waitid(exe: &str) {
     println!("waitid: P_ALL picked up the killed sleeper as CLD_KILLED/SIGKILL");
 
     assert_eq!(wait(libc::P_ALL, 0, libc::WEXITED), Err(libc::ECHILD));
-    assert_eq!(wait(libc::P_ALL, 0, libc::WNOHANG), Err(libc::EINVAL), "no event class");
+    assert_eq!(
+        wait(libc::P_ALL, 0, libc::WNOHANG),
+        Err(libc::EINVAL),
+        "no event class"
+    );
     println!("waitid: ECHILD once empty, EINVAL without an event class");
 }

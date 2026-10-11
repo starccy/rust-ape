@@ -99,18 +99,21 @@ fn step(rt: &Runtime, kids: &mut Vec<Kid>, exe: &str, round: usize) -> Result<()
 
 async fn poke(kids: &mut [Kid], round: usize) -> io::Result<()> {
     for (i, k) in kids.iter_mut().enumerate() {
-        k.stdin.write_all(format!("{round}-{i}\n").as_bytes()).await?;
+        k.stdin
+            .write_all(format!("{round}-{i}\n").as_bytes())
+            .await?;
         k.stdin.flush().await?;
     }
     for (i, k) in kids.iter_mut().enumerate() {
         let line = tokio::time::timeout(Duration::from_secs(20), k.out.next_line())
             .await
-            .map_err(|_| io::Error::other(format!("child {i} never answered round {round}")))?
-            ?
+            .map_err(|_| io::Error::other(format!("child {i} never answered round {round}")))??
             .ok_or_else(|| io::Error::other(format!("child {i} closed stdout")))?;
         let want = format!("echo {round}-{i}");
         if line != want {
-            return Err(io::Error::other(format!("child {i} said {line:?}, wanted {want:?}")));
+            return Err(io::Error::other(format!(
+                "child {i} said {line:?}, wanted {want:?}"
+            )));
         }
     }
     Ok(())
@@ -149,7 +152,10 @@ fn report(rt: &Runtime, kids: &mut Vec<Kid>) {
             }
         })
     }));
-    assert!(r.is_ok(), "the reactor died while shutting {n} children down");
+    assert!(
+        r.is_ok(),
+        "the reactor died while shutting {n} children down"
+    );
     println!("all {n} children closed and reaped");
 }
 

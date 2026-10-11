@@ -7,7 +7,7 @@
 //! so there is no need to look for a system certificate store.
 //!
 //! ureq itself blocks, so each request has to go to smol's thread pool.
-//! Chose the synchronous `ureq` because I couldn't find a crate in the `smol` ecosystem 
+//! Chose the synchronous `ureq` because I couldn't find a crate in the `smol` ecosystem
 //! that was both active and offered a feature set comparable to `reqwest` :(
 
 use std::time::{Duration, Instant};
@@ -56,6 +56,9 @@ fn fetch(url: &str) -> (u16, usize) {
 
     let mut resp = agent.get(url).call().expect("request failed");
     let status = resp.status().as_u16();
-    let body = resp.body_mut().read_to_string().expect("could not read body");
+    let body = resp
+        .body_mut()
+        .read_to_string()
+        .expect("could not read body");
     (status, body.len())
 }

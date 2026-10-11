@@ -14,7 +14,10 @@ const WORKERS: usize = 4;
 const PER_WORKER: usize = 1000;
 
 fn main() {
-    println!("available parallelism: {:?}", thread::available_parallelism());
+    println!(
+        "available parallelism: {:?}",
+        thread::available_parallelism()
+    );
 
     // A named thread that reports its own name back.
     let name = thread::Builder::new()
@@ -23,7 +26,11 @@ fn main() {
         .expect("spawn named")
         .join()
         .expect("join named");
-    assert_eq!(name.as_deref(), Some("cosmo-worker"), "thread name did not stick");
+    assert_eq!(
+        name.as_deref(),
+        Some("cosmo-worker"),
+        "thread name did not stick"
+    );
     println!("named thread reported {:?}", name.unwrap());
 
     // Mutex and atomic under contention.
@@ -44,12 +51,23 @@ fn main() {
             id
         }));
     }
-    let ids: Vec<usize> = handles.into_iter().map(|h| h.join().expect("join")).collect();
+    let ids: Vec<usize> = handles
+        .into_iter()
+        .map(|h| h.join().expect("join"))
+        .collect();
     assert_eq!(ids.len(), WORKERS, "not every worker returned");
 
     let total = WORKERS * PER_WORKER;
-    assert_eq!(*counter.lock().expect("lock"), total, "mutex lost increments");
-    assert_eq!(atomic.load(Ordering::Relaxed), total, "atomic lost increments");
+    assert_eq!(
+        *counter.lock().expect("lock"),
+        total,
+        "mutex lost increments"
+    );
+    assert_eq!(
+        atomic.load(Ordering::Relaxed),
+        total,
+        "atomic lost increments"
+    );
     println!("{WORKERS} threads x {PER_WORKER} increments = {total}");
 
     // Channels.
@@ -64,7 +82,11 @@ fn main() {
     drop(tx);
     let mut received: Vec<usize> = rx.iter().collect();
     received.sort();
-    assert_eq!(received, (0..WORKERS).collect::<Vec<_>>(), "channel lost messages");
+    assert_eq!(
+        received,
+        (0..WORKERS).collect::<Vec<_>>(),
+        "channel lost messages"
+    );
     println!("channel delivered {received:?}");
 
     // Scoped threads, borrowing a local without an Arc.
@@ -74,7 +96,10 @@ fn main() {
             .chunks(4)
             .map(|chunk| s.spawn(move || chunk.iter().sum::<u64>()))
             .collect();
-        halves.into_iter().map(|h| h.join().expect("join scoped")).sum()
+        halves
+            .into_iter()
+            .map(|h| h.join().expect("join scoped"))
+            .sum()
     });
     assert_eq!(sum, data.iter().sum::<u64>(), "scoped threads summed wrong");
     println!("scoped threads summed to {sum}");

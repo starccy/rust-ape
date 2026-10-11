@@ -18,10 +18,17 @@ fn main() {
     // O_CREAT|O_TRUNC, then O_APPEND through std's append(true).
     let path = dir.path().join("appended");
     fs::write(&path, b"aaa").expect("write");
-    let mut f = OpenOptions::new().append(true).open(&path).expect("open append");
+    let mut f = OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .expect("open append");
     f.write_all(b"bbb").expect("append write");
     drop(f);
-    assert_eq!(fs::read_to_string(&path).expect("read"), "aaabbb", "append truncated or misplaced");
+    assert_eq!(
+        fs::read_to_string(&path).expect("read"),
+        "aaabbb",
+        "append truncated or misplaced"
+    );
     println!("std append ok");
 
     // The same bit straight from libc, the way third-party crates pass it.
@@ -33,7 +40,11 @@ fn main() {
         .expect("open custom O_APPEND");
     f.write_all(b"ccc").expect("custom append write");
     drop(f);
-    assert_eq!(fs::read_to_string(&path).expect("read"), "aaabbbccc", "custom_flags O_APPEND ignored");
+    assert_eq!(
+        fs::read_to_string(&path).expect("read"),
+        "aaabbbccc",
+        "custom_flags O_APPEND ignored"
+    );
     println!("custom_flags O_APPEND ok");
 
     // try_clone = fcntl(F_DUPFD_CLOEXEC). musl's 1030 never matched cosmo's
@@ -53,7 +64,11 @@ fn main() {
         .create_new(true)
         .open(&path)
         .expect_err("create_new over an existing file");
-    assert_eq!(e.raw_os_error(), Some(libc::EEXIST), "O_EXCL got lost in translation");
+    assert_eq!(
+        e.raw_os_error(),
+        Some(libc::EEXIST),
+        "O_EXCL got lost in translation"
+    );
     println!("O_CREAT|O_EXCL ok");
 
     for (name, flag) in [("O_SYNC", libc::O_SYNC), ("O_DSYNC", libc::O_DSYNC)] {
@@ -65,19 +80,31 @@ fn main() {
             .custom_flags(flag)
             .open(&synced)
             .unwrap_or_else(|e| panic!("open with {name}: {e}"));
-        f.write_all(b"durable").unwrap_or_else(|e| panic!("write with {name}: {e}"));
+        f.write_all(b"durable")
+            .unwrap_or_else(|e| panic!("write with {name}: {e}"));
         drop(f);
-        assert_eq!(fs::read_to_string(&synced).expect("read"), "durable", "{name} lost the write");
+        assert_eq!(
+            fs::read_to_string(&synced).expect("read"),
+            "durable",
+            "{name} lost the write"
+        );
         println!("custom_flags {name} ok");
     }
 
     // utimensat, whose timespec smuggles UTIME_OMIT (a platform constant) for
     // the field left unset. Wrong sentinel = EINVAL or a clobbered atime.
-    let f = File::options().write(true).open(&path).expect("open for times");
+    let f = File::options()
+        .write(true)
+        .open(&path)
+        .expect("open for times");
     let stamp = SystemTime::UNIX_EPOCH + Duration::from_secs(1_600_000_000);
-    f.set_times(FileTimes::new().set_modified(stamp)).expect("set_times");
+    f.set_times(FileTimes::new().set_modified(stamp))
+        .expect("set_times");
     drop(f);
-    let got = fs::metadata(&path).expect("metadata").modified().expect("modified");
+    let got = fs::metadata(&path)
+        .expect("metadata")
+        .modified()
+        .expect("modified");
     assert_eq!(got, stamp, "mtime did not stick");
     println!("utimensat UTIME_OMIT ok");
 

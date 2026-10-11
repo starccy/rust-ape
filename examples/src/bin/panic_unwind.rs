@@ -44,9 +44,19 @@ fn deep(n: usize, dropped: &Arc<AtomicUsize>) {
 fn caught(dropped: &Arc<AtomicUsize>) {
     let r = catch_unwind(AssertUnwindSafe(|| deep(2, dropped)));
     let payload = r.expect_err("catch_unwind saw no panic");
-    let msg = payload.downcast_ref::<&str>().copied().unwrap_or("<not a &str>");
-    assert_eq!(msg, "thrown from the bottom", "payload came back as {msg:?}");
-    assert_eq!(dropped.load(Ordering::SeqCst), 3, "not every frame's Drop ran");
+    let msg = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .unwrap_or("<not a &str>");
+    assert_eq!(
+        msg, "thrown from the bottom",
+        "payload came back as {msg:?}"
+    );
+    assert_eq!(
+        dropped.load(Ordering::SeqCst),
+        3,
+        "not every frame's Drop ran"
+    );
     println!("catch_unwind: caught {msg:?}, 3 destructors ran");
 
     // The process is still usable afterwards.

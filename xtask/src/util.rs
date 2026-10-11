@@ -158,8 +158,5 @@ pub fn write_stamp(stamp_file: &Path, value: &str) -> Result<()> {
 }
 
 pub fn git_init(dir: &Path) -> Result<()> {
-    run(Command::new("git")
-        .arg("init")
-        .arg(dir)
-    )
+    run(Command::new("git").arg("init").arg(dir))
 }

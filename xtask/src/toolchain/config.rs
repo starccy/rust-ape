@@ -36,21 +36,22 @@ fn parse_nightly_date(channel: &str) -> Option<&str> {
         && date.as_bytes()[4] == b'-'
         && date.as_bytes()[7] == b'-'
         && date.bytes().enumerate().all(|(i, b)| {
-            if i == 4 || i == 7 { b == b'-' } else { b.is_ascii_digit() }
+            if i == 4 || i == 7 {
+                b == b'-'
+            } else {
+                b.is_ascii_digit()
+            }
         });
     ok.then_some(date)
 }
 
 /// Crates needing a patch, as (name, version); patches live in patches/<name>.patch.
 /// libc must match what std depends on in library/Cargo.lock
-pub const PATCHED_CRATES: &[(&str, &str)] = &[
-    ("libc", "0.2.189"),
-];
+pub const PATCHED_CRATES: &[(&str, &str)] = &[("libc", "0.2.189")];
 
 /// Pinned to the official release zip. cosmocc itself is unmodified
 pub const COSMOCC_VERSION: &str = "4.0.2";
-pub const COSMOCC_SHA256: &str =
-    "85b8c37a406d862e656ad4ec14be9f6ce474c1b436b9615e91a55208aced3f44";
+pub const COSMOCC_SHA256: &str = "85b8c37a406d862e656ad4ec14be9f6ce474c1b436b9615e91a55208aced3f44";
 pub const COSMOCC_BASE_URL: &str = "https://cosmo.zip/pub/cosmocc/";
 
 /// (target triple, cosmocc's arch prefix). Templates live in targets/<triple>.json
@@ -71,14 +72,20 @@ pub fn rust_src_dir() -> Result<std::path::PathBuf> {
     )?;
     let src = std::path::Path::new(sysroot.trim()).join("lib/rustlib/src/rust/library");
     if !src.is_dir() {
-        util::run(
-            std::process::Command::new("rustup")
-                .args(["component", "add", "rust-src", "--toolchain", channel]),
-        )
+        util::run(std::process::Command::new("rustup").args([
+            "component",
+            "add",
+            "rust-src",
+            "--toolchain",
+            channel,
+        ]))
         .context("rust-src is needed to build std")?;
     }
     if !src.is_dir() {
-        bail!("no rust-src at {} after adding the component", src.display());
+        bail!(
+            "no rust-src at {} after adding the component",
+            src.display()
+        );
     }
     Ok(src)
 }

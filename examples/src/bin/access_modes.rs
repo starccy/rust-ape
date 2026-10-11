@@ -17,7 +17,11 @@ fn access(path: &std::path::Path, mode: libc::c_int) -> Result<(), std::io::Erro
     }
 }
 
-fn faccessat(path: &std::path::Path, mode: libc::c_int, flags: libc::c_int) -> Result<(), std::io::Error> {
+fn faccessat(
+    path: &std::path::Path,
+    mode: libc::c_int,
+    flags: libc::c_int,
+) -> Result<(), std::io::Error> {
     let c = CString::new(path.as_os_str().as_bytes()).expect("path with NUL");
     if unsafe { libc::faccessat(libc::AT_FDCWD, c.as_ptr(), mode, flags) } == 0 {
         Ok(())
@@ -67,19 +71,39 @@ fn main() {
 
     let gone = dir.path().join("gone");
     let e = access(&gone, libc::R_OK).expect_err("R_OK on a file that is not there");
-    assert_eq!(e.raw_os_error(), Some(libc::ENOENT), "missing file reported as something other than ENOENT");
+    assert_eq!(
+        e.raw_os_error(),
+        Some(libc::ENOENT),
+        "missing file reported as something other than ENOENT"
+    );
     println!("access ENOENT ok");
 
     let e = access(&data, 0x40).expect_err("an amode bit that is not R/W/X");
-    assert_eq!(e.raw_os_error(), Some(libc::EINVAL), "an unknown amode bit should be EINVAL");
+    assert_eq!(
+        e.raw_os_error(),
+        Some(libc::EINVAL),
+        "an unknown amode bit should be EINVAL"
+    );
     println!("access EINVAL ok");
 
     let n = unsafe { libc::getgroups(0, std::ptr::null_mut()) };
-    assert!(n >= 1, "getgroups(0, NULL) failed: {}", std::io::Error::last_os_error());
+    assert!(
+        n >= 1,
+        "getgroups(0, NULL) failed: {}",
+        std::io::Error::last_os_error()
+    );
     let mut groups = vec![0 as libc::gid_t; n as usize];
     let got = unsafe { libc::getgroups(n, groups.as_mut_ptr()) };
-    assert_eq!(got, n, "getgroups filled a different count than it promised: {}", std::io::Error::last_os_error());
-    assert!(groups.iter().all(|&g| g != libc::gid_t::MAX), "getgroups left the list unwritten");
+    assert_eq!(
+        got,
+        n,
+        "getgroups filled a different count than it promised: {}",
+        std::io::Error::last_os_error()
+    );
+    assert!(
+        groups.iter().all(|&g| g != libc::gid_t::MAX),
+        "getgroups left the list unwritten"
+    );
     println!("getgroups ok ({n} group(s))");
 
     println!("all access checks ok");

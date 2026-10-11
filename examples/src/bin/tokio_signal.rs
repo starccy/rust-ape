@@ -45,7 +45,10 @@ async fn repeated() {
     for _ in 0..10 {
         assert_eq!(unsafe { libc::raise(libc::SIGUSR1) }, 0, "raise failed");
         tokio::time::sleep(Duration::from_millis(10)).await;
-        if tokio::time::timeout(Duration::from_millis(200), usr1.recv()).await.is_ok() {
+        if tokio::time::timeout(Duration::from_millis(200), usr1.recv())
+            .await
+            .is_ok()
+        {
             seen += 1;
         }
     }
@@ -75,6 +78,9 @@ async fn two_kinds() {
 /// CI, so this only checks that registering it works and that it stays pending.
 async fn ctrl_c_registers() {
     let r = tokio::time::timeout(Duration::from_millis(100), tokio::signal::ctrl_c()).await;
-    assert!(r.is_err(), "ctrl_c() completed without anyone pressing anything");
+    assert!(
+        r.is_err(),
+        "ctrl_c() completed without anyone pressing anything"
+    );
     println!("ctrl_c() registered and stayed pending");
 }

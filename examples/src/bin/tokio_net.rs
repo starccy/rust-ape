@@ -83,8 +83,14 @@ async fn echo_roundtrips() {
     server.await.expect("server task");
 
     let total = CLIENTS * ROUNDS;
-    println!("{total} roundtrips over {CLIENTS} connections in {:?}", started.elapsed());
-    assert!(served.load(Ordering::Relaxed) >= total, "server lost messages");
+    println!(
+        "{total} roundtrips over {CLIENTS} connections in {:?}",
+        started.elapsed()
+    );
+    assert!(
+        served.load(Ordering::Relaxed) >= total,
+        "server lost messages"
+    );
 }
 
 /// The timer wheel has no socket involved, so it fails independently of the
@@ -94,8 +100,14 @@ async fn timers() {
     tokio::time::sleep(Duration::from_millis(300)).await;
     let slept = started.elapsed();
     println!("sleep(300ms) took {slept:?}");
-    assert!(slept >= Duration::from_millis(295), "sleep returned early: {slept:?}");
-    assert!(slept < Duration::from_secs(5), "sleep overshot badly: {slept:?}");
+    assert!(
+        slept >= Duration::from_millis(295),
+        "sleep returned early: {slept:?}"
+    );
+    assert!(
+        slept < Duration::from_secs(5),
+        "sleep overshot badly: {slept:?}"
+    );
 
     let pending = tokio::time::sleep(Duration::from_secs(30));
     let r = tokio::time::timeout(Duration::from_millis(100), pending).await;

@@ -27,7 +27,11 @@
 use std::ffi::{c_char, c_void};
 
 fn main() {
-    println!("host: {:?}, arch: {}", ape::current_os(), std::env::consts::ARCH);
+    println!(
+        "host: {:?}, arch: {}",
+        ape::current_os(),
+        std::env::consts::ARCH
+    );
 
     if ape::is_windows() {
         windows();
@@ -54,8 +58,14 @@ unsafe extern "C" {
     fn LoadLibraryA(name: *const u8) -> *mut c_void;
     fn GetProcAddress(module: *mut c_void, name: *const u8) -> *mut c_void;
 
-    fn CreateThread(sec: *mut c_void, stack: usize, start: *mut c_void, param: *mut c_void,
-                    flags: u32, tid: *mut u32) -> *mut c_void;
+    fn CreateThread(
+        sec: *mut c_void,
+        stack: usize,
+        start: *mut c_void,
+        param: *mut c_void,
+        flags: u32,
+        tid: *mut u32,
+    ) -> *mut c_void;
     fn WaitForSingleObject(handle: *mut c_void, ms: u32) -> u32;
     fn CloseHandle(handle: *mut c_void) -> i32;
     fn SetEvent(handle: *mut c_void) -> i32;
@@ -64,13 +74,20 @@ unsafe extern "C" {
 fn windows() {
     unsafe {
         let pid = GetCurrentProcessId();
-        assert_eq!(pid, std::process::id(), "Win32 and std disagree about our own pid");
+        assert_eq!(
+            pid,
+            std::process::id(),
+            "Win32 and std disagree about our own pid"
+        );
         println!("GetCurrentProcessId agrees with std::process::id(): {pid}");
 
         let mut buf = [0u16; 260];
         let n = GetSystemDirectoryW(buf.as_mut_ptr(), buf.len() as u32) as usize;
         assert!(n > 0 && n < buf.len(), "GetSystemDirectory returned {n}");
-        println!("GetSystemDirectory: {}", String::from_utf16_lossy(&buf[..n]));
+        println!(
+            "GetSystemDirectory: {}",
+            String::from_utf16_lossy(&buf[..n])
+        );
     }
 
     #[cfg(target_arch = "x86_64")]
@@ -89,14 +106,23 @@ fn by_procaddress() {
         let k32 = LoadLibraryA(c"kernel32.dll".as_ptr() as *const u8);
         assert!(!k32.is_null(), "LoadLibraryA(kernel32.dll) failed");
 
-        let p = GetProcAddress(k32, c"GetPhysicallyInstalledSystemMemory".as_ptr() as *const u8);
+        let p = GetProcAddress(
+            k32,
+            c"GetPhysicallyInstalledSystemMemory".as_ptr() as *const u8,
+        );
         assert!(!p.is_null(), "GetProcAddress came back null");
 
         let f: unsafe extern "win64" fn(*mut u64) -> i32 = std::mem::transmute(p);
         let mut kb = 0u64;
         let ok = f(&mut kb);
-        assert!(ok != 0 && kb > 0, "GetPhysicallyInstalledSystemMemory said {ok}, {kb} KiB");
-        println!("GetPhysicallyInstalledSystemMemory via GetProcAddress: {} MiB", kb / 1024);
+        assert!(
+            ok != 0 && kb > 0,
+            "GetPhysicallyInstalledSystemMemory said {ok}, {kb} KiB"
+        );
+        println!(
+            "GetPhysicallyInstalledSystemMemory via GetProcAddress: {} MiB",
+            kb / 1024
+        );
     }
 }
 
@@ -133,22 +159,39 @@ fn doorbell() {
         let k32 = LoadLibraryA(c"kernel32.dll".as_ptr() as *const u8);
         let p = GetProcAddress(k32, c"CreateEventW".as_ptr() as *const u8);
         assert!(!p.is_null(), "GetProcAddress(CreateEventW) came back null");
-        let create_event: unsafe extern "win64" fn(*mut c_void, i32, i32, *const u16) -> *mut c_void =
-            std::mem::transmute(p);
+        let create_event: unsafe extern "win64" fn(
+            *mut c_void,
+            i32,
+            i32,
+            *const u16,
+        ) -> *mut c_void = std::mem::transmute(p);
 
         let ev = create_event(std::ptr::null_mut(), 1, 0, std::ptr::null());
         assert!(!ev.is_null(), "CreateEventW failed");
         EVENT.store(ev as u64, Ordering::SeqCst);
 
         let mut tid = 0;
-        let thread = CreateThread(std::ptr::null_mut(), 0, ring as *mut c_void,
-                                  TOKEN as *mut c_void, 0, &mut tid);
+        let thread = CreateThread(
+            std::ptr::null_mut(),
+            0,
+            ring as *mut c_void,
+            TOKEN as *mut c_void,
+            0,
+            &mut tid,
+        );
         assert!(!thread.is_null(), "CreateThread failed");
 
         // Back on our own thread, so the whole libc is available again.
         let waited = WaitForSingleObject(ev, 10_000);
-        assert_eq!(waited, 0, "the callback never rang, WaitForSingleObject said {waited}");
-        assert_eq!(PAYLOAD.load(Ordering::SeqCst), TOKEN, "the callback got the wrong argument");
+        assert_eq!(
+            waited, 0,
+            "the callback never rang, WaitForSingleObject said {waited}"
+        );
+        assert_eq!(
+            PAYLOAD.load(Ordering::SeqCst),
+            TOKEN,
+            "the callback got the wrong argument"
+        );
         println!("callback on a host thread rang the doorbell, handed over 0x{TOKEN:x}");
 
         WaitForSingleObject(thread, 10_000);
@@ -173,7 +216,9 @@ fn cstr(p: *mut c_char) -> String {
     if p.is_null() {
         return "(no message)".into();
     }
-    unsafe { std::ffi::CStr::from_ptr(p) }.to_string_lossy().into_owned()
+    unsafe { std::ffi::CStr::from_ptr(p) }
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn elsewhere() {
@@ -201,7 +246,10 @@ fn elsewhere() {
     for name in candidates {
         let lib = unsafe { cosmo_dlopen(name.as_ptr(), 1) };
         if lib.is_null() {
-            println!("cosmo_dlopen({name:?}) -> {}", cstr(unsafe { cosmo_dlerror() }));
+            println!(
+                "cosmo_dlopen({name:?}) -> {}",
+                cstr(unsafe { cosmo_dlerror() })
+            );
             continue;
         }
         // Every symbol has to go through the trampoline before it is called:
@@ -214,8 +262,10 @@ fn elsewhere() {
             let sqrt: extern "C" fn(f64) -> f64 =
                 unsafe { std::mem::transmute(cosmo_dltramp(sym)) };
             let got = sqrt(2.0);
-            assert!((got - std::f64::consts::SQRT_2).abs() < 1e-12,
-                    "the host's sqrt(2.0) came back {got}");
+            assert!(
+                (got - std::f64::consts::SQRT_2).abs() < 1e-12,
+                "the host's sqrt(2.0) came back {got}"
+            );
             println!("cosmo_dlopen({name:?}) -> sqrt(2.0) = {got}");
         }
         unsafe { cosmo_dlclose(lib) };

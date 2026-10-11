@@ -55,8 +55,14 @@ fn main() {
         .map(|rel| Path::new(rel).exists())
         .unwrap_or(false);
     let _ = fs::remove_file(&name);
-    assert!(seen, "file written via the collapsed path is not in the cwd");
-    assert!(!stray, "the collapsed path was resolved relative to the cwd");
+    assert!(
+        seen,
+        "file written via the collapsed path is not in the cwd"
+    );
+    assert!(
+        !stray,
+        "the collapsed path was resolved relative to the cwd"
+    );
 
     // The collapsed form also resolves for metadata and removal.
     fs::write(&collapsed, b"unc").expect("rewrite");

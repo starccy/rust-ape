@@ -30,7 +30,8 @@ fn main() {
         assert_eq!(results, expected, "tasks returned the wrong values");
         println!("{TASKS} tasks finished in {elapsed:?}");
 
-        let sequential = Duration::from_millis(20 * (0..TASKS).map(|i| i as u64 % 4 + 1).sum::<u64>());
+        let sequential =
+            Duration::from_millis(20 * (0..TASKS).map(|i| i as u64 % 4 + 1).sum::<u64>());
         assert!(
             elapsed < sequential,
             "took {elapsed:?}, which is no better than running them in sequence ({sequential:?})"
@@ -40,12 +41,18 @@ fn main() {
         let started = Instant::now();
         Timer::after(Duration::from_millis(150)).await;
         let slept = started.elapsed();
-        assert!(slept >= Duration::from_millis(140), "timer fired early after {slept:?}");
+        assert!(
+            slept >= Duration::from_millis(140),
+            "timer fired early after {slept:?}"
+        );
         println!("timer slept {slept:?}");
 
         // Moving blocking work off the executor.
         let sum = smol::unblock(|| (1u64..=1_000_000).sum::<u64>()).await;
-        assert_eq!(sum, 500_000_500_000, "unblocked work computed the wrong sum");
+        assert_eq!(
+            sum, 500_000_500_000,
+            "unblocked work computed the wrong sum"
+        );
         println!("unblock computed {sum}");
 
         println!("\nsmol tasks ok");

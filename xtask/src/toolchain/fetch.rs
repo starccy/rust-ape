@@ -51,12 +51,18 @@ fn fetch_crates(dirs: &Dirs, force: bool) -> Result<()> {
 
         let cratefile = dirs.cache.join(format!("{name}-{ver}.crate"));
         download(&config::crate_url(name, ver), &cratefile)?;
-        util::run(Command::new("tar").arg("-xzf").arg(&cratefile).arg("-C").arg(&crates_dir))?;
+        util::run(
+            Command::new("tar")
+                .arg("-xzf")
+                .arg(&cratefile)
+                .arg("-C")
+                .arg(&crates_dir),
+        )?;
         fs::rename(&extracted, &dir)?;
         apply_patch(&crates_dir, &patch)?;
         write_stamp(&stamp_file, &stamp)?;
     }
-    
+
     for entry in fs::read_dir(&crates_dir)? {
         let entry = entry?;
         let name = entry.file_name();
@@ -102,7 +108,13 @@ fn fetch_cosmocc(dirs: &Dirs, force: bool) -> Result<()> {
     }
     println!("==> unpacking cosmocc");
     fs::create_dir_all(&dir)?;
-    util::run(Command::new("unzip").arg("-q").arg(&zip).arg("-d").arg(&dir))?;
+    util::run(
+        Command::new("unzip")
+            .arg("-q")
+            .arg(&zip)
+            .arg("-d")
+            .arg(&dir),
+    )?;
     write_stamp(&stamp_file, &stamp)?;
     Ok(())
 }
@@ -111,7 +123,12 @@ fn link_cosmocc(dirs: &Dirs, local: &Path) -> Result<()> {
     let local = local
         .canonicalize()
         .with_context(|| format!("no such toolchain directory: {}", local.display()))?;
-    for rel in ["bin/cosmocc", "include/libc", "x86_64-linux-cosmo/lib", "aarch64-linux-cosmo/lib"] {
+    for rel in [
+        "bin/cosmocc",
+        "include/libc",
+        "x86_64-linux-cosmo/lib",
+        "aarch64-linux-cosmo/lib",
+    ] {
         if !local.join(rel).exists() {
             bail!(
                 "{} does not look like a cosmocc tree (missing {rel}); point --cosmocc at the output of tool/cosmocc/package.sh",
@@ -122,8 +139,7 @@ fn link_cosmocc(dirs: &Dirs, local: &Path) -> Result<()> {
     let dir = dirs.vendor.join("cosmocc");
     let stamp_file = dirs.stamps.join("cosmocc");
     let stamp = format!("local:{}", local.display());
-    if fs::read_link(&dir).ok().as_deref() == Some(&*local)
-        && up_to_date(&dir, &stamp_file, &stamp)
+    if fs::read_link(&dir).ok().as_deref() == Some(&*local) && up_to_date(&dir, &stamp_file, &stamp)
     {
         println!("==> cosmocc already linked to {}", local.display());
         return Ok(());

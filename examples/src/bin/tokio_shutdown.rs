@@ -69,7 +69,9 @@ async fn chaos() {
     for id in 0..CONNS {
         handles.push(tokio::spawn(async move {
             let mut sock = TcpStream::connect(addr).await.expect("connect");
-            sock.write_all(format!("hello {id}").as_bytes()).await.expect("write");
+            sock.write_all(format!("hello {id}").as_bytes())
+                .await
+                .expect("write");
             let mut buf = [0u8; 64];
             // Never returns; the answer isn't coming.
             let _ = sock.read(&mut buf).await;

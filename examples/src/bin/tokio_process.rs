@@ -47,7 +47,10 @@ fn main() {
 fn child() {
     use std::io::{BufRead, Write};
     let mut line = String::new();
-    std::io::stdin().lock().read_line(&mut line).expect("child read stdin");
+    std::io::stdin()
+        .lock()
+        .read_line(&mut line)
+        .expect("child read stdin");
     println!("{GREETING}");
     println!("echo: {}", line.trim_end());
     std::io::stdout().flush().expect("child flush");
@@ -68,7 +71,12 @@ async fn output(exe: &str) {
         String::from_utf8_lossy(&out.stderr).contains("child stderr"),
         "child stderr came back empty"
     );
-    assert_eq!(out.status.code(), Some(CHILD_EXIT), "child exited {:?}", out.status.code());
+    assert_eq!(
+        out.status.code(),
+        Some(CHILD_EXIT),
+        "child exited {:?}",
+        out.status.code()
+    );
     println!("output(): collected both streams and exit {CHILD_EXIT}");
 }
 
@@ -94,7 +102,10 @@ async fn pipes(exe: &str) {
         seen.push(line);
     }
     assert!(seen.iter().any(|l| l == GREETING), "child said {seen:?}");
-    assert!(seen.iter().any(|l| l == "echo: ping"), "child never saw our stdin: {seen:?}");
+    assert!(
+        seen.iter().any(|l| l == "echo: ping"),
+        "child never saw our stdin: {seen:?}"
+    );
 
     let status = child.wait().await.expect("wait");
     assert_eq!(status.code(), Some(CHILD_EXIT));
@@ -121,7 +132,11 @@ async fn concurrent(exe: &str) {
         })
         .collect();
     for t in tasks {
-        assert_eq!(t.await.expect("task"), Some(CHILD_EXIT), "one of the children was misreaped");
+        assert_eq!(
+            t.await.expect("task"),
+            Some(CHILD_EXIT),
+            "one of the children was misreaped"
+        );
     }
     println!("concurrent: 8 children spawned and reaped together");
 }
@@ -149,7 +164,9 @@ async fn killing(exe: &str) {
 }
 
 async fn missing() {
-    let r = Command::new("definitely-not-a-real-program-xyzzy").output().await;
+    let r = Command::new("definitely-not-a-real-program-xyzzy")
+        .output()
+        .await;
     assert!(r.is_err(), "spawning a nonexistent program succeeded");
     println!("missing program reported {:?}", r.unwrap_err().kind());
 }

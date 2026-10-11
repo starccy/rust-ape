@@ -132,7 +132,12 @@ async fn cancellation() {
     // whole process with it instead of coming back as a JoinError.
 
     // Aborting one task leaves the runtime usable.
-    assert_eq!(tokio::spawn(async { 1 + 1 }).await.expect("post-abort task"), 2);
+    assert_eq!(
+        tokio::spawn(async { 1 + 1 })
+            .await
+            .expect("post-abort task"),
+        2
+    );
 
     // Dropping a JoinHandle detaches rather than cancels.
     let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -142,7 +147,10 @@ async fn cancellation() {
         f.store(true, std::sync::atomic::Ordering::SeqCst);
     }));
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(flag.load(std::sync::atomic::Ordering::SeqCst), "a detached task never ran");
+    assert!(
+        flag.load(std::sync::atomic::Ordering::SeqCst),
+        "a detached task never ran"
+    );
     println!("cancellation: abort reported, detached task still ran");
 }
 
@@ -212,9 +220,18 @@ async fn async_fd() {
     let n = loop {
         let mut guard = reader.readable().await.expect("readable");
         match guard.try_io(|inner| {
-            let n =
-                unsafe { libc::read(inner.get_ref().as_raw_fd(), buf.as_mut_ptr().cast(), buf.len()) };
-            if n < 0 { Err(std::io::Error::last_os_error()) } else { Ok(n as usize) }
+            let n = unsafe {
+                libc::read(
+                    inner.get_ref().as_raw_fd(),
+                    buf.as_mut_ptr().cast(),
+                    buf.len(),
+                )
+            };
+            if n < 0 {
+                Err(std::io::Error::last_os_error())
+            } else {
+                Ok(n as usize)
+            }
         }) {
             Ok(r) => break r.expect("pipe read"),
             Err(_would_block) => continue,
@@ -223,7 +240,10 @@ async fn async_fd() {
     writer.await.expect("writer");
 
     assert_eq!(&buf[..n], b"through the pipe");
-    assert!(started.elapsed() >= Duration::from_millis(40), "readable() returned before the write");
+    assert!(
+        started.elapsed() >= Duration::from_millis(40),
+        "readable() returned before the write"
+    );
     println!("AsyncFd: parked on a raw pipe fd and woke on the write");
 }
 
@@ -238,7 +258,9 @@ fn current_thread() {
     rt.block_on(async {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
         let addr = listener.local_addr().expect("local_addr");
         tokio::spawn(async move {
             let (mut sock, _) = listener.accept().await.expect("accept");

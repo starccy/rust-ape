@@ -4,8 +4,8 @@ use crate::util;
 use anyhow::{Context, Result, bail};
 use clap::Args;
 use std::fs;
-use std::path::PathBuf;
 use std::os::unix::fs::PermissionsExt;
+use std::path::PathBuf;
 
 #[derive(Args)]
 pub struct SetupArgs {
@@ -68,7 +68,10 @@ fn materialize() -> Result<()> {
         let json = fs::read_to_string(&template)
             .with_context(|| format!("could not read template {}", template.display()))?;
         if !json.contains("@APE_LINKER@") {
-            bail!("template {} has no @APE_LINKER@ placeholder", template.display());
+            bail!(
+                "template {} has no @APE_LINKER@ placeholder",
+                template.display()
+            );
         }
         let rendered = json.replace("@APE_LINKER@", &shim.display().to_string());
         let out = generated.join(format!("{triple}.json"));

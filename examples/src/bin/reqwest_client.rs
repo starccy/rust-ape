@@ -31,7 +31,12 @@ const SITES: [&str; 4] = [
     "https://www.rust-lang.org/",
 ];
 
-const NAMES: [&str; 4] = ["example.com", "rust-lang.org", "github.com", "cloudflare.com"];
+const NAMES: [&str; 4] = [
+    "example.com",
+    "rust-lang.org",
+    "github.com",
+    "cloudflare.com",
+];
 
 const CLIENTS: usize = 64;
 const ROUNDS: usize = 20;
@@ -89,7 +94,10 @@ fn builder() -> reqwest::ClientBuilder {
 /// Four sites at once over one client, so the pool and several TLS handshakes
 /// overlap.
 async fn real_sites() {
-    let http = builder().pool_max_idle_per_host(8).build().expect("build client");
+    let http = builder()
+        .pool_max_idle_per_host(8)
+        .build()
+        .expect("build client");
     let started = Instant::now();
 
     let tasks: Vec<_> = SITES
@@ -120,8 +128,15 @@ async fn real_sites() {
     // All four serve h2. None negotiating it means ALPN never reached the
     // config, which costs performance and breaks nothing, so no other
     // assertion here would notice.
-    assert!(over_h2 > 0, "nothing came back over HTTP/2, check alpn_protocols");
-    println!("{} sites, {total} bytes, {over_h2} over h2, in {:?}", SITES.len(), started.elapsed());
+    assert!(
+        over_h2 > 0,
+        "nothing came back over HTTP/2, check alpn_protocols"
+    );
+    println!(
+        "{} sites, {total} bytes, {over_h2} over h2, in {:?}",
+        SITES.len(),
+        started.elapsed()
+    );
 }
 
 // Cloudflare's DNS-over-HTTPS JSON API, picked because the shape of what comes
@@ -175,7 +190,11 @@ async fn typed_json() {
 
     for t in tasks {
         let (name, reply) = t.await.expect("task");
-        assert_eq!(reply.status, 0, "{name} came back with Status {}", reply.status);
+        assert_eq!(
+            reply.status, 0,
+            "{name} came back with Status {}",
+            reply.status
+        );
 
         let asked = reply.question.first().expect("no Question in the reply");
         assert_eq!(
@@ -205,8 +224,16 @@ async fn typed_json() {
 /// place.
 async fn hickory_resolver() {
     let http = builder().hickory_dns(true).build().expect("build client");
-    let resp = http.get("https://example.com/").send().await.expect("request through hickory");
-    assert!(resp.status().is_success(), "hickory client got {}", resp.status());
+    let resp = http
+        .get("https://example.com/")
+        .send()
+        .await
+        .expect("request through hickory");
+    assert!(
+        resp.status().is_success(),
+        "hickory client got {}",
+        resp.status()
+    );
     let len = resp.bytes().await.expect("body").len();
     assert!(len > 0);
     println!("hickory-dns resolver: example.com fetched, {len} bytes");
@@ -277,7 +304,12 @@ where
         r.read_exact(&mut body).await.ok()?;
     }
 
-    Some(Request { path, accept_encoding, cookie, body })
+    Some(Request {
+        path,
+        accept_encoding,
+        cookie,
+        body,
+    })
 }
 
 fn gzip(data: &[u8]) -> Vec<u8> {
@@ -432,9 +464,18 @@ async fn compression(http: &reqwest::Client, base: &str) {
     let want = COMPRESSIBLE.repeat(200);
 
     for route in ["gzip", "deflate"] {
-        let resp = http.get(format!("{base}/{route}")).send().await.expect("send");
+        let resp = http
+            .get(format!("{base}/{route}"))
+            .send()
+            .await
+            .expect("send");
         let body = resp.text().await.expect("body");
-        assert_eq!(body, want, "{route} body came back wrong ({} bytes)", body.len());
+        assert_eq!(
+            body,
+            want,
+            "{route} body came back wrong ({} bytes)",
+            body.len()
+        );
         println!("{route}: {} bytes decompressed transparently", body.len());
     }
 
@@ -450,7 +491,10 @@ async fn compression(http: &reqwest::Client, base: &str) {
         .await
         .expect("body");
     for enc in ["gzip", "deflate", "br", "zstd"] {
-        assert!(offered.contains(enc), "accept-encoding was {offered:?}, missing {enc}");
+        assert!(
+            offered.contains(enc),
+            "accept-encoding was {offered:?}, missing {enc}"
+        );
     }
     println!("accept-encoding offered: {offered}");
 }
@@ -458,7 +502,11 @@ async fn compression(http: &reqwest::Client, base: &str) {
 async fn cookies(base: &str) {
     let http = builder().cookie_store(true).build().expect("build client");
 
-    let set = http.get(format!("{base}/set-cookie")).send().await.expect("send");
+    let set = http
+        .get(format!("{base}/set-cookie"))
+        .send()
+        .await
+        .expect("send");
     assert_eq!(set.text().await.expect("body"), "set");
 
     let sent = http
@@ -502,12 +550,10 @@ async fn bodies(http: &reqwest::Client, base: &str) {
     );
 
     // Multipart arrives chunked, since its length isn't known up front.
-    let form = reqwest::multipart::Form::new()
-        .text("field", "value")
-        .part(
-            "file",
-            reqwest::multipart::Part::bytes(vec![b'z'; 4096]).file_name("blob.bin"),
-        );
+    let form = reqwest::multipart::Form::new().text("field", "value").part(
+        "file",
+        reqwest::multipart::Part::bytes(vec![b'z'; 4096]).file_name("blob.bin"),
+    );
     let len: usize = http
         .post(format!("{base}/echo-len"))
         .multipart(form)
@@ -531,7 +577,10 @@ async fn streaming(http: &reqwest::Client, base: &str) {
     let (mut total, mut chunks) = (0usize, 0usize);
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.expect("chunk");
-        assert!(chunk.iter().all(|&c| c == b'x'), "a chunk came back corrupted");
+        assert!(
+            chunk.iter().all(|&c| c == b'x'),
+            "a chunk came back corrupted"
+        );
         total += chunk.len();
         chunks += 1;
     }
@@ -596,7 +645,11 @@ async fn socks_proxy() -> std::net::SocketAddr {
                     Err(_) => return,
                 };
                 // Success, bound address 0.0.0.0:0 (the client ignores it).
-                if client.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]).await.is_err() {
+                if client
+                    .write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0])
+                    .await
+                    .is_err()
+                {
                     return;
                 }
                 let _ = tokio::io::copy_bidirectional(&mut client, &mut upstream).await;

@@ -23,7 +23,9 @@ fn main() {
 
     rt.block_on(async {
         let dir = std::env::temp_dir().join(format!("rust-ape-uds-{}", std::process::id()));
-        tokio::fs::create_dir_all(&dir).await.expect("create_dir_all");
+        tokio::fs::create_dir_all(&dir)
+            .await
+            .expect("create_dir_all");
 
         streams(&dir).await;
         pairs().await;
@@ -33,7 +35,9 @@ fn main() {
             datagrams(&dir).await;
         }
 
-        tokio::fs::remove_dir_all(&dir).await.expect("remove_dir_all");
+        tokio::fs::remove_dir_all(&dir)
+            .await
+            .expect("remove_dir_all");
     });
 
     println!("\ntokio uds ok");
@@ -116,13 +120,18 @@ async fn datagrams(dir: &std::path::Path) {
         n
     });
 
-    client.send_to(b"datagram", &server_path).await.expect("send_to");
+    client
+        .send_to(b"datagram", &server_path)
+        .await
+        .expect("send_to");
     let n = tokio::time::timeout(Duration::from_secs(10), echo)
         .await
         .expect("datagram never arrived")
         .expect("echo task");
     assert_eq!(n, 8);
 
-    tokio::fs::remove_file(&server_path).await.expect("remove socket");
+    tokio::fs::remove_file(&server_path)
+        .await
+        .expect("remove socket");
     println!("UnixDatagram delivered {n} bytes");
 }

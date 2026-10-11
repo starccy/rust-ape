@@ -13,9 +13,20 @@ fn get_int(fd: i32, level: i32, name: i32) -> i32 {
     let mut val: i32 = -1;
     let mut len = mem::size_of::<i32>() as libc::socklen_t;
     let rc = unsafe {
-        libc::getsockopt(fd, level, name, &mut val as *mut _ as *mut libc::c_void, &mut len)
+        libc::getsockopt(
+            fd,
+            level,
+            name,
+            &mut val as *mut _ as *mut libc::c_void,
+            &mut len,
+        )
     };
-    assert_eq!(rc, 0, "getsockopt({name}) failed: {}", std::io::Error::last_os_error());
+    assert_eq!(
+        rc,
+        0,
+        "getsockopt({name}) failed: {}",
+        std::io::Error::last_os_error()
+    );
     val
 }
 
@@ -38,7 +49,9 @@ fn main() {
         .expect("set_read_timeout");
 
     for msg in DATAGRAMS {
-        client.send_to(msg.as_bytes(), server_addr).expect("client send_to");
+        client
+            .send_to(msg.as_bytes(), server_addr)
+            .expect("client send_to");
 
         let mut buf = [0u8; 512];
         let (n, from) = client.recv_from(&mut buf).expect("client recv_from");
@@ -58,18 +71,34 @@ fn main() {
     );
 
     client.set_broadcast(true).expect("set_broadcast");
-    assert!(client.broadcast().expect("broadcast"), "SO_BROADCAST did not stick");
+    assert!(
+        client.broadcast().expect("broadcast"),
+        "SO_BROADCAST did not stick"
+    );
     client.set_broadcast(false).expect("clear SO_BROADCAST");
 
     client.set_ttl(7).expect("set_ttl");
     assert_eq!(client.ttl().expect("ttl"), 7, "IP_TTL did not stick");
 
-    client.set_multicast_loop_v4(false).expect("set_multicast_loop_v4");
-    assert!(!client.multicast_loop_v4().expect("multicast_loop_v4"), "IP_MULTICAST_LOOP did not stick");
-    client.set_multicast_loop_v4(true).expect("restore IP_MULTICAST_LOOP");
+    client
+        .set_multicast_loop_v4(false)
+        .expect("set_multicast_loop_v4");
+    assert!(
+        !client.multicast_loop_v4().expect("multicast_loop_v4"),
+        "IP_MULTICAST_LOOP did not stick"
+    );
+    client
+        .set_multicast_loop_v4(true)
+        .expect("restore IP_MULTICAST_LOOP");
 
-    client.set_multicast_ttl_v4(4).expect("set_multicast_ttl_v4");
-    assert_eq!(client.multicast_ttl_v4().expect("multicast_ttl_v4"), 4, "IP_MULTICAST_TTL did not stick");
+    client
+        .set_multicast_ttl_v4(4)
+        .expect("set_multicast_ttl_v4");
+    assert_eq!(
+        client.multicast_ttl_v4().expect("multicast_ttl_v4"),
+        4,
+        "IP_MULTICAST_TTL did not stick"
+    );
     println!("SO_TYPE, SO_BROADCAST, IP_TTL and the IP_MULTICAST_* pair all round-tripped");
 
     // IP_ADD_MEMBERSHIP carries an ip_mreq rather than an int, so its payload

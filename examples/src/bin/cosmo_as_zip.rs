@@ -1,8 +1,8 @@
 //! every cosmo's APE binary is also a valid zip archive, so you can append files
-//! to it and read them back from the same binary directly. 
+//! to it and read them back from the same binary directly.
 //!
 //! Those files are located in a virtual directory called `/zip/`.
-//! 
+//!
 //! This example use `zip` crate just for append the assets to the binary.
 //! Read the assets themselves does not require any external crate, just use `std::fs`.
 
@@ -63,8 +63,7 @@ fn parent() {
     let mut w = zip::ZipWriter::new_append(f).expect("the binary should parse as a zip");
     w.start_file(
         "some_file.txt",
-        zip::write::SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Stored),
+        zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored),
     )
     .expect("start_file");
     w.write_all(ASSET_TEXT.as_bytes()).expect("write the asset");

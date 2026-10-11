@@ -44,7 +44,10 @@ fn main() {
     let start = Instant::now();
     unsafe { libc::alarm(1) };
     assert_eq!(sigwait(&set), libc::SIGALRM);
-    assert!(start.elapsed() >= Duration::from_millis(900), "alarm fired early");
+    assert!(
+        start.elapsed() >= Duration::from_millis(900),
+        "alarm fired early"
+    );
     println!("sigwait consumed SIGALRM ok");
 
     unsafe { libc::alarm(1) };

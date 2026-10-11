@@ -17,17 +17,24 @@ fn main() {
     let other = File::open(&path).unwrap();
     f.lock_shared().expect("lock_shared");
     other.try_lock_shared().expect("second shared lock");
-    assert!(other.try_lock().is_err(), "exclusive lock over a shared one");
+    assert!(
+        other.try_lock().is_err(),
+        "exclusive lock over a shared one"
+    );
     other.unlock().unwrap();
     f.unlock().unwrap();
     f.try_lock().expect("try_lock");
-    assert!(other.try_lock_shared().is_err(), "shared lock over an exclusive one");
+    assert!(
+        other.try_lock_shared().is_err(),
+        "shared lock over an exclusive one"
+    );
     f.unlock().unwrap();
     println!("flock ok");
 
     // futimens: an omitted field carries UTIME_OMIT
     let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
-    f.set_times(FileTimes::new().set_accessed(old).set_modified(old)).unwrap();
+    f.set_times(FileTimes::new().set_accessed(old).set_modified(old))
+        .unwrap();
     let newer = old + Duration::from_secs(3600);
     f.set_times(FileTimes::new().set_modified(newer)).unwrap();
     let meta = f.metadata().unwrap();
@@ -39,11 +46,20 @@ fn main() {
     let cwd = std::env::current_dir().unwrap();
     std::env::set_current_dir(&dir).unwrap();
     unsafe {
-        assert_eq!(libc::mkdirat(libc::AT_FDCWD, c"sub".as_ptr(), 0o755), 0, "mkdirat");
+        assert_eq!(
+            libc::mkdirat(libc::AT_FDCWD, c"sub".as_ptr(), 0o755),
+            0,
+            "mkdirat"
+        );
         let linked = libc::symlinkat(c"sub".as_ptr(), libc::AT_FDCWD, c"link".as_ptr());
         if linked == 0 {
             let mut buf = [0u8; 16];
-            let n = libc::readlinkat(libc::AT_FDCWD, c"link".as_ptr(), buf.as_mut_ptr().cast(), buf.len());
+            let n = libc::readlinkat(
+                libc::AT_FDCWD,
+                c"link".as_ptr(),
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+            );
             assert_eq!(&buf[..n as usize], b"sub", "readlinkat");
         } else {
             // unprivileged symlinks can be off on Windows
@@ -55,7 +71,11 @@ fn main() {
             let e = std::io::Error::last_os_error();
             assert_eq!(e.raw_os_error(), Some(libc::ENOSYS), "fchownat: {e}");
         }
-        assert_eq!(libc::fchmodat(libc::AT_FDCWD, c"f".as_ptr(), 0o600, 0), 0, "fchmodat");
+        assert_eq!(
+            libc::fchmodat(libc::AT_FDCWD, c"f".as_ptr(), 0o600, 0),
+            0,
+            "fchmodat"
+        );
     }
     std::env::set_current_dir(cwd).unwrap();
     println!("at calls ok");
@@ -64,7 +84,11 @@ fn main() {
     unsafe {
         let mut t: libc::termios = std::mem::zeroed();
         assert_eq!(libc::cfsetspeed(&mut t, libc::B115200), 0, "cfsetspeed");
-        assert_eq!(libc::cfgetospeed(&t), libc::B115200, "cfsetspeed wrote somewhere else");
+        assert_eq!(
+            libc::cfgetospeed(&t),
+            libc::B115200,
+            "cfsetspeed wrote somewhere else"
+        );
     }
     println!("cfsetspeed ok");
 
@@ -79,7 +103,10 @@ fn main() {
     println!("fioclex ok");
 
     // cosmo's PTHREAD_STACK_MIN is 32768, musl's 2048
-    let t = std::thread::Builder::new().stack_size(16 * 1024).spawn(|| 1 + 1).expect("small stack");
+    let t = std::thread::Builder::new()
+        .stack_size(16 * 1024)
+        .spawn(|| 1 + 1)
+        .expect("small stack");
     assert_eq!(t.join().unwrap(), 2);
     println!("small stack ok");
 
@@ -88,7 +115,12 @@ fn main() {
         let mut sv: libc::statvfs = std::mem::zeroed();
         let c = std::ffi::CString::new(dir.to_str().unwrap()).unwrap();
         assert_eq!(libc::statvfs(c.as_ptr(), &mut sv), 0, "statvfs");
-        assert_eq!(sv.f_flag & libc::ST_RDONLY, 0, "temp dir reported read-only: {:#x}", sv.f_flag);
+        assert_eq!(
+            sv.f_flag & libc::ST_RDONLY,
+            0,
+            "temp dir reported read-only: {:#x}",
+            sv.f_flag
+        );
     }
     println!("statvfs ok");
 
@@ -96,39 +128,82 @@ fn main() {
     unsafe {
         let mut attr: libc::pthread_mutexattr_t = std::mem::zeroed();
         assert_eq!(libc::pthread_mutexattr_init(&mut attr), 0);
-        assert_eq!(libc::pthread_mutexattr_settype(&mut attr, libc::PTHREAD_MUTEX_RECURSIVE), 0);
+        assert_eq!(
+            libc::pthread_mutexattr_settype(&mut attr, libc::PTHREAD_MUTEX_RECURSIVE),
+            0
+        );
         let mut m: libc::pthread_mutex_t = std::mem::zeroed();
         assert_eq!(libc::pthread_mutex_init(&mut m, &attr), 0);
         assert_eq!(libc::pthread_mutex_lock(&mut m), 0);
-        assert_eq!(libc::pthread_mutex_trylock(&mut m), 0, "a recursive mutex refused its owner");
+        assert_eq!(
+            libc::pthread_mutex_trylock(&mut m),
+            0,
+            "a recursive mutex refused its owner"
+        );
         libc::pthread_mutex_unlock(&mut m);
         libc::pthread_mutex_unlock(&mut m);
         libc::pthread_mutex_destroy(&mut m);
 
-        assert_eq!(libc::pthread_mutexattr_settype(&mut attr, libc::PTHREAD_MUTEX_NORMAL), 0);
+        assert_eq!(
+            libc::pthread_mutexattr_settype(&mut attr, libc::PTHREAD_MUTEX_NORMAL),
+            0
+        );
         assert_eq!(libc::pthread_mutex_init(&mut m, &attr), 0);
         assert_eq!(libc::pthread_mutex_lock(&mut m), 0);
-        assert_eq!(libc::pthread_mutex_trylock(&mut m), libc::EBUSY, "a normal mutex let its owner in twice");
+        assert_eq!(
+            libc::pthread_mutex_trylock(&mut m),
+            libc::EBUSY,
+            "a normal mutex let its owner in twice"
+        );
         libc::pthread_mutex_unlock(&mut m);
         libc::pthread_mutex_destroy(&mut m);
 
-        assert_eq!(libc::pthread_mutexattr_setpshared(&mut attr, libc::PTHREAD_PROCESS_SHARED), 0, "setpshared");
+        assert_eq!(
+            libc::pthread_mutexattr_setpshared(&mut attr, libc::PTHREAD_PROCESS_SHARED),
+            0,
+            "setpshared"
+        );
         let mut shared = -1;
         assert_eq!(libc::pthread_mutexattr_getpshared(&attr, &mut shared), 0);
-        assert_eq!(shared, libc::PTHREAD_PROCESS_SHARED, "pshared read back as {shared}");
+        assert_eq!(
+            shared,
+            libc::PTHREAD_PROCESS_SHARED,
+            "pshared read back as {shared}"
+        );
         libc::pthread_mutexattr_destroy(&mut attr);
     }
     println!("mutex attributes ok");
 
     // msync flags, and the 64-bit names going the same way as the plain ones
-    let rw = fs::OpenOptions::new().read(true).write(true).open(&path).unwrap();
+    let rw = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&path)
+        .unwrap();
     unsafe {
         let fd = rw.as_raw_fd();
         assert_eq!(libc::ftruncate(fd, 4096), 0);
-        let p = libc::mmap(std::ptr::null_mut(), 4096, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0);
-        assert_ne!(p, libc::MAP_FAILED, "mmap: {}", std::io::Error::last_os_error());
+        let p = libc::mmap(
+            std::ptr::null_mut(),
+            4096,
+            libc::PROT_READ | libc::PROT_WRITE,
+            libc::MAP_SHARED,
+            fd,
+            0,
+        );
+        assert_ne!(
+            p,
+            libc::MAP_FAILED,
+            "mmap: {}",
+            std::io::Error::last_os_error()
+        );
         *(p as *mut u8) = b'x';
-        assert_eq!(libc::msync(p, 4096, libc::MS_SYNC), 0, "msync: {}", std::io::Error::last_os_error());
+        assert_eq!(
+            libc::msync(p, 4096, libc::MS_SYNC),
+            0,
+            "msync: {}",
+            std::io::Error::last_os_error()
+        );
         libc::munmap(p, 4096);
         assert_eq!(libc::lseek64(fd, 0, libc::SEEK_END), 4096, "lseek64");
     }
@@ -140,13 +215,23 @@ fn main() {
         if libc::getrusage(libc::RUSAGE_THREAD, &mut ru) != 0 {
             // macOS has no per-thread usage
             let e = std::io::Error::last_os_error();
-            assert_eq!(e.raw_os_error(), Some(libc::EINVAL), "getrusage(RUSAGE_THREAD): {e}");
+            assert_eq!(
+                e.raw_os_error(),
+                Some(libc::EINVAL),
+                "getrusage(RUSAGE_THREAD): {e}"
+            );
         }
         let policy = libc::sched_getscheduler(0);
         if policy >= 0 {
             assert!(
-                [libc::SCHED_OTHER, libc::SCHED_FIFO, libc::SCHED_RR, libc::SCHED_BATCH, libc::SCHED_IDLE]
-                    .contains(&(policy & !libc::SCHED_RESET_ON_FORK)),
+                [
+                    libc::SCHED_OTHER,
+                    libc::SCHED_FIFO,
+                    libc::SCHED_RR,
+                    libc::SCHED_BATCH,
+                    libc::SCHED_IDLE
+                ]
+                .contains(&(policy & !libc::SCHED_RESET_ON_FORK)),
                 "sched_getscheduler gave {policy}, not one of Linux's numbers"
             );
         }

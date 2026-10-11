@@ -132,7 +132,9 @@ unsafe fn cstr_printable(p: *const c_char) -> Option<String> {
 pub fn cpu_count() -> i32 {
     // This used to call __get_cpu_count, but upstream renamed that private
     // symbol, so use sysconf instead, which is stable.
-    unsafe { sysconf(84 /* _SC_NPROCESSORS_ONLN */) as i32 }
+    unsafe {
+        sysconf(84 /* _SC_NPROCESSORS_ONLN */) as i32
+    }
 }
 
 /// Total physical memory, in pages.
@@ -198,7 +200,9 @@ pub fn cpuid_vendor() -> String {
     v[0..4].copy_from_slice(&raw[0..4]); // EBX
     v[4..8].copy_from_slice(&raw[8..12]); // EDX
     v[8..12].copy_from_slice(&raw[4..8]); // ECX
-    String::from_utf8_lossy(&v).trim_end_matches('\0').to_string()
+    String::from_utf8_lossy(&v)
+        .trim_end_matches('\0')
+        .to_string()
 }
 
 /// Host OS as reported through CPUID, which some hypervisors disclose; None on

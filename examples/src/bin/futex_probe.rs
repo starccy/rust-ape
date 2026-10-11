@@ -34,7 +34,10 @@ fn main() {
 
     // Short timed wait on the right value: expect ETIMEDOUT.
     futex.store(1, Ordering::SeqCst);
-    let ts = libc::timespec { tv_sec: 0, tv_nsec: 50_000_000 };
+    let ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 50_000_000,
+    };
     probe("timeout", -1, Some(libc::ETIMEDOUT), || unsafe {
         libc::syscall(
             libc::SYS_futex,

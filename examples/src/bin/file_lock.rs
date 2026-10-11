@@ -36,7 +36,11 @@ fn child(flag: &str, path: &str) {
         "--locked" => {
             // F_GETLK must report the parent's write lock, in musl coding.
             let mut q = flk(libc::F_WRLCK);
-            assert_eq!(unsafe { libc::fcntl(fd, libc::F_GETLK, &mut q) }, 0, "F_GETLK");
+            assert_eq!(
+                unsafe { libc::fcntl(fd, libc::F_GETLK, &mut q) },
+                0,
+                "F_GETLK"
+            );
             assert_eq!(
                 q.l_type,
                 libc::F_WRLCK as libc::c_short,
@@ -106,7 +110,11 @@ fn main() {
 
     // Release, then the child must be able to take the lock itself.
     let mut un = flk(libc::F_UNLCK);
-    assert_eq!(unsafe { libc::fcntl(fd, libc::F_SETLK, &mut un) }, 0, "F_UNLCK");
+    assert_eq!(
+        unsafe { libc::fcntl(fd, libc::F_SETLK, &mut un) },
+        0,
+        "F_UNLCK"
+    );
     run_child(&self_exe, "--unlocked", path.to_str().unwrap());
 
     drop(f);

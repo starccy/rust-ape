@@ -83,12 +83,15 @@ struct AllowFile {
 
 fn load_audit_file(path: &Path) -> Result<(Allow, Vec<Family>)> {
     let text = fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-    let file: AuditFile = toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
+    let file: AuditFile =
+        toml::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
     let patterns = |kind: &str, m: BTreeMap<String, String>| -> Result<Patterns> {
         if let Some((name, _)) = m.iter().find(|(_, why)| why.trim().is_empty()) {
             bail!("{}: allow.{kind}.{name} needs a reason", path.display());
         }
-        Ok(Patterns(m.into_keys().map(|k| (k, Default::default())).collect()))
+        Ok(Patterns(
+            m.into_keys().map(|k| (k, Default::default())).collect(),
+        ))
     };
     for f in &file.family {
         if f.prefixes.is_empty() || f.consumers.is_empty() {
@@ -105,11 +108,42 @@ fn load_audit_file(path: &Path) -> Result<(Allow, Vec<Family>)> {
 /// Functions whose arguments carry no constants at all, so importing them
 /// straight from cosmo is fine without anyone looking.
 const PLAIN: &[&str] = &[
-    "memcpy", "memmove", "memset", "memcmp", "bcmp", "memchr", "memrchr", "strlen", "strnlen",
-    "strcmp", "strncmp", "strchr", "strrchr", "strstr", "strcpy", "strncpy", "strdup",
-    "malloc", "calloc", "realloc", "free", "posix_memalign", "aligned_alloc", "memalign",
-    "malloc_usable_size", "abort", "exit", "_exit", "atexit", "__cxa_atexit",
-    "__cxa_thread_atexit_impl", "getenv", "setenv", "unsetenv", "environ", "freeaddrinfo",
+    "memcpy",
+    "memmove",
+    "memset",
+    "memcmp",
+    "bcmp",
+    "memchr",
+    "memrchr",
+    "strlen",
+    "strnlen",
+    "strcmp",
+    "strncmp",
+    "strchr",
+    "strrchr",
+    "strstr",
+    "strcpy",
+    "strncpy",
+    "strdup",
+    "malloc",
+    "calloc",
+    "realloc",
+    "free",
+    "posix_memalign",
+    "aligned_alloc",
+    "memalign",
+    "malloc_usable_size",
+    "abort",
+    "exit",
+    "_exit",
+    "atexit",
+    "__cxa_atexit",
+    "__cxa_thread_atexit_impl",
+    "getenv",
+    "setenv",
+    "unsetenv",
+    "environ",
+    "freeaddrinfo",
 ];
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -150,7 +184,10 @@ pub fn run(args: &AuditArgs) -> Result<()> {
     let syscons = parse_consts_sh(&consts_sh)?;
 
     let names = scrape_const_names(&root)?;
-    println!("==> {} constant names in the libc crate's linux-musl files", names.len());
+    println!(
+        "==> {} constant names in the libc crate's linux-musl files",
+        names.len()
+    );
 
     let signatures = fn_signatures(&root)?;
     let mut fn_names: Vec<String> = signatures.keys().cloned().collect();
@@ -191,8 +228,12 @@ pub fn run(args: &AuditArgs) -> Result<()> {
         let mut unknown = false;
         let mut cosmo_cell = String::new();
         for &arch in ARCHES {
-            let Some(&lin) = musl[arch].get(name) else { continue };
-            let Some((spelled, c)) = cosmo[arch].get(name) else { continue };
+            let Some(&lin) = musl[arch].get(name) else {
+                continue;
+            };
+            let Some((spelled, c)) = cosmo[arch].get(name) else {
+                continue;
+            };
             match *c {
                 Cosmo::Fixed(v) => {
                     kind = "fixed";
@@ -233,7 +274,11 @@ pub fn run(args: &AuditArgs) -> Result<()> {
         let verdict = if kind == "absent" || kind == "other" {
             kind
         } else if diffs.is_empty() && !unknown {
-            if unsupported.is_empty() { "same" } else { "unsupported" }
+            if unsupported.is_empty() {
+                "same"
+            } else {
+                "unsupported"
+            }
         } else if covered.contains(name.as_str())
             // PF_X is AF_X under its older name
             || name.strip_prefix("PF_").is_some_and(|rest| {
@@ -243,7 +288,9 @@ pub fn run(args: &AuditArgs) -> Result<()> {
         {
             "covered"
         } else if consumers_of(&families, name).is_some_and(|fns| {
-            !fns.iter().any(|f| imports.contains_key(f.as_str()) || imports.contains_key(&format!("__ape_shim_{f}")))
+            !fns.iter().any(|f| {
+                imports.contains_key(f.as_str()) || imports.contains_key(&format!("__ape_shim_{f}"))
+            })
         }) {
             // nothing in this build calls a function that takes it
             "idle"
@@ -291,7 +338,9 @@ pub fn run(args: &AuditArgs) -> Result<()> {
 
     let mut fn_rows: Vec<FnRow> = Vec::new();
     for (func, crates) in &imports {
-        let Some((in_family, note)) = judge(func) else { continue };
+        let Some((in_family, note)) = judge(func) else {
+            continue;
+        };
         let verdict = match (allow.fns.matches(func), in_family) {
             (true, _) => "allowed",
             (false, true) => "GAP",
@@ -320,13 +369,20 @@ pub fn run(args: &AuditArgs) -> Result<()> {
             .collect();
         unused.sort();
         for func in unused {
-            let Some((in_family, note)) = judge(func) else { continue };
+            let Some((in_family, note)) = judge(func) else {
+                continue;
+            };
             let verdict = match (allow.fns.matches(func), in_family) {
                 (true, _) => "allowed",
                 (false, true) => "unused GAP",
                 (false, false) => "unused review",
             };
-            fn_rows.push(FnRow { name: func.clone(), verdict, families: note, crates: String::new() });
+            fn_rows.push(FnRow {
+                name: func.clone(),
+                verdict,
+                families: note,
+                crates: String::new(),
+            });
         }
     }
 
@@ -337,11 +393,19 @@ pub fn run(args: &AuditArgs) -> Result<()> {
     println!();
     println!(
         "constants: {} same, {} covered by shim/tables.h, {} allowed or without a caller, {} missing on some host only, {} absent from cosmo, {} not integers there",
-        count("same"), count("covered"), count("allowed") + count("idle"), count("unsupported"), count("absent"), count("other"),
+        count("same"),
+        count("covered"),
+        count("allowed") + count("idle"),
+        count("unsupported"),
+        count("absent"),
+        count("other"),
     );
     let mut failed = false;
     for (title, verdict) in [
-        ("value differs on some host and nothing translates it", "GAP"),
+        (
+            "value differs on some host and nothing translates it",
+            "GAP",
+        ),
         ("runtime constant with no row in consts.sh", "unknown"),
     ] {
         let hits: Vec<&ConstRow> = rows
@@ -359,7 +423,11 @@ pub fn run(args: &AuditArgs) -> Result<()> {
         for r in &hits {
             // what --all adds is a survey, not a verdict on this build
             failed |= !r.users.is_empty();
-            println!("  {:<28} used by {}", r.name, if r.users.is_empty() { "-" } else { &r.users });
+            println!(
+                "  {:<28} used by {}",
+                r.name,
+                if r.users.is_empty() { "-" } else { &r.users }
+            );
             for d in &r.diffs {
                 println!("      {d}");
             }
@@ -371,7 +439,10 @@ pub fn run(args: &AuditArgs) -> Result<()> {
     let gaps: Vec<&FnRow> = fn_rows.iter().filter(|r| r.verdict == "GAP").collect();
     if !gaps.is_empty() {
         failed = true;
-        println!("\nfunctions imported straight from cosmo that take a differing family: {}", gaps.len());
+        println!(
+            "\nfunctions imported straight from cosmo that take a differing family: {}",
+            gaps.len()
+        );
         for r in gaps {
             println!("  {:<28} [{}] from {}", r.name, r.families, r.crates);
         }
@@ -379,15 +450,26 @@ pub fn run(args: &AuditArgs) -> Result<()> {
     let review: Vec<&FnRow> = fn_rows.iter().filter(|r| r.verdict == "review").collect();
     if !review.is_empty() {
         failed = true;
-        println!("\nfunctions imported straight from cosmo that no family lists, with arguments that could carry a constant: {}", review.len());
+        println!(
+            "\nfunctions imported straight from cosmo that no family lists, with arguments that could carry a constant: {}",
+            review.len()
+        );
         for r in review {
             println!("  {:<28} ({}) from {}", r.name, r.families, r.crates);
         }
-        println!("  add each to a [[family]] in patches/audit.toml, or to its [allow.fn] with a reason");
+        println!(
+            "  add each to a [[family]] in patches/audit.toml, or to its [allow.fn] with a reason"
+        );
     }
     for (title, verdict) in [
-        ("declared by the libc crate, not called in this build, and taking a differing family", "unused GAP"),
-        ("declared by the libc crate, not called in this build, no family lists them", "unused review"),
+        (
+            "declared by the libc crate, not called in this build, and taking a differing family",
+            "unused GAP",
+        ),
+        (
+            "declared by the libc crate, not called in this build, no family lists them",
+            "unused review",
+        ),
     ] {
         let hits: Vec<&FnRow> = fn_rows.iter().filter(|r| r.verdict == verdict).collect();
         if hits.is_empty() {
@@ -398,8 +480,12 @@ pub fn run(args: &AuditArgs) -> Result<()> {
             println!("  {:<32} {}", r.name, r.families);
         }
     }
-    
-    let stale_fns = if args.all { allow.fns.unused() } else { Vec::new() };
+
+    let stale_fns = if args.all {
+        allow.fns.unused()
+    } else {
+        Vec::new()
+    };
     let stale: Vec<String> = allow
         .consts
         .unused()
@@ -408,7 +494,9 @@ pub fn run(args: &AuditArgs) -> Result<()> {
         .chain(stale_fns.into_iter().map(|p| format!("fn {p}")))
         .collect();
     if !stale.is_empty() {
-        println!("\nwarning: patches/audit.toml allow entries that silenced nothing in this build:");
+        println!(
+            "\nwarning: patches/audit.toml allow entries that silenced nothing in this build:"
+        );
         for e in &stale {
             println!("  {e}");
         }
@@ -419,7 +507,9 @@ pub fn run(args: &AuditArgs) -> Result<()> {
         bail!("audit found gaps; fix them or explain them in patches/audit.toml");
     }
     if !std_imports_ok {
-        bail!("std's libc imports changed; review them, then `cargo xtask audit --update-std-imports`");
+        bail!(
+            "std's libc imports changed; review them, then `cargo xtask audit --update-std-imports`"
+        );
     }
     println!("audit ok");
     Ok(())
@@ -478,10 +568,16 @@ fn scrape_const_names(root: &Path) -> Result<Vec<String>> {
     }
     let mut names = BTreeSet::new();
     for f in files {
-        let Ok(text) = fs::read_to_string(&f) else { continue };
+        let Ok(text) = fs::read_to_string(&f) else {
+            continue;
+        };
         for line in text.lines() {
-            let Some(rest) = line.trim().strip_prefix("pub const ") else { continue };
-            let Some((name, _)) = rest.split_once(':') else { continue };
+            let Some(rest) = line.trim().strip_prefix("pub const ") else {
+                continue;
+            };
+            let Some((name, _)) = rest.split_once(':') else {
+                continue;
+            };
             let name = name.trim();
             if !name.is_empty() && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
                 names.insert(name.to_string());
@@ -492,7 +588,9 @@ fn scrape_const_names(root: &Path) -> Result<Vec<String>> {
 }
 
 fn walk(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) -> Result<()> {
-    let Ok(rd) = fs::read_dir(dir) else { return Ok(()) };
+    let Ok(rd) = fs::read_dir(dir) else {
+        return Ok(());
+    };
     for e in rd {
         let p = e?.path();
         if p.is_dir() {
@@ -525,20 +623,27 @@ fn rust_values(
             root.join("vendor/patches/libc").display()
         ),
     )?;
-    const HEADER: &str = "#![no_std]\n#![allow(deprecated, overflowing_literals, unused_imports)]\n";
+    const HEADER: &str =
+        "#![no_std]\n#![allow(deprecated, overflowing_literals, unused_imports)]\n";
     let header_lines = HEADER.lines().count();
     let target = root.join(format!("generated/{arch}-unknown-linux-musl.json"));
     // one probe per line, constants first, then functions: naming a function
     // only compiles when the crate declares it for this target
-    let mut live: Vec<(bool, &String)> =
-        names.iter().map(|n| (false, n)).chain(fns.iter().map(|n| (true, n))).collect();
+    let mut live: Vec<(bool, &String)> = names
+        .iter()
+        .map(|n| (false, n))
+        .chain(fns.iter().map(|n| (true, n)))
+        .collect();
     for _round in 0..8 {
         let mut text = String::from(HEADER);
         for (is_fn, n) in &live {
             if *is_fn {
                 let _ = writeln!(text, "pub fn audit_fn_{n}() {{ let _ = libc::{n}; }}");
             } else {
-                let _ = writeln!(text, "#[unsafe(no_mangle)] pub static AUDIT_{n}: i128 = libc::{n} as i128;");
+                let _ = writeln!(
+                    text,
+                    "#[unsafe(no_mangle)] pub static AUDIT_{n}: i128 = libc::{n} as i128;"
+                );
             }
         }
         fs::write(dir.join("src/lib.rs"), text)?;
@@ -554,9 +659,20 @@ fn rust_values(
         let out = Command::new("cargo")
             .current_dir(&dir)
             .env("CARGO_INCREMENTAL", "0")
-            .args(["rustc", "--lib", "--quiet", "--message-format=short", "--target"])
+            .args([
+                "rustc",
+                "--lib",
+                "--quiet",
+                "--message-format=short",
+                "--target",
+            ])
             .arg(&target)
-            .args(["-Zbuild-std=core", "-Zjson-target-spec", "--", "--emit=llvm-ir"])
+            .args([
+                "-Zbuild-std=core",
+                "-Zjson-target-spec",
+                "--",
+                "--emit=llvm-ir",
+            ])
             .output()
             .context("running cargo for the constant probe")?;
         if out.status.success() {
@@ -565,16 +681,23 @@ fn rust_values(
                 .map(|e| e.path())
                 .find(|p| {
                     p.extension().is_some_and(|x| x == "ll")
-                        && p.file_name().is_some_and(|f| f.to_string_lossy().starts_with("audit_probe"))
+                        && p.file_name()
+                            .is_some_and(|f| f.to_string_lossy().starts_with("audit_probe"))
                 })
                 .context("the probe built but left no .ll file")?;
-            let exist = live.iter().filter(|(is_fn, _)| *is_fn).map(|(_, n)| (*n).clone()).collect();
+            let exist = live
+                .iter()
+                .filter(|(is_fn, _)| *is_fn)
+                .map(|(_, n)| (*n).clone())
+                .collect();
             return Ok((parse_llvm_ir(&fs::read_to_string(ll)?)?, exist));
         }
         let stderr = String::from_utf8_lossy(&out.stderr);
         let mut bad: HashSet<usize> = HashSet::new();
         for line in stderr.lines() {
-            let Some(rest) = line.strip_prefix("src/lib.rs:") else { continue };
+            let Some(rest) = line.strip_prefix("src/lib.rs:") else {
+                continue;
+            };
             if !rest.contains("error") {
                 continue;
             }
@@ -599,8 +722,12 @@ fn rust_values(
 fn parse_llvm_ir(ir: &str) -> Result<HashMap<String, i128>> {
     let mut out = HashMap::new();
     for line in ir.lines() {
-        let Some(rest) = line.strip_prefix("@AUDIT_") else { continue };
-        let Some((name, rest)) = rest.split_once(' ') else { continue };
+        let Some(rest) = line.strip_prefix("@AUDIT_") else {
+            continue;
+        };
+        let Some((name, rest)) = rest.split_once(' ') else {
+            continue;
+        };
         let value = if rest.contains("zeroinitializer") {
             0
         } else if let Some((_, s)) = rest.split_once("c\"") {
@@ -622,11 +749,17 @@ fn parse_llvm_ir(ir: &str) -> Result<HashMap<String, i128>> {
                 }
             }
             if bytes.len() != 16 {
-                bail!("unexpected initializer width for AUDIT_{name}: {} bytes", bytes.len());
+                bail!(
+                    "unexpected initializer width for AUDIT_{name}: {} bytes",
+                    bytes.len()
+                );
             }
             i128::from_le_bytes(bytes.try_into().unwrap())
         } else if let Some((_, v)) = rest.split_once("constant i128 ") {
-            v.split(|c: char| c == ',' || c == ' ').next().unwrap_or("").parse()?
+            v.split(|c: char| c == ',' || c == ' ')
+                .next()
+                .unwrap_or("")
+                .parse()?
         } else {
             bail!("can't read the initializer of AUDIT_{name}: {line}");
         };
@@ -638,24 +771,92 @@ fn parse_llvm_ir(ir: &str) -> Result<HashMap<String, i128>> {
 // --------------------------------------------------------------------- cosmo
 
 const C_HEADERS: &[&str] = &[
-    "errno.h", "fcntl.h", "unistd.h", "signal.h", "spawn.h", "sched.h", "pthread.h", "poll.h",
-    "termios.h", "time.h", "dirent.h", "dlfcn.h", "limits.h", "locale.h", "langinfo.h", "netdb.h",
-    "syslog.h", "semaphore.h", "fnmatch.h", "glob.h", "regex.h", "grp.h", "pwd.h", "stdio.h",
-    "stdlib.h", "ifaddrs.h", "elf.h", "utime.h", "wordexp.h", "nl_types.h", "iconv.h",
-    "sys/file.h", "sys/stat.h", "sys/socket.h", "sys/un.h", "sys/mman.h", "sys/wait.h",
-    "sys/resource.h", "sys/ioctl.h", "sys/uio.h", "sys/time.h", "sys/times.h", "sys/utsname.h",
-    "sys/statvfs.h", "sys/statfs.h", "sys/select.h", "sys/sysinfo.h", "sys/xattr.h", "sys/random.h",
-    "sys/auxv.h", "sys/ptrace.h", "sys/prctl.h", "sys/ipc.h", "sys/shm.h", "sys/sem.h", "sys/msg.h",
-    "sys/mount.h", "sys/timerfd.h", "sys/eventfd.h", "sys/inotify.h", "sys/epoll.h", "sys/reboot.h",
-    "sys/syscall.h", "sys/vfs.h", "sys/param.h", "sys/sysmacros.h", "sys/personality.h",
-    "netinet/in.h", "netinet/tcp.h", "netinet/udp.h", "netinet/ip.h", "netinet/ip_icmp.h",
-    "arpa/inet.h", "net/if.h", "net/if_arp.h", "net/ethernet.h",
+    "errno.h",
+    "fcntl.h",
+    "unistd.h",
+    "signal.h",
+    "spawn.h",
+    "sched.h",
+    "pthread.h",
+    "poll.h",
+    "termios.h",
+    "time.h",
+    "dirent.h",
+    "dlfcn.h",
+    "limits.h",
+    "locale.h",
+    "langinfo.h",
+    "netdb.h",
+    "syslog.h",
+    "semaphore.h",
+    "fnmatch.h",
+    "glob.h",
+    "regex.h",
+    "grp.h",
+    "pwd.h",
+    "stdio.h",
+    "stdlib.h",
+    "ifaddrs.h",
+    "elf.h",
+    "utime.h",
+    "wordexp.h",
+    "nl_types.h",
+    "iconv.h",
+    "sys/file.h",
+    "sys/stat.h",
+    "sys/socket.h",
+    "sys/un.h",
+    "sys/mman.h",
+    "sys/wait.h",
+    "sys/resource.h",
+    "sys/ioctl.h",
+    "sys/uio.h",
+    "sys/time.h",
+    "sys/times.h",
+    "sys/utsname.h",
+    "sys/statvfs.h",
+    "sys/statfs.h",
+    "sys/select.h",
+    "sys/sysinfo.h",
+    "sys/xattr.h",
+    "sys/random.h",
+    "sys/auxv.h",
+    "sys/ptrace.h",
+    "sys/prctl.h",
+    "sys/ipc.h",
+    "sys/shm.h",
+    "sys/sem.h",
+    "sys/msg.h",
+    "sys/mount.h",
+    "sys/timerfd.h",
+    "sys/eventfd.h",
+    "sys/inotify.h",
+    "sys/epoll.h",
+    "sys/reboot.h",
+    "sys/syscall.h",
+    "sys/vfs.h",
+    "sys/param.h",
+    "sys/sysmacros.h",
+    "sys/personality.h",
+    "netinet/in.h",
+    "netinet/tcp.h",
+    "netinet/udp.h",
+    "netinet/ip.h",
+    "netinet/ip_icmp.h",
+    "arpa/inet.h",
+    "net/if.h",
+    "net/if_arp.h",
+    "net/ethernet.h",
 ];
 
 /// Compile `const __int128 AUDIT_<name> = (__int128)(<name>)` for every name
 /// to assembly and read the values back. What gcc refuses tells the rest:
 /// undeclared, a runtime constant, or not an integer.
-fn cosmo_values(root: &Path, arch: &str, names: &[&str]) -> Result<HashMap<String, (String, Cosmo)>> {
+fn cosmo_values(
+    root: &Path,
+    arch: &str,
+    names: &[&str],
+) -> Result<HashMap<String, (String, Cosmo)>> {
     let mut out: HashMap<String, (String, Cosmo)> = HashMap::new();
     let mut spelled: Vec<(String, String)> = names
         .iter()
@@ -682,7 +883,11 @@ fn cosmo_values(root: &Path, arch: &str, names: &[&str]) -> Result<HashMap<Strin
     Ok(out)
 }
 
-fn cosmo_probe(root: &Path, arch: &str, spelled: &[(String, String)]) -> Result<HashMap<String, Cosmo>> {
+fn cosmo_probe(
+    root: &Path,
+    arch: &str,
+    spelled: &[(String, String)],
+) -> Result<HashMap<String, Cosmo>> {
     let cc = root.join(format!("vendor/cosmocc/bin/{arch}-unknown-cosmo-cc"));
     let inc = root.join("vendor/cosmocc/include");
     let mut header = String::from("#define _COSMO_SOURCE\n#define _GNU_SOURCE\n");
@@ -734,9 +939,15 @@ fn cosmo_probe(root: &Path, arch: &str, spelled: &[(String, String)]) -> Result<
         let prefix = format!("{}:", src.display());
         let mut bad: HashMap<usize, Cosmo> = HashMap::new();
         for line in stderr.lines() {
-            let Some(rest) = line.strip_prefix(&prefix) else { continue };
-            let Some((lineno, rest)) = rest.split_once(':') else { continue };
-            let Ok(lineno) = lineno.parse::<usize>() else { continue };
+            let Some(rest) = line.strip_prefix(&prefix) else {
+                continue;
+            };
+            let Some((lineno, rest)) = rest.split_once(':') else {
+                continue;
+            };
+            let Ok(lineno) = lineno.parse::<usize>() else {
+                continue;
+            };
             if !rest.contains(" error: ") {
                 continue;
             }
@@ -772,7 +983,10 @@ fn parse_asm(asm: &str) -> Result<Vec<(String, i128)>> {
     let mut out = Vec::new();
     let mut lines = asm.lines().peekable();
     while let Some(line) = lines.next() {
-        let Some(name) = line.strip_prefix("AUDIT_").and_then(|l| l.strip_suffix(':')) else {
+        let Some(name) = line
+            .strip_prefix("AUDIT_")
+            .and_then(|l| l.strip_suffix(':'))
+        else {
             continue;
         };
         let mut words: Vec<i128> = Vec::new();
@@ -808,9 +1022,17 @@ fn parse_consts_sh(path: &Path) -> Result<HashMap<String, Syscon>> {
         if it.next() != Some("syscon") {
             continue;
         }
-        let (Some(group), Some(name)) = (it.next(), it.next()) else { continue };
+        let (Some(group), Some(name)) = (it.next(), it.next()) else {
+            continue;
+        };
         let cols: Vec<Option<i128>> = it.take(8).map(parse_c_int).collect();
-        out.insert(name.to_string(), Syscon { group: group.to_string(), cols });
+        out.insert(
+            name.to_string(),
+            Syscon {
+                group: group.to_string(),
+                cols,
+            },
+        );
     }
     Ok(out)
 }
@@ -869,7 +1091,11 @@ impl Patterns {
     }
 
     fn unused(&self) -> Vec<&str> {
-        self.0.iter().filter(|(_, hit)| !hit.get()).map(|(p, _)| p.as_str()).collect()
+        self.0
+            .iter()
+            .filter(|(_, hit)| !hit.get())
+            .map(|(p, _)| p.as_str())
+            .collect()
     }
 }
 
@@ -891,7 +1117,13 @@ impl References {
     fn collect(root: &Path, project: &Path, built: &HashSet<&str>) -> Result<References> {
         let mut std = HashSet::new();
         let library = config::rust_src_dir()?;
-        for sub in ["std/src", "core/src", "alloc/src", "panic_unwind/src", "panic_abort/src"] {
+        for sub in [
+            "std/src",
+            "core/src",
+            "alloc/src",
+            "panic_unwind/src",
+            "panic_abort/src",
+        ] {
             let mut files = Vec::new();
             walk(&library.join(sub), "rs", &mut files)?;
             for f in files {
@@ -916,10 +1148,17 @@ impl References {
             // the project itself carries the generated table check, which
             // names every constant the shim knows
             let local = pkg["source"].is_null();
-            if name == "libc" || local || !uses_libc || !built.contains(name.replace('-', "_").as_str()) {
+            if name == "libc"
+                || local
+                || !uses_libc
+                || !built.contains(name.replace('-', "_").as_str())
+            {
                 continue;
             }
-            let Some(dir) = pkg["manifest_path"].as_str().and_then(|p| Path::new(p).parent()) else {
+            let Some(dir) = pkg["manifest_path"]
+                .as_str()
+                .and_then(|p| Path::new(p).parent())
+            else {
                 continue;
             };
             let mut files = Vec::new();
@@ -949,7 +1188,9 @@ impl References {
 
 /// Upper-case identifiers of one source file.
 fn idents(path: &Path, out: &mut HashSet<String>) {
-    let Ok(text) = fs::read_to_string(path) else { return };
+    let Ok(text) = fs::read_to_string(path) else {
+        return;
+    };
     let mut cur = String::new();
     for c in text.chars().chain(std::iter::once(' ')) {
         if c.is_ascii_alphanumeric() || c == '_' {
@@ -1010,12 +1251,16 @@ fn libc_imports(
     for chunk in rlibs.chunks(200) {
         for line in nm_lines(util::ape_command(&nm).args(["-u", "-A"]).args(chunk))? {
             // path/libfoo-hash.rlib:member.o:                 U symbol
-            let Some(sym) = line.split_whitespace().last() else { continue };
+            let Some(sym) = line.split_whitespace().last() else {
+                continue;
+            };
             if !defined.contains(sym) && !sym.starts_with("__ape_shim_") {
                 continue;
             }
             let file = line.split(".rlib:").next().unwrap_or("");
-            out.entry(sym.to_string()).or_default().insert(crate_of(Path::new(file)));
+            out.entry(sym.to_string())
+                .or_default()
+                .insert(crate_of(Path::new(file)));
         }
     }
     Ok((out, defined))
@@ -1055,10 +1300,16 @@ fn check_std_imports(
         return Ok(true);
     }
     let text = fs::read_to_string(&file).with_context(|| {
-        format!("missing {}; run `cargo xtask audit --update-std-imports` once", file.display())
+        format!(
+            "missing {}; run `cargo xtask audit --update-std-imports` once",
+            file.display()
+        )
     })?;
-    let before: BTreeSet<&str> =
-        text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).collect();
+    let before: BTreeSet<&str> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .collect();
     let added: Vec<&&str> = now.difference(&before).collect();
     let removed: Vec<&&str> = before.difference(&now).collect();
     if added.is_empty() && removed.is_empty() {
@@ -1077,7 +1328,10 @@ fn check_std_imports(
 
 /// `deps/libfoo_bar-0123abcd.rlib` (with or without the extension) -> `foo_bar`
 fn crate_of(rlib: &Path) -> String {
-    let stem = rlib.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+    let stem = rlib
+        .file_name()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let stem = stem.strip_suffix(".rlib").unwrap_or(&stem);
     let stem = stem.strip_prefix("lib").unwrap_or(stem);
     stem.rsplit_once('-').map_or(stem, |(k, _)| k).to_string()
@@ -1087,7 +1341,10 @@ fn crate_of(rlib: &Path) -> String {
 /// nonzero for it; only stdout matters.
 fn nm_lines(cmd: &mut Command) -> Result<Vec<String>> {
     let out = cmd.output().context("running nm")?;
-    Ok(String::from_utf8_lossy(&out.stdout).lines().map(str::to_string).collect())
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(str::to_string)
+        .collect())
 }
 
 struct Decl {
@@ -1100,14 +1357,22 @@ struct Decl {
 /// Every `pub fn` of the libc crate's linux-musl files.
 fn fn_signatures(root: &Path) -> Result<HashMap<String, Decl>> {
     let mut out: HashMap<String, Decl> = HashMap::new();
-    let mut files: Vec<PathBuf> =
-        ARCHES.iter().flat_map(|a| genshim::libc_search_paths(root, a)).collect();
+    let mut files: Vec<PathBuf> = ARCHES
+        .iter()
+        .flat_map(|a| genshim::libc_search_paths(root, a))
+        .collect();
     for sub in ["new/linux_uapi", "new/musl", "new/common"] {
-        walk(&root.join("vendor/patches/libc/src").join(sub), "rs", &mut files)?;
+        walk(
+            &root.join("vendor/patches/libc/src").join(sub),
+            "rs",
+            &mut files,
+        )?;
     }
     let files: BTreeSet<PathBuf> = files.into_iter().collect();
     for f in files {
-        let Ok(text) = fs::read_to_string(&f) else { continue };
+        let Ok(text) = fs::read_to_string(&f) else {
+            continue;
+        };
         let mut rest = text.as_str();
         while let Some(i) = rest.find("pub fn ") {
             // attributes sit between the end of the previous item and here
@@ -1149,7 +1414,10 @@ fn fn_signatures(root: &Path) -> Result<HashMap<String, Decl>> {
                 }
                 if c == ',' && depth == 0 {
                     if let Some((n, t)) = cur.split_once(':') {
-                        params.push((n.trim().to_string(), t.split_whitespace().collect::<Vec<_>>().join(" ")));
+                        params.push((
+                            n.trim().to_string(),
+                            t.split_whitespace().collect::<Vec<_>>().join(" "),
+                        ));
                     }
                     cur.clear();
                 } else {
@@ -1177,22 +1445,120 @@ fn fn_signatures(root: &Path) -> Result<HashMap<String, Decl>> {
 /// and pointers to structs whose fields hold constants.
 fn suspect_params(params: &[(String, String)]) -> Vec<String> {
     const INT_TYPES: &[&str] = &[
-        "c_int", "c_uint", "c_long", "c_ulong", "c_short", "c_ushort", "i32", "u32", "i64", "u64",
-        "Ioctl", "clockid_t", "idtype_t", "nl_item", "__rlimit_resource_t", "__priority_which_t",
+        "c_int",
+        "c_uint",
+        "c_long",
+        "c_ulong",
+        "c_short",
+        "c_ushort",
+        "i32",
+        "u32",
+        "i64",
+        "u64",
+        "Ioctl",
+        "clockid_t",
+        "idtype_t",
+        "nl_item",
+        "__rlimit_resource_t",
+        "__priority_which_t",
     ];
     const NUMBERS: &[&str] = &[
-        "fd", "fd1", "fd2", "fildes", "filedes", "oldfd", "newfd", "dirfd", "olddirfd", "newdirfd",
-        "sockfd", "socket", "sock", "s", "out_fd", "in_fd", "epfd", "src", "dst", "duration", "len", "size", "count", "n",
-        "nbyte", "nbytes", "num", "c", "status", "code", "nfds", "timeout", "seconds", "secs",
-        "usec", "base", "iovcnt", "nmemb", "maxevents", "backlog", "uid", "gid", "pid", "pgid",
-        "pgrp", "sid", "owner", "group", "incr", "cpu", "errnum", "ngroups", "setlen", "stream",
-        "ch", "key", "value", "val", "offset", "rank", "prio", "priority", "idx", "index",
-        "i", "nochdir", "noclose", "proj_id", "nelem", "net", "argc", "proto", "port", "loc",
-        "suffixlen", "stayopen", "seed", "pshared", "shared", "errcode",
+        "fd",
+        "fd1",
+        "fd2",
+        "fildes",
+        "filedes",
+        "oldfd",
+        "newfd",
+        "dirfd",
+        "olddirfd",
+        "newdirfd",
+        "sockfd",
+        "socket",
+        "sock",
+        "s",
+        "out_fd",
+        "in_fd",
+        "epfd",
+        "src",
+        "dst",
+        "duration",
+        "len",
+        "size",
+        "count",
+        "n",
+        "nbyte",
+        "nbytes",
+        "num",
+        "c",
+        "status",
+        "code",
+        "nfds",
+        "timeout",
+        "seconds",
+        "secs",
+        "usec",
+        "base",
+        "iovcnt",
+        "nmemb",
+        "maxevents",
+        "backlog",
+        "uid",
+        "gid",
+        "pid",
+        "pgid",
+        "pgrp",
+        "sid",
+        "owner",
+        "group",
+        "incr",
+        "cpu",
+        "errnum",
+        "ngroups",
+        "setlen",
+        "stream",
+        "ch",
+        "key",
+        "value",
+        "val",
+        "offset",
+        "rank",
+        "prio",
+        "priority",
+        "idx",
+        "index",
+        "i",
+        "nochdir",
+        "noclose",
+        "proj_id",
+        "nelem",
+        "net",
+        "argc",
+        "proto",
+        "port",
+        "loc",
+        "suffixlen",
+        "stayopen",
+        "seed",
+        "pshared",
+        "shared",
+        "errcode",
     ];
     const STRUCTS: &[&str] = &[
-        "termios", "sigaction", "flock", "pollfd", "sockaddr", "msghdr", "mmsghdr", "addrinfo",
-        "epoll_event", "sigevent", "stack_t", "siginfo_t", "itimerspec", "rlimit",
+        "termios",
+        "sigaction",
+        "flock",
+        "pollfd",
+        "sockaddr",
+        "msghdr",
+        "mmsghdr",
+        "addrinfo",
+        "epoll_event",
+        "sigevent",
+        "stack_t",
+        "siginfo_t",
+        "itimerspec",
+        "rlimit",
     ];
     let mut out = Vec::new();
     for (name, ty) in params {
@@ -1242,7 +1608,12 @@ fn hot_families<'a>(families: &'a [Family], rows: &[ConstRow]) -> Vec<(String, &
         if differing.is_empty() {
             continue;
         }
-        let mut label = differing.iter().take(3).copied().collect::<Vec<_>>().join(",");
+        let mut label = differing
+            .iter()
+            .take(3)
+            .copied()
+            .collect::<Vec<_>>()
+            .join(",");
         if differing.len() > 3 {
             let _ = write!(label, ",+{}", differing.len() - 3);
         }

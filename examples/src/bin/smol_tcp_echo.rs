@@ -58,7 +58,10 @@ fn main() {
         }
 
         let echoed = server.await;
-        assert_eq!(echoed, sent, "server echoed {echoed} bytes, clients sent {sent}");
+        assert_eq!(
+            echoed, sent,
+            "server echoed {echoed} bytes, clients sent {sent}"
+        );
 
         println!("\nsmol tcp echo ok: {CLIENTS} concurrent clients, {sent} bytes");
     });

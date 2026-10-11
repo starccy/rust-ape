@@ -59,7 +59,11 @@ async fn udp() {
                     sock.send_to(msg.as_bytes(), addr).await.expect("send_to");
                     let (n, from) = sock.recv_from(&mut buf).await.expect("recv_from");
                     assert_eq!(from, addr, "reply came from {from}");
-                    assert_eq!(&buf[..n], msg.as_bytes(), "client {id} got someone else's datagram");
+                    assert_eq!(
+                        &buf[..n],
+                        msg.as_bytes(),
+                        "client {id} got someone else's datagram"
+                    );
                 }
             })
         })
@@ -75,7 +79,10 @@ async fn udp() {
     let saddr = server.local_addr().expect("local_addr");
     let client = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
     client.connect(saddr).await.expect("connect");
-    server.connect(client.local_addr().expect("addr")).await.expect("connect back");
+    server
+        .connect(client.local_addr().expect("addr"))
+        .await
+        .expect("connect back");
 
     let echo = smol::spawn(async move {
         let mut buf = [0u8; 64];
@@ -88,7 +95,10 @@ async fn udp() {
     assert_eq!(&buf[..n], b"connected");
     echo.await;
 
-    println!("{} datagrams echoed, connected socket round-tripped", CLIENTS * ROUNDS);
+    println!(
+        "{} datagrams echoed, connected socket round-tripped",
+        CLIENTS * ROUNDS
+    );
 }
 
 async fn uds_path(dir: &std::path::Path) {

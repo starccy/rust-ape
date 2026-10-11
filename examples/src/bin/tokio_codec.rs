@@ -90,8 +90,16 @@ async fn length_delimited() {
         let payload = vec![i; 64 * 1024];
         framed.send(payload.clone().into()).await.expect("send");
         let back = framed.next().await.expect("stream ended").expect("decode");
-        assert_eq!(back.len(), payload.len(), "frame came back {} bytes", back.len());
-        assert!(back.iter().all(|&b| b == i), "frame {i} came back corrupted");
+        assert_eq!(
+            back.len(),
+            payload.len(),
+            "frame came back {} bytes",
+            back.len()
+        );
+        assert!(
+            back.iter().all(|&b| b == i),
+            "frame {i} came back corrupted"
+        );
     }
     drop(framed);
 
@@ -115,7 +123,11 @@ async fn cancellation() {
     tokio::time::sleep(Duration::from_millis(30)).await;
     token.cancel();
     for t in tasks {
-        assert_eq!(t.await.expect("task"), "cancelled", "a child token was missed");
+        assert_eq!(
+            t.await.expect("task"),
+            "cancelled",
+            "a child token was missed"
+        );
     }
 
     // Already-cancelled tokens resolve immediately rather than parking forever.

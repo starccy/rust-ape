@@ -26,7 +26,11 @@ fn main() {
     let mut names = BTreeSet::new();
     for entry in fs::read_dir(&root).expect("read_dir") {
         let entry = entry.expect("dir entry");
-        let kind = if entry.file_type().expect("file_type").is_dir() { "dir " } else { "file" };
+        let kind = if entry.file_type().expect("file_type").is_dir() {
+            "dir "
+        } else {
+            "file"
+        };
         println!("  {kind} {}", entry.file_name().to_string_lossy());
         names.insert(entry.file_name().to_string_lossy().into_owned());
     }
@@ -64,19 +68,36 @@ fn main() {
     }
     let listed: BTreeSet<String> = fs::read_dir(&odd)
         .expect("read_dir on a non-ASCII directory")
-        .map(|e| e.expect("dir entry").file_name().to_string_lossy().into_owned())
+        .map(|e| {
+            e.expect("dir entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
         .collect();
-    assert_eq!(listed, written, "read_dir handed back names we never created");
-    println!("{} non-ASCII names round-tripped through read_dir", ODD_NAMES.len());
+    assert_eq!(
+        listed, written,
+        "read_dir handed back names we never created"
+    );
+    println!(
+        "{} non-ASCII names round-tripped through read_dir",
+        ODD_NAMES.len()
+    );
 
     // Rename between two non-ASCII names, then remove by the new one.
     let from = odd.join(ODD_NAMES[0]);
     let to = odd.join("改名了-🦀.txt");
     fs::rename(&from, &to).expect("rename a non-ASCII path");
     assert!(!from.exists(), "old non-ASCII name still there");
-    assert_eq!(fs::read_to_string(&to).expect("read after rename"), ODD_NAMES[0]);
+    assert_eq!(
+        fs::read_to_string(&to).expect("read after rename"),
+        ODD_NAMES[0]
+    );
     fs::remove_file(&to).expect("remove a non-ASCII path");
-    println!("renamed and removed {:?} -> {:?}", ODD_NAMES[0], "改名了-🦀.txt");
+    println!(
+        "renamed and removed {:?} -> {:?}",
+        ODD_NAMES[0], "改名了-🦀.txt"
+    );
 
     // Long paths, reported rather than asserted. Windows' MAX_PATH is 260 and
     // whether cosmo's conversion opts into the extended form is its business,
@@ -99,7 +120,9 @@ fn main() {
             assert_eq!(fs::read(&leaf).expect("read the deep leaf"), b"deep");
             println!("deepest path that round-tripped: {chars} chars over {levels} levels");
         }
-        Err(e) => println!("nesting stopped at {chars} chars ({levels} levels), writing there failed: {e}"),
+        Err(e) => println!(
+            "nesting stopped at {chars} chars ({levels} levels), writing there failed: {e}"
+        ),
     }
 
     fs::remove_dir_all(&root).expect("remove_dir_all");

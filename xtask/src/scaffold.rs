@@ -34,8 +34,13 @@ pub fn run(args: &GenerateArgs) -> Result<()> {
             .into_owned(),
     };
     if name.is_empty()
-        || !name.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        || !name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
     {
         bail!("not a valid package name: {name:?} (use --name)");
     }

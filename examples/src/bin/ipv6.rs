@@ -12,11 +12,17 @@ fn main() {
     // TCP over ::1, with the address observed from both ends.
     let listener = TcpListener::bind("[::1]:0").expect("bind [::1]:0");
     let addr = listener.local_addr().expect("local_addr");
-    assert!(addr.is_ipv6(), "listener local_addr came back non-v6: {addr}");
+    assert!(
+        addr.is_ipv6(),
+        "listener local_addr came back non-v6: {addr}"
+    );
 
     let mut tx = TcpStream::connect(addr).expect("connect over v6");
     let (mut rx, peer) = listener.accept().expect("accept over v6");
-    assert!(peer.is_ipv6(), "accept's peer address came back non-v6: {peer}");
+    assert!(
+        peer.is_ipv6(),
+        "accept's peer address came back non-v6: {peer}"
+    );
     assert!(tx.local_addr().expect("tx local_addr").is_ipv6());
 
     tx.write_all(b"over six").expect("write");
@@ -65,7 +71,13 @@ fn main() {
         ] {
             let val: i32 = want;
             assert_eq!(
-                libc::setsockopt(fd, libc::IPPROTO_IPV6, name, &val as *const _ as *const libc::c_void, 4),
+                libc::setsockopt(
+                    fd,
+                    libc::IPPROTO_IPV6,
+                    name,
+                    &val as *const _ as *const libc::c_void,
+                    4
+                ),
                 0,
                 "setsockopt({label}) failed: {}",
                 std::io::Error::last_os_error()
@@ -73,7 +85,13 @@ fn main() {
             let mut got: i32 = -1;
             let mut len: libc::socklen_t = 4;
             assert_eq!(
-                libc::getsockopt(fd, libc::IPPROTO_IPV6, name, &mut got as *mut _ as *mut libc::c_void, &mut len),
+                libc::getsockopt(
+                    fd,
+                    libc::IPPROTO_IPV6,
+                    name,
+                    &mut got as *mut _ as *mut libc::c_void,
+                    &mut len
+                ),
                 0,
                 "getsockopt({label})"
             );
@@ -85,8 +103,11 @@ fn main() {
         sa.sin6_family = libc::AF_INET6 as libc::sa_family_t;
         sa.sin6_addr.s6_addr[15] = 1; // ::1
         assert_eq!(
-            libc::bind(fd, &sa as *const _ as *const libc::sockaddr,
-                       std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t),
+            libc::bind(
+                fd,
+                &sa as *const _ as *const libc::sockaddr,
+                std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t
+            ),
             0,
             "raw bind to ::1 failed"
         );
@@ -96,8 +117,11 @@ fn main() {
             libc::getsockname(fd, &mut out as *mut _ as *mut libc::sockaddr, &mut len),
             0
         );
-        assert_eq!(out.sin6_family as i32, libc::AF_INET6,
-            "getsockname's family not rewritten back to musl coding");
+        assert_eq!(
+            out.sin6_family as i32,
+            libc::AF_INET6,
+            "getsockname's family not rewritten back to musl coding"
+        );
         assert_ne!(out.sin6_port, 0);
         libc::close(fd);
         println!("raw socket/bind/getsockname AF_INET6 round-trip ok");
@@ -123,8 +147,12 @@ fn main() {
             libc::NI_NUMERICHOST | libc::NI_NUMERICSERV,
         );
         assert_eq!(rc, 0, "getnameinfo failed with {rc}");
-        let host = std::ffi::CStr::from_ptr(host.as_ptr()).to_string_lossy().into_owned();
-        let serv = std::ffi::CStr::from_ptr(serv.as_ptr()).to_string_lossy().into_owned();
+        let host = std::ffi::CStr::from_ptr(host.as_ptr())
+            .to_string_lossy()
+            .into_owned();
+        let serv = std::ffi::CStr::from_ptr(serv.as_ptr())
+            .to_string_lossy()
+            .into_owned();
         assert_eq!(host, "::1", "getnameinfo formatted the address as {host:?}");
         assert_eq!(serv, "443", "getnameinfo formatted the port as {serv:?}");
         println!("getnameinfo([::1]:443) -> {host} port {serv}");

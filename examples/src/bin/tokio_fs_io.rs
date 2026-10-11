@@ -25,7 +25,10 @@ fn main() {
         concurrent(&dir).await;
 
         fs::remove_dir_all(&dir).await.expect("remove_dir_all");
-        assert!(fs::metadata(&dir).await.is_err(), "directory survived removal");
+        assert!(
+            fs::metadata(&dir).await.is_err(),
+            "directory survived removal"
+        );
     });
 
     println!("\ntokio fs io ok");
@@ -36,14 +39,21 @@ async fn files(dir: &std::path::Path) {
 
     fs::write(&path, b"written whole").await.expect("fs::write");
     assert_eq!(fs::read(&path).await.expect("fs::read"), b"written whole");
-    assert_eq!(fs::read_to_string(&path).await.expect("read_to_string"), "written whole");
+    assert_eq!(
+        fs::read_to_string(&path).await.expect("read_to_string"),
+        "written whole"
+    );
 
     let md = fs::metadata(&path).await.expect("metadata");
     assert!(md.is_file());
     assert_eq!(md.len(), 13);
 
     // Append, then seek back over what was there before.
-    let mut f = fs::OpenOptions::new().append(true).open(&path).await.expect("open append");
+    let mut f = fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .await
+        .expect("open append");
     f.write_all(b" and more").await.expect("append");
     f.flush().await.expect("flush");
     drop(f);
@@ -56,7 +66,10 @@ async fn files(dir: &std::path::Path) {
 
     let renamed = dir.join("renamed.txt");
     fs::rename(&path, &renamed).await.expect("rename");
-    assert!(fs::metadata(&path).await.is_err(), "old name still resolves");
+    assert!(
+        fs::metadata(&path).await.is_err(),
+        "old name still resolves"
+    );
     fs::remove_file(&renamed).await.expect("remove_file");
 
     println!("files: write, read, append, seek, rename, remove");
@@ -64,9 +77,13 @@ async fn files(dir: &std::path::Path) {
 
 async fn directories(dir: &std::path::Path) {
     let nested = dir.join("a").join("b");
-    fs::create_dir_all(&nested).await.expect("create_dir_all nested");
+    fs::create_dir_all(&nested)
+        .await
+        .expect("create_dir_all nested");
     for i in 0..5 {
-        fs::write(nested.join(format!("f{i}")), format!("{i}")).await.expect("write child");
+        fs::write(nested.join(format!("f{i}")), format!("{i}"))
+            .await
+            .expect("write child");
     }
 
     let mut names = Vec::new();
@@ -76,9 +93,15 @@ async fn directories(dir: &std::path::Path) {
         names.push(e.file_name().to_string_lossy().into_owned());
     }
     names.sort();
-    assert_eq!(names, ["f0", "f1", "f2", "f3", "f4"], "read_dir gave {names:?}");
+    assert_eq!(
+        names,
+        ["f0", "f1", "f2", "f3", "f4"],
+        "read_dir gave {names:?}"
+    );
 
-    fs::remove_dir_all(dir.join("a")).await.expect("remove_dir_all");
+    fs::remove_dir_all(dir.join("a"))
+        .await
+        .expect("remove_dir_all");
     println!("directories: created nested, listed 5 entries, removed the tree");
 }
 
@@ -86,7 +109,9 @@ async fn combinators(dir: &std::path::Path) {
     let src = dir.join("lines.txt");
     let mut f = fs::File::create(&src).await.expect("create");
     for line in LINES {
-        f.write_all(format!("{line}\n").as_bytes()).await.expect("write line");
+        f.write_all(format!("{line}\n").as_bytes())
+            .await
+            .expect("write line");
     }
     f.flush().await.expect("flush");
     drop(f);

@@ -16,7 +16,11 @@ fn try_lock(path: &Path) -> bool {
     match OpenOptions::new().write(true).create_new(true).open(path) {
         Ok(_) => true,
         Err(e) if e.raw_os_error() == Some(libc::EEXIST) => false,
-        Err(e) => panic!("lockfile: expected raw EEXIST({}), got {:?}: {e}", libc::EEXIST, e.raw_os_error()),
+        Err(e) => panic!(
+            "lockfile: expected raw EEXIST({}), got {:?}: {e}",
+            libc::EEXIST,
+            e.raw_os_error()
+        ),
     }
 }
 
@@ -33,7 +37,11 @@ fn accept_when_ready(listener: &TcpListener) -> TcpStream {
                 assert!(spins < 10_000, "client never showed up");
                 std::thread::sleep(std::time::Duration::from_millis(1));
             }
-            Err(e) => panic!("accept: expected raw EAGAIN({}), got {:?}: {e}", libc::EAGAIN, e.raw_os_error()),
+            Err(e) => panic!(
+                "accept: expected raw EAGAIN({}), got {:?}: {e}",
+                libc::EAGAIN,
+                e.raw_os_error()
+            ),
         }
     }
 }
@@ -44,7 +52,11 @@ fn blocked_by_file(path: &Path) -> bool {
     match std::fs::metadata(path) {
         Ok(_) => false,
         Err(e) if e.raw_os_error() == Some(libc::ENOTDIR) => true,
-        Err(e) => panic!("probe: expected raw ENOTDIR({}), got {:?}: {e}", libc::ENOTDIR, e.raw_os_error()),
+        Err(e) => panic!(
+            "probe: expected raw ENOTDIR({}), got {:?}: {e}",
+            libc::ENOTDIR,
+            e.raw_os_error()
+        ),
     }
 }
 
@@ -65,7 +77,11 @@ fn main() {
     match listener.accept() {
         Err(e) if e.raw_os_error() == Some(libc::EAGAIN) => {}
         Ok(_) => panic!("accept found a client nobody started"),
-        Err(e) => panic!("accept: expected raw EAGAIN({}), got {:?}: {e}", libc::EAGAIN, e.raw_os_error()),
+        Err(e) => panic!(
+            "accept: expected raw EAGAIN({}), got {:?}: {e}",
+            libc::EAGAIN,
+            e.raw_os_error()
+        ),
     }
     let _tx = TcpStream::connect(listener.local_addr().expect("addr")).expect("connect");
     let _rx = accept_when_ready(&listener);
@@ -74,7 +90,10 @@ fn main() {
     // ENOTDIR: probe a path that runs through a regular file.
     let file = dir.path().join("plain");
     std::fs::write(&file, b"x").expect("write");
-    assert!(blocked_by_file(&file.join("below")), "probe missed the file in the way");
+    assert!(
+        blocked_by_file(&file.join("below")),
+        "probe missed the file in the way"
+    );
     println!("path probe ENOTDIR branch ok");
 
     // EBADF through a raw libc call, the third-party-crate route: no std
@@ -82,7 +101,12 @@ fn main() {
     let rc = unsafe { libc::write(-1, b"x".as_ptr().cast(), 1) };
     let raw = std::io::Error::last_os_error().raw_os_error();
     assert_eq!(rc, -1);
-    assert_eq!(raw, Some(libc::EBADF), "expected raw EBADF({}) from fd -1", libc::EBADF);
+    assert_eq!(
+        raw,
+        Some(libc::EBADF),
+        "expected raw EBADF({}) from fd -1",
+        libc::EBADF
+    );
     println!("raw libc EBADF ok");
 
     // connect_timeout drives the (poll, getsockopt(SO_ERROR)) pair: the
@@ -94,15 +118,21 @@ fn main() {
         std::time::Duration::from_secs(5),
     )
     .expect_err("connect to a dead port");
-    assert_eq!(e.raw_os_error(), Some(libc::ECONNREFUSED),
-        "SO_ERROR payload not translated: {e}");
+    assert_eq!(
+        e.raw_os_error(),
+        Some(libc::ECONNREFUSED),
+        "SO_ERROR payload not translated: {e}"
+    );
     println!("connect_timeout SO_ERROR branch ok");
 
     // And the human-facing text: pre-shim an untranslated code rendered as
     // the bare "os error 80" fallback.
     let msg = std::io::Error::from_raw_os_error(libc::EEXIST).to_string();
     println!("EEXIST renders as: {msg}");
-    assert!(!msg.starts_with("os error"), "strerror_r fell back to the raw-code message");
+    assert!(
+        !msg.starts_with("os error"),
+        "strerror_r fell back to the raw-code message"
+    );
 
     println!("\nerrno patterns ok");
 }

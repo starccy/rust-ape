@@ -35,7 +35,12 @@ fn udp_msg_roundtrip() {
         msg.msg_iov = &mut iov;
         msg.msg_iovlen = 1;
         let sent = libc::sendmsg(a.as_raw_fd(), &msg, 0);
-        assert_eq!(sent, payload.len() as isize, "{}", std::io::Error::last_os_error());
+        assert_eq!(
+            sent,
+            payload.len() as isize,
+            "{}",
+            std::io::Error::last_os_error()
+        );
 
         let mut buf = [0u8; 32];
         let mut from: libc::sockaddr_in = mem::zeroed();
@@ -49,10 +54,18 @@ fn udp_msg_roundtrip() {
         rmsg.msg_iov = &mut riov;
         rmsg.msg_iovlen = 1;
         let got = libc::recvmsg(b.as_raw_fd(), &mut rmsg, 0);
-        assert_eq!(got, payload.len() as isize, "{}", std::io::Error::last_os_error());
+        assert_eq!(
+            got,
+            payload.len() as isize,
+            "{}",
+            std::io::Error::last_os_error()
+        );
         assert_eq!(&buf[..payload.len()], payload);
-        assert_eq!(from.sin_family as i32, libc::AF_INET,
-            "recvmsg msg_name family not musl-coded");
+        assert_eq!(
+            from.sin_family as i32,
+            libc::AF_INET,
+            "recvmsg msg_name family not musl-coded"
+        );
         assert_eq!(u16::from_be(from.sin_port), a.local_addr().unwrap().port());
         assert_eq!(rmsg.msg_flags & libc::MSG_TRUNC, 0);
     }
@@ -67,7 +80,10 @@ fn scm_rights_fd_passing() {
 
     unsafe {
         let mut sv = [0i32; 2];
-        assert_eq!(libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sv.as_mut_ptr()), 0);
+        assert_eq!(
+            libc::socketpair(libc::AF_UNIX, libc::SOCK_STREAM, 0, sv.as_mut_ptr()),
+            0
+        );
 
         // sender: one data byte + SCM_RIGHTS cmsg carrying the file's fd
         let data = [b'!'];
@@ -91,7 +107,12 @@ fn scm_rights_fd_passing() {
             4,
         );
         let sent = libc::sendmsg(sv[0], &msg, 0);
-        assert_eq!(sent, 1, "sendmsg(SCM_RIGHTS): {}", std::io::Error::last_os_error());
+        assert_eq!(
+            sent,
+            1,
+            "sendmsg(SCM_RIGHTS): {}",
+            std::io::Error::last_os_error()
+        );
 
         // receiver
         let mut rdata = [0u8; 1];
@@ -106,16 +127,32 @@ fn scm_rights_fd_passing() {
         rmsg.msg_control = rcbuf.as_mut_ptr() as *mut _;
         rmsg.msg_controllen = rcbuf.len() as _;
         let got = libc::recvmsg(sv[1], &mut rmsg, 0);
-        assert_eq!(got, 1, "recvmsg(SCM_RIGHTS): {}", std::io::Error::last_os_error());
+        assert_eq!(
+            got,
+            1,
+            "recvmsg(SCM_RIGHTS): {}",
+            std::io::Error::last_os_error()
+        );
         assert_eq!(rdata[0], b'!');
 
         let rcm = libc::CMSG_FIRSTHDR(&rmsg);
         assert!(!rcm.is_null(), "no cmsg came back");
-        assert_eq!((*rcm).cmsg_level, libc::SOL_SOCKET, "cmsg_level not musl-coded on receive");
+        assert_eq!(
+            (*rcm).cmsg_level,
+            libc::SOL_SOCKET,
+            "cmsg_level not musl-coded on receive"
+        );
         assert_eq!((*rcm).cmsg_type, libc::SCM_RIGHTS);
         let mut passed_fd = 0i32;
-        std::ptr::copy_nonoverlapping(libc::CMSG_DATA(rcm), &mut passed_fd as *mut i32 as *mut u8, 4);
-        assert!(passed_fd >= 0 && passed_fd != tmp.as_raw_fd(), "no new fd materialized");
+        std::ptr::copy_nonoverlapping(
+            libc::CMSG_DATA(rcm),
+            &mut passed_fd as *mut i32 as *mut u8,
+            4,
+        );
+        assert!(
+            passed_fd >= 0 && passed_fd != tmp.as_raw_fd(),
+            "no new fd materialized"
+        );
 
         // the smuggled fd must actually work
         let mut carried = std::fs::File::from(std::os::fd::OwnedFd::from_raw_fd(passed_fd));

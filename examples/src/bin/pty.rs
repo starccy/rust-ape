@@ -58,7 +58,10 @@ fn main() {
     // The master only sees EOF once every handle to the slave is gone.
     drop(pair.slave);
 
-    let mut reader = pair.master.try_clone_reader().expect("clone the master reader");
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .expect("clone the master reader");
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let mut out = Vec::new();

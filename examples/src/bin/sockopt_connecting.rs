@@ -30,7 +30,9 @@ fn main() {
         let sin = libc::sockaddr_in {
             sin_family: libc::AF_INET as _,
             sin_port: port.to_be(),
-            sin_addr: libc::in_addr { s_addr: u32::from_ne_bytes([127, 0, 0, 1]) },
+            sin_addr: libc::in_addr {
+                s_addr: u32::from_ne_bytes([127, 0, 0, 1]),
+            },
             sin_zero: [0; 8],
         };
         let r = libc::connect(
@@ -41,7 +43,10 @@ fn main() {
         let err = std::io::Error::last_os_error();
         let in_progress = r == -1 && err.raw_os_error() == Some(libc::EINPROGRESS);
         assert!(r == 0 || in_progress, "connect: {err}");
-        println!("connect: {}", if in_progress { "in progress" } else { "done" });
+        println!(
+            "connect: {}",
+            if in_progress { "in progress" } else { "done" }
+        );
 
         // The point of the test: these must succeed right away.
         let one: libc::c_int = 1;
@@ -63,13 +68,23 @@ fn main() {
             println!("{label}: set and read back");
         }
 
-        let mut p = libc::pollfd { fd, events: libc::POLLOUT, revents: 0 };
+        let mut p = libc::pollfd {
+            fd,
+            events: libc::POLLOUT,
+            revents: 0,
+        };
         check(libc::poll(&mut p, 1, 5000), "poll");
         assert!(p.revents & libc::POLLOUT != 0, "connect did not complete");
         let mut soerr: libc::c_int = -1;
         let mut len: libc::socklen_t = 4;
         check(
-            libc::getsockopt(fd, libc::SOL_SOCKET, libc::SO_ERROR, &mut soerr as *mut _ as *mut _, &mut len),
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_ERROR,
+                &mut soerr as *mut _ as *mut _,
+                &mut len,
+            ),
             "SO_ERROR",
         );
         assert_eq!(soerr, 0, "connect failed");
@@ -82,7 +97,13 @@ fn main() {
         let mut got: libc::c_int = 0;
         let mut len: libc::socklen_t = 4;
         check(
-            libc::getsockopt(fd, libc::IPPROTO_TCP, libc::TCP_NODELAY, &mut got as *mut _ as *mut _, &mut len),
+            libc::getsockopt(
+                fd,
+                libc::IPPROTO_TCP,
+                libc::TCP_NODELAY,
+                &mut got as *mut _ as *mut _,
+                &mut len,
+            ),
             "TCP_NODELAY after connect",
         );
         assert_eq!(got, 1, "TCP_NODELAY stuck after the handshake");

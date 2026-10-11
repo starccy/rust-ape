@@ -1,4 +1,3 @@
-
 pub struct Report {
     failed: Vec<String>,
 }

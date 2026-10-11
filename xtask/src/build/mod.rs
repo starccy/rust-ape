@@ -93,7 +93,11 @@ pub fn run(args: &BuildArgs) -> Result<()> {
         bail!(
             "--output names one file but {} binaries are being built ({}); pass --bin to pick one",
             targets.len(),
-            targets.iter().map(|t| t.name.as_str()).collect::<Vec<_>>().join(", ")
+            targets
+                .iter()
+                .map(|t| t.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
         );
     }
     let profile = if args.release { "release" } else { "debug" };
@@ -142,7 +146,11 @@ pub fn run(args: &BuildArgs) -> Result<()> {
             let dbg = dbg_path(&project, profile, target, TARGETS[0].0);
             bundle::apply_to_build(spec, &dbg, &output, &target.name)?;
         }
-        println!("==> {} ({} bytes)", output.display(), fs::metadata(&output)?.len());
+        println!(
+            "==> {} ({} bytes)",
+            output.display(),
+            fs::metadata(&output)?.len()
+        );
     }
 
     if let Some(parent) = marker.parent() {
@@ -178,7 +186,8 @@ fn verify_patches(root: &Path, meta: &Metadata) -> Result<()> {
     let mut bad = Vec::new();
     for &(name, ver) in PATCHED_CRATES {
         for p in &meta.packages {
-            if p.name == name && p.from_registry() && compat_range(&p.version) == compat_range(ver) {
+            if p.name == name && p.from_registry() && compat_range(&p.version) == compat_range(ver)
+            {
                 bad.push((name, ver, p.version.as_str()));
             }
         }
@@ -189,7 +198,9 @@ fn verify_patches(root: &Path, meta: &Metadata) -> Result<()> {
     let mut msg =
         String::from("these crates still resolve to crates.io, so their patches are inert:\n");
     for (name, ver, got) in &bad {
-        msg += &format!("  {name} {got} came from the registry, not vendor/patches (patch targets {ver})\n");
+        msg += &format!(
+            "  {name} {got} came from the registry, not vendor/patches (patch targets {ver})\n"
+        );
     }
     msg += "to fix:\n";
     for (name, ver, _) in &bad {
@@ -223,10 +234,16 @@ struct PackTarget {
 fn pack_targets(meta: &Metadata, args: &BuildArgs) -> Result<Vec<PackTarget>> {
     let mut picked = Vec::new();
     if let Some(name) = &args.example {
-        picked.push(PackTarget { name: name.clone(), example: true });
+        picked.push(PackTarget {
+            name: name.clone(),
+            example: true,
+        });
     }
     if let Some(name) = &args.bin {
-        picked.push(PackTarget { name: name.clone(), example: false });
+        picked.push(PackTarget {
+            name: name.clone(),
+            example: false,
+        });
     }
     if !picked.is_empty() {
         return Ok(picked);
@@ -255,7 +272,10 @@ fn pack_targets(meta: &Metadata, args: &BuildArgs) -> Result<Vec<PackTarget>> {
         .targets
         .iter()
         .filter(|t| t.kind.iter().any(|k| k == "bin"))
-        .map(|t| PackTarget { name: t.name.clone(), example: false })
+        .map(|t| PackTarget {
+            name: t.name.clone(),
+            example: false,
+        })
         .collect();
     if bins.is_empty() {
         bail!("{} has no binaries to build", pkg.name);
@@ -304,7 +324,9 @@ fn purge_stale_shim_links(root: &Path, project: &Path, profile: &str) -> Result<
 }
 
 fn purge_older_linked(dir: &Path, newer_than: std::time::SystemTime) -> Result<()> {
-    let Ok(rd) = fs::read_dir(dir) else { return Ok(()) };
+    let Ok(rd) = fs::read_dir(dir) else {
+        return Ok(());
+    };
     for entry in rd {
         let entry = entry?;
         let path = entry.path();
@@ -322,8 +344,11 @@ fn purge_older_linked(dir: &Path, newer_than: std::time::SystemTime) -> Result<(
 fn clean_std(project: &Path, profile: &str) -> Result<()> {
     for &(triple, _) in TARGETS {
         let base = project.join("target").join(triple).join(profile);
-        
-        remove_prefixed(&base.join(".fingerprint"), &["std-", "panic_abort-", "libc-"])?;
+
+        remove_prefixed(
+            &base.join(".fingerprint"),
+            &["std-", "panic_abort-", "libc-"],
+        )?;
         remove_prefixed(&base.join("deps"), &["liblibc-", "libc-"])?;
     }
     Ok(())
@@ -383,9 +408,7 @@ fn cargo_build(
     // rust_ape_shim: arms the __ape_shim_* redirects in the patched crates.
     // With --target set, RUSTFLAGS reaches target units only, so host build
     // scripts keep linking the real libc symbols.
-    rustflags.push_str(
-        "--cfg rustix_use_libc --cfg rust_ape_shim",
-    );
+    rustflags.push_str("--cfg rustix_use_libc --cfg rust_ape_shim");
     // -mtiny reaches the final cosmocc invocation through the linker wrapper
     // and swaps in the lib/tiny runtime, which has no --strace/--ftrace.
     if args.tiny {
@@ -395,8 +418,16 @@ fn cargo_build(
 
     // C, C++ and asm in dependencies go through cosmocc too, so the ABI matches
     // what they'll run against.
-    env_default(&mut cmd, &format!("CC_{t}"), cosmo_bin.join(format!("{arch}-unknown-cosmo-cc")));
-    env_default(&mut cmd, &format!("CXX_{t}"), cosmo_bin.join(format!("{arch}-unknown-cosmo-c++")));
+    env_default(
+        &mut cmd,
+        &format!("CC_{t}"),
+        cosmo_bin.join(format!("{arch}-unknown-cosmo-cc")),
+    );
+    env_default(
+        &mut cmd,
+        &format!("CXX_{t}"),
+        cosmo_bin.join(format!("{arch}-unknown-cosmo-c++")),
+    );
     env_default(
         &mut cmd,
         &format!("AR_{t}"),
@@ -472,11 +503,18 @@ fn verify_std_redirects(
     triple: &str,
     arch: &str,
 ) -> Result<()> {
-    let deps = project.join("target").join(triple).join(profile).join("deps");
+    let deps = project
+        .join("target")
+        .join(triple)
+        .join(profile)
+        .join("deps");
     let mut newest: Option<(std::time::SystemTime, PathBuf)> = None;
     for entry in fs::read_dir(&deps)? {
         let path = entry?.path();
-        let name = path.file_name().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default();
+        let name = path
+            .file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_default();
         if name.starts_with("libstd-") && name.ends_with(".rlib") {
             let m = fs::metadata(&path)?.modified()?;
             if newest.as_ref().is_none_or(|(t, _)| *t < m) {
@@ -488,7 +526,11 @@ fn verify_std_redirects(
         bail!("no libstd rlib under {}", deps.display());
     };
     let nm = root.join(format!("vendor/cosmocc/bin/{arch}-linux-cosmo-nm"));
-    let out = util::ape_command(&nm).arg("-u").arg(&rlib).output().context("running nm")?;
+    let out = util::ape_command(&nm)
+        .arg("-u")
+        .arg(&rlib)
+        .output()
+        .context("running nm")?;
     let text = String::from_utf8_lossy(&out.stdout);
     let imported: std::collections::BTreeSet<&str> = text
         .lines()
@@ -526,8 +568,10 @@ fn apelink(
     tiny: bool,
 ) -> Result<()> {
     let bin = root.join("vendor/cosmocc/bin");
-    let inputs: Vec<PathBuf> =
-        TARGETS.iter().map(|&(triple, _)| dbg_path(project, profile, target, triple)).collect();
+    let inputs: Vec<PathBuf> = TARGETS
+        .iter()
+        .map(|&(triple, _)| dbg_path(project, profile, target, triple))
+        .collect();
     for p in &inputs {
         if !p.is_file() {
             bail!("{} not found. wrong binary name? pass --bin", p.display());

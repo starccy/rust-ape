@@ -30,13 +30,24 @@ fn main() {
     let config = Config::builder()
         .timeout_global(Some(Duration::from_secs(30)))
         .user_agent("rust-ape-examples")
-        .tls_config(TlsConfig::builder().root_certs(RootCerts::PlatformVerifier).build())
+        .tls_config(
+            TlsConfig::builder()
+                .root_certs(RootCerts::PlatformVerifier)
+                .build(),
+        )
         .build();
     let agent = config.new_agent();
     let url = "https://example.com/";
-    let mut resp = agent.get(url).call().expect("request through the platform verifier failed");
+    let mut resp = agent
+        .get(url)
+        .call()
+        .expect("request through the platform verifier failed");
     let status = resp.status().as_u16();
-    let len = resp.body_mut().read_to_string().expect("could not read body").len();
+    let len = resp
+        .body_mut()
+        .read_to_string()
+        .expect("could not read body")
+        .len();
     println!("{status} {len} bytes  {url}");
     assert_eq!(status, 200);
 

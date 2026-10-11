@@ -23,7 +23,11 @@ fn main() {
     }
 
     let text = fs::read_to_string(format!("{DIR}/hello.txt")).expect("read hello.txt");
-    assert_eq!(text.trim(), "hello from the bundle", "unexpected content: {text:?}");
+    assert_eq!(
+        text.trim(),
+        "hello from the bundle",
+        "unexpected content: {text:?}"
+    );
     println!("read {DIR}/hello.txt: {:?}", text.trim());
 
     let meta = fs::metadata(format!("{DIR}/hello.txt")).expect("metadata");
@@ -48,7 +52,11 @@ fn main() {
 
     // the store is read-only, like the real thing under a non-root user
     let err = fs::write(format!("{DIR}/hello.txt"), "x").unwrap_err();
-    assert_ne!(err.kind(), ErrorKind::NotFound, "write should fail as read-only, got {err}");
+    assert_ne!(
+        err.kind(),
+        ErrorKind::NotFound,
+        "write should fail as read-only, got {err}"
+    );
     println!("write refused: {err}");
 
     let mut names: Vec<String> = fs::read_dir(DIR)
@@ -69,7 +77,12 @@ fn main() {
         if entry.file_name() == "hello.txt" {
             assert_eq!(meta.len(), text.len() as u64);
         }
-        println!("  {:?}: dir={} len={}", entry.file_name(), meta.is_dir(), meta.len());
+        println!(
+            "  {:?}: dir={} len={}",
+            entry.file_name(),
+            meta.is_dir(),
+            meta.len()
+        );
     }
 
     let sub: Vec<_> = fs::read_dir(format!("{DIR}/sub"))

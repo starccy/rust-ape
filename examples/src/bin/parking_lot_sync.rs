@@ -39,13 +39,21 @@ fn main() {
     let cpu0 = cpu_now();
     let t0 = Instant::now();
     let mut guard = lock.lock();
-    let timed_out = cv.wait_for(&mut guard, Duration::from_millis(300)).timed_out();
+    let timed_out = cv
+        .wait_for(&mut guard, Duration::from_millis(300))
+        .timed_out();
     drop(guard);
     assert!(timed_out, "nobody notified — this must time out");
     let waited = t0.elapsed();
     let spun = cpu_now() - cpu0;
-    assert!(waited >= Duration::from_millis(280), "woke too early: {waited:?}");
-    assert!(waited < Duration::from_secs(5), "timeout overshot: {waited:?}");
+    assert!(
+        waited >= Duration::from_millis(280),
+        "woke too early: {waited:?}"
+    );
+    assert!(
+        waited < Duration::from_secs(5),
+        "timeout overshot: {waited:?}"
+    );
     assert!(
         spun < Duration::from_millis(100),
         "condvar wait burned {spun:?} of CPU — the futex is spinning"

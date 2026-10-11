@@ -13,7 +13,10 @@ fn main() {
             std::hash::RandomState::new().build_hasher().finish()
         })
         .collect();
-    assert!(seeds.len() > 1, "RandomState handed back the same seed every time");
+    assert!(
+        seeds.len() > 1,
+        "RandomState handed back the same seed every time"
+    );
     println!("std RandomState: {} distinct seeds out of 8", seeds.len());
 
     // The rand crate, which sources its seed through getrandom.
@@ -21,7 +24,10 @@ fn main() {
 
     let mut buf = [0u8; 32];
     rng.fill(&mut buf[..]);
-    assert!(buf.iter().any(|&b| b != 0), "filled buffer came back all zeros");
+    assert!(
+        buf.iter().any(|&b| b != 0),
+        "filled buffer came back all zeros"
+    );
     println!("32 random bytes: {}", hex(&buf[..8]));
 
     // A range, drawn often enough that a stuck generator would show.
@@ -31,8 +37,15 @@ fn main() {
         assert!(n < 100, "random_range went out of bounds");
         seen.insert(n);
     }
-    assert!(seen.len() > 50, "only {} distinct values in {DRAWS} draws", seen.len());
-    println!("{DRAWS} draws from 0..100 hit {} distinct values", seen.len());
+    assert!(
+        seen.len() > 50,
+        "only {} distinct values in {DRAWS} draws",
+        seen.len()
+    );
+    println!(
+        "{DRAWS} draws from 0..100 hit {} distinct values",
+        seen.len()
+    );
 
     // Two generators shouldn't agree.
     let a: [u64; 4] = rand::random();

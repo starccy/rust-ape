@@ -26,7 +26,10 @@ fn libc_offset(t: i64) -> (i64, String) {
     unsafe {
         let mut tm: libc::tm = std::mem::zeroed();
         tzset();
-        assert!(!libc::localtime_r(&t, &mut tm).is_null(), "localtime_r failed");
+        assert!(
+            !libc::localtime_r(&t, &mut tm).is_null(),
+            "localtime_r failed"
+        );
         let zone = if tm.tm_zone.is_null() {
             String::from("?")
         } else {
@@ -43,7 +46,14 @@ fn main() {
 
     println!("TZ={:?}", std::env::var("TZ").ok());
     for p in ["/etc/localtime", "/usr/share/zoneinfo"] {
-        println!("{p}: {}", if Path::new(p).exists() { "present" } else { "MISSING" });
+        println!(
+            "{p}: {}",
+            if Path::new(p).exists() {
+                "present"
+            } else {
+                "MISSING"
+            }
+        );
     }
 
     let (libc_off, libc_zone) = libc_offset(stamp);
@@ -52,7 +62,10 @@ fn main() {
     // chrono reads TZ, then /etc/localtime, and parses the TZif itself.
     let chrono_off = {
         use chrono::{Local, TimeZone};
-        let dt = Local.timestamp_opt(stamp, 0).single().expect("ambiguous local time");
+        let dt = Local
+            .timestamp_opt(stamp, 0)
+            .single()
+            .expect("ambiguous local time");
         let off = dt.offset().local_minus_utc() as i64;
         println!("chrono Local     : offset {off:+}s  {dt}");
         off
@@ -67,7 +80,10 @@ fn main() {
         let tz = TimeZone::system();
         let zoned = ts.to_zoned(tz.clone());
         let off = zoned.offset().seconds() as i64;
-        println!("jiff system tz   : offset {off:+}s  {zoned}  (iana {:?})", tz.iana_name());
+        println!(
+            "jiff system tz   : offset {off:+}s  {zoned}  (iana {:?})",
+            tz.iana_name()
+        );
         off
     };
 
@@ -77,7 +93,8 @@ fn main() {
         use jiff::{Timestamp, tz::TimeZone};
         let ts = Timestamp::from_second(stamp).unwrap();
         for (name, want) in [("Asia/Shanghai", 8 * 3600), ("America/New_York", -4 * 3600)] {
-            let tz = TimeZone::get(name).unwrap_or_else(|e| panic!("bundled tzdb lacks {name}: {e}"));
+            let tz =
+                TimeZone::get(name).unwrap_or_else(|e| panic!("bundled tzdb lacks {name}: {e}"));
             let zoned = ts.to_zoned(tz);
             println!("jiff bundled tzdb: {name} -> {zoned}");
             // The stamp is in August, so New York is on daylight time.

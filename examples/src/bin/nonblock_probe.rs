@@ -74,7 +74,12 @@ fn probe_child(mode: &str) -> String {
         match child.try_wait().unwrap() {
             Some(_) => {
                 let mut out = String::new();
-                child.stdout.take().unwrap().read_to_string(&mut out).unwrap();
+                child
+                    .stdout
+                    .take()
+                    .unwrap()
+                    .read_to_string(&mut out)
+                    .unwrap();
                 return out.trim().to_string();
             }
             None if Instant::now() >= deadline => {
@@ -98,10 +103,17 @@ fn child_pollgate() {
     let big = [0u8; 65536];
     let mut sent: u64 = 0;
     for _ in 0..100_000 {
-        let mut pfd = libc::pollfd { fd, events: libc::POLLOUT, revents: 0 };
+        let mut pfd = libc::pollfd {
+            fd,
+            events: libc::POLLOUT,
+            revents: 0,
+        };
         let writable = unsafe { libc::poll(&mut pfd, 1, 0) };
         if writable == 0 {
-            println!("not-writable reached after {}k (gate precondition holds)", sent / 1024);
+            println!(
+                "not-writable reached after {}k (gate precondition holds)",
+                sent / 1024
+            );
             return;
         }
         let n = unsafe { libc::send(fd, big.as_ptr().cast(), big.len(), 0) };

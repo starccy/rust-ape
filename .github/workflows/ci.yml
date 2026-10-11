@@ -32,6 +32,9 @@ jobs:
       - name: Install the pinned toolchain
         run: rustup show active-toolchain || rustup toolchain install
 
+      - run: cargo fmt --check
+      - run: cargo fmt --check --manifest-path examples/Cargo.toml
+
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |

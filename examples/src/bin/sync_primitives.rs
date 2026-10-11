@@ -17,7 +17,10 @@ fn cpu_time() -> Option<Duration> {
     if !ape::is_linux() {
         return None;
     }
-    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut ts = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     (unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut ts) } == 0)
         .then(|| Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32))
 }
@@ -69,7 +72,10 @@ fn main() {
         .unwrap();
     let wall = begin.elapsed();
     assert!(res.timed_out(), "timed wait claims it was woken");
-    assert!(wall >= Duration::from_millis(450), "timed wait returned early: {wall:?}");
+    assert!(
+        wall >= Duration::from_millis(450),
+        "timed wait returned early: {wall:?}"
+    );
     if let (Some(a), Some(b)) = (cpu_before, cpu_time()) {
         let spent = b - a;
         assert!(

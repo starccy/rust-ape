@@ -48,8 +48,10 @@ fn main() -> std::io::Result<()> {
             ])
             .areas(f.area());
             f.render_widget(
-                Paragraph::new(format!("one binary, every OS. {keys} keys so far, q or Esc quits"))
-                    .block(Block::bordered().title(" ratatui on APE ")),
+                Paragraph::new(format!(
+                    "one binary, every OS. {keys} keys so far, q or Esc quits"
+                ))
+                .block(Block::bordered().title(" ratatui on APE ")),
                 top,
             );
             f.render_widget(

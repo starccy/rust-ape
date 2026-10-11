@@ -123,8 +123,15 @@ fn main() {
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
     let path = std::ffi::CString::new(std::env::args().next().unwrap()).unwrap();
     assert_eq!(unsafe { libc::stat(path.as_ptr(), &mut st) }, 0);
-    assert_eq!(st.st_size as u64, meta.len(), "st_size offset is live-wrong");
-    assert!(st.st_mode & libc::S_IFMT == libc::S_IFREG, "st_mode offset is live-wrong");
+    assert_eq!(
+        st.st_size as u64,
+        meta.len(),
+        "st_size offset is live-wrong"
+    );
+    assert!(
+        st.st_mode & libc::S_IFMT == libc::S_IFREG,
+        "st_mode offset is live-wrong"
+    );
     assert!(st.st_nlink >= 1);
     println!(
         "layout check ok (compile-time); live stat: size={} mode={:o} nlink={}",

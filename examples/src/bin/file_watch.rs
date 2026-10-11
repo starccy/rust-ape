@@ -25,7 +25,7 @@ const PATIENCE: Duration = Duration::from_secs(10);
 fn main() {
     let dir = std::env::temp_dir().join(format!("rust-ape-watch-{}", std::process::id()));
     std::fs::create_dir_all(&dir).expect("create scratch dir");
-    
+
     let dir = std::fs::canonicalize(&dir).expect("canonicalize scratch dir");
     println!("watching {}", dir.display());
 

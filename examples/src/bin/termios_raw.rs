@@ -22,8 +22,14 @@ fn tty_assertions(fd: i32) {
         std::io::Error::last_os_error()
     );
     // A terminal at rest is in cooked mode: canonical, echoing.
-    assert!(orig.c_lflag & libc::ICANON != 0, "expected ICANON in cooked mode");
-    assert!(orig.c_lflag & libc::ECHO != 0, "expected ECHO in cooked mode");
+    assert!(
+        orig.c_lflag & libc::ICANON != 0,
+        "expected ICANON in cooked mode"
+    );
+    assert!(
+        orig.c_lflag & libc::ECHO != 0,
+        "expected ECHO in cooked mode"
+    );
 
     // Flip to raw and read the mode back through the full repack chain.
     let mut raw = orig;
@@ -31,26 +37,50 @@ fn tty_assertions(fd: i32) {
     assert_eq!(raw.c_lflag & libc::ICANON, 0);
     assert_eq!(raw.c_cc[libc::VMIN], 1);
     assert_eq!(raw.c_cc[libc::VTIME], 0);
-    assert_eq!(unsafe { libc::tcsetattr(fd, libc::TCSANOW, &raw) }, 0, "tcsetattr raw");
+    assert_eq!(
+        unsafe { libc::tcsetattr(fd, libc::TCSANOW, &raw) },
+        0,
+        "tcsetattr raw"
+    );
 
     let mut back: libc::termios = unsafe { std::mem::zeroed() };
     assert_eq!(unsafe { libc::tcgetattr(fd, &mut back) }, 0);
-    assert_eq!(back.c_lflag & libc::ICANON, 0, "raw mode did not stick (ICANON)");
-    assert_eq!(back.c_lflag & libc::ECHO, 0, "raw mode did not stick (ECHO)");
+    assert_eq!(
+        back.c_lflag & libc::ICANON,
+        0,
+        "raw mode did not stick (ICANON)"
+    );
+    assert_eq!(
+        back.c_lflag & libc::ECHO,
+        0,
+        "raw mode did not stick (ECHO)"
+    );
     // The NT console always processes output (that's how its VT sequences
     // work) and has no character-size notion, so cosmo reports OPOST set
     // and no CS bits there. Host semantics, not a translation gap — TUIs
     // don't depend on either.
     let nt_console = std::fs::metadata("C:\\Windows").is_ok();
     if !nt_console {
-        assert_eq!(back.c_oflag & libc::OPOST, 0, "raw mode did not stick (OPOST)");
+        assert_eq!(
+            back.c_oflag & libc::OPOST,
+            0,
+            "raw mode did not stick (OPOST)"
+        );
         assert_eq!(back.c_cflag & libc::CSIZE, libc::CS8, "CS8 did not survive");
     }
     assert_eq!(back.c_cc[libc::VMIN], 1, "VMIN did not survive the repack");
-    assert_eq!(back.c_cc[libc::VTIME], 0, "VTIME did not survive the repack");
+    assert_eq!(
+        back.c_cc[libc::VTIME],
+        0,
+        "VTIME did not survive the repack"
+    );
 
     // Restore, and verify restoration took.
-    assert_eq!(unsafe { libc::tcsetattr(fd, libc::TCSANOW, &orig) }, 0, "restore");
+    assert_eq!(
+        unsafe { libc::tcsetattr(fd, libc::TCSANOW, &orig) },
+        0,
+        "restore"
+    );
     let mut fin: libc::termios = unsafe { std::mem::zeroed() };
     assert_eq!(unsafe { libc::tcgetattr(fd, &mut fin) }, 0);
     assert!(fin.c_lflag & libc::ICANON != 0, "restore did not stick");
@@ -89,7 +119,10 @@ fn main() {
     // tty-config ioctl on a non-tty must come back ENOTTY, in musl coding.
     let f = std::fs::File::open(std::env::args().next().unwrap()).expect("open self");
     let mut t: libc::termios = unsafe { std::mem::zeroed() };
-    assert_eq!(unsafe { libc::ioctl(f.as_raw_fd(), libc::TCGETS, &mut t) }, -1);
+    assert_eq!(
+        unsafe { libc::ioctl(f.as_raw_fd(), libc::TCGETS, &mut t) },
+        -1
+    );
     let e = std::io::Error::last_os_error().raw_os_error().unwrap();
     assert_eq!(e, libc::ENOTTY, "want ENOTTY(25), got {e}");
     unsafe {

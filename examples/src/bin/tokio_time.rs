@@ -31,8 +31,14 @@ async fn intervals() {
         tick.tick().await;
     }
     let elapsed = started.elapsed();
-    assert!(elapsed >= Duration::from_millis(195), "five ticks in {elapsed:?}");
-    assert!(elapsed < Duration::from_secs(5), "five ticks took {elapsed:?}");
+    assert!(
+        elapsed >= Duration::from_millis(195),
+        "five ticks in {elapsed:?}"
+    );
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "five ticks took {elapsed:?}"
+    );
     println!("interval: 5 ticks of 50ms in {elapsed:?}");
 
     // Falling behind must not queue up a burst of catch-up ticks.
@@ -53,7 +59,10 @@ async fn intervals() {
 async fn deadlines() {
     let deadline = Instant::now() + Duration::from_millis(120);
     sleep_until(deadline).await;
-    assert!(Instant::now() >= deadline, "sleep_until returned before its deadline");
+    assert!(
+        Instant::now() >= deadline,
+        "sleep_until returned before its deadline"
+    );
 
     // Zero and past deadlines have to complete rather than hang.
     sleep(Duration::ZERO).await;
@@ -71,7 +80,9 @@ async fn timeouts() {
     // A timeout wrapped around a socket read is the shape most code actually
     // uses: the driver has to hand the timer back even though the fd never
     // becomes readable.
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
     let addr = listener.local_addr().expect("local_addr");
     let accepted = tokio::spawn(async move { listener.accept().await.expect("accept") });
     let mut sock = tokio::net::TcpStream::connect(addr).await.expect("connect");
@@ -79,9 +90,16 @@ async fn timeouts() {
 
     let mut buf = [0u8; 16];
     let started = Instant::now();
-    let r = timeout(Duration::from_millis(100), tokio::io::AsyncReadExt::read(&mut sock, &mut buf)).await;
+    let r = timeout(
+        Duration::from_millis(100),
+        tokio::io::AsyncReadExt::read(&mut sock, &mut buf),
+    )
+    .await;
     assert!(r.is_err(), "a read that had no data reported ready");
-    assert!(started.elapsed() >= Duration::from_millis(90), "the read timeout fired early");
+    assert!(
+        started.elapsed() >= Duration::from_millis(90),
+        "the read timeout fired early"
+    );
     println!("timeout: fired on a silent socket, passed a ready future through");
 }
 
@@ -95,7 +113,11 @@ async fn many_sleeps() {
             tokio::spawn(async move {
                 let t = Instant::now();
                 sleep(want).await;
-                assert!(t.elapsed() >= want, "sleep({want:?}) returned after {:?}", t.elapsed());
+                assert!(
+                    t.elapsed() >= want,
+                    "sleep({want:?}) returned after {:?}",
+                    t.elapsed()
+                );
             })
         })
         .collect();
@@ -103,6 +125,9 @@ async fn many_sleeps() {
         t.await.expect("sleeper");
     }
     let elapsed = started.elapsed();
-    assert!(elapsed < Duration::from_secs(10), "{SLEEPS} sleeps took {elapsed:?}");
+    assert!(
+        elapsed < Duration::from_secs(10),
+        "{SLEEPS} sleeps took {elapsed:?}"
+    );
     println!("{SLEEPS} overlapping sleeps, longest 200ms, all done in {elapsed:?}");
 }

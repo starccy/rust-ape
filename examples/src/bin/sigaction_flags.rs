@@ -42,7 +42,11 @@ extern "C" fn info_handler(sig: i32, info: *mut libc::siginfo_t, _ctx: *mut libc
     }
 }
 
-extern "C" fn main_overflow_handler(_sig: i32, info: *mut libc::siginfo_t, _ctx: *mut libc::c_void) {
+extern "C" fn main_overflow_handler(
+    _sig: i32,
+    info: *mut libc::siginfo_t,
+    _ctx: *mut libc::c_void,
+) {
     let msg: &[u8] = if unsafe { (*info).si_addr() }.is_null() {
         b"main thread fault without an address\n"
     } else {
@@ -104,12 +108,17 @@ fn main() {
                 let mut act: libc::sigaction = mem::zeroed();
                 act.sa_sigaction = addr3(main_overflow_handler);
                 act.sa_flags = libc::SA_SIGINFO | libc::SA_ONSTACK;
-                assert_eq!(libc::sigaction(libc::SIGSEGV, &act, std::ptr::null_mut()), 0);
+                assert_eq!(
+                    libc::sigaction(libc::SIGSEGV, &act, std::ptr::null_mut()),
+                    0
+                );
                 assert_eq!(libc::sigaction(libc::SIGBUS, &act, std::ptr::null_mut()), 0);
             }
             overflow_with_pad(pad);
         } else {
-            std::thread::spawn(move || overflow_with_pad(pad)).join().unwrap();
+            std::thread::spawn(move || overflow_with_pad(pad))
+                .join()
+                .unwrap();
         }
         unreachable!();
     }
@@ -127,7 +136,10 @@ fn main() {
         // Plain handler: the trampoline must hand back musl's signum.
         let mut act: libc::sigaction = mem::zeroed();
         act.sa_sigaction = addr1(plain_handler);
-        assert_eq!(libc::sigaction(libc::SIGUSR1, &act, std::ptr::null_mut()), 0);
+        assert_eq!(
+            libc::sigaction(libc::SIGUSR1, &act, std::ptr::null_mut()),
+            0
+        );
         assert_eq!(libc::raise(libc::SIGUSR1), 0);
         assert_eq!(PLAIN_SIG.load(Ordering::SeqCst), libc::SIGUSR1);
         println!("plain handler saw musl SIGUSR1({})", libc::SIGUSR1);
@@ -136,12 +148,21 @@ fn main() {
         let mut act: libc::sigaction = mem::zeroed();
         act.sa_sigaction = addr3(info_handler);
         act.sa_flags = libc::SA_SIGINFO | libc::SA_RESTART;
-        assert_eq!(libc::sigaction(libc::SIGUSR2, &act, std::ptr::null_mut()), 0);
+        assert_eq!(
+            libc::sigaction(libc::SIGUSR2, &act, std::ptr::null_mut()),
+            0
+        );
         assert_eq!(libc::raise(libc::SIGUSR2), 0);
         assert_eq!(INFO_SIG.load(Ordering::SeqCst), libc::SIGUSR2);
-        assert_eq!(INFO_SI_SIGNO.load(Ordering::SeqCst), libc::SIGUSR2,
-            "si_signo not translated back to musl coding");
-        println!("SA_SIGINFO handler saw musl SIGUSR2({}) in arg and si_signo", libc::SIGUSR2);
+        assert_eq!(
+            INFO_SI_SIGNO.load(Ordering::SeqCst),
+            libc::SIGUSR2,
+            "si_signo not translated back to musl coding"
+        );
+        println!(
+            "SA_SIGINFO handler saw musl SIGUSR2({}) in arg and si_signo",
+            libc::SIGUSR2
+        );
 
         // oldact round-trip: reinstalling must report the previous user
         // handler (not the shim's trampoline) and the previous flags.
@@ -149,14 +170,25 @@ fn main() {
         replacement.sa_sigaction = libc::SIG_IGN;
         let mut old: libc::sigaction = mem::zeroed();
         assert_eq!(libc::sigaction(libc::SIGUSR2, &replacement, &mut old), 0);
-        assert_eq!(old.sa_sigaction, addr3(info_handler), "oldact leaked the trampoline");
+        assert_eq!(
+            old.sa_sigaction,
+            addr3(info_handler),
+            "oldact leaked the trampoline"
+        );
         assert_ne!(old.sa_flags & libc::SA_SIGINFO, 0, "oldact lost SA_SIGINFO");
         assert_ne!(old.sa_flags & libc::SA_RESTART, 0, "oldact lost SA_RESTART");
-        println!("oldact returned the user handler with flags {:#x}", old.sa_flags);
+        println!(
+            "oldact returned the user handler with flags {:#x}",
+            old.sa_flags
+        );
 
         // signal() rides the same machinery and must return the old handler.
         let prev = libc::signal(libc::SIGUSR1, libc::SIG_IGN);
-        assert_eq!(prev, addr1(plain_handler), "signal() lost the previous handler");
+        assert_eq!(
+            prev,
+            addr1(plain_handler),
+            "signal() lost the previous handler"
+        );
         println!("signal() round-trip ok");
 
         // sigprocmask: block, raise (must stay pending), unblock (must fire).
@@ -166,13 +198,27 @@ fn main() {
         let mut oldset: libc::sigset_t = mem::zeroed();
         let mut act: libc::sigaction = mem::zeroed();
         act.sa_sigaction = addr1(plain_handler);
-        assert_eq!(libc::sigaction(libc::SIGUSR2, &act, std::ptr::null_mut()), 0);
+        assert_eq!(
+            libc::sigaction(libc::SIGUSR2, &act, std::ptr::null_mut()),
+            0
+        );
         PLAIN_SIG.store(0, Ordering::SeqCst);
         assert_eq!(libc::sigprocmask(libc::SIG_BLOCK, &set, &mut oldset), 0);
         assert_eq!(libc::raise(libc::SIGUSR2), 0);
-        assert_eq!(PLAIN_SIG.load(Ordering::SeqCst), 0, "signal delivered while blocked");
-        assert_eq!(libc::sigprocmask(libc::SIG_SETMASK, &oldset, std::ptr::null_mut()), 0);
-        assert_eq!(PLAIN_SIG.load(Ordering::SeqCst), libc::SIGUSR2, "pending signal not delivered on unblock");
+        assert_eq!(
+            PLAIN_SIG.load(Ordering::SeqCst),
+            0,
+            "signal delivered while blocked"
+        );
+        assert_eq!(
+            libc::sigprocmask(libc::SIG_SETMASK, &oldset, std::ptr::null_mut()),
+            0
+        );
+        assert_eq!(
+            PLAIN_SIG.load(Ordering::SeqCst),
+            libc::SIGUSR2,
+            "pending signal not delivered on unblock"
+        );
         println!("sigprocmask block/unblock delivery order ok");
     }
 
@@ -197,11 +243,21 @@ fn main() {
         .expect("the child never said ready");
     assert_eq!(&hello, b"ready\n", "the child said something else");
     let pid = child.id() as libc::pid_t;
-    assert_eq!(unsafe { libc::kill(pid, 0) }, 0, "kill(pid, 0) says the child isn't there");
-    assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0, "kill(SIGTERM) failed");
+    assert_eq!(
+        unsafe { libc::kill(pid, 0) },
+        0,
+        "kill(pid, 0) says the child isn't there"
+    );
+    assert_eq!(
+        unsafe { libc::kill(pid, libc::SIGTERM) },
+        0,
+        "kill(SIGTERM) failed"
+    );
     let status = child.wait().expect("wait for the sleeper");
     assert!(!status.success(), "the child outlived SIGTERM: {status}");
-    let sig = status.signal().expect("the exit status carries no signal at all");
+    let sig = status
+        .signal()
+        .expect("the exit status carries no signal at all");
     assert_eq!(sig, libc::SIGTERM, "the exit status named the wrong signal");
     println!("child killed by SIGTERM({sig}), and its exit status says so");
 
@@ -213,17 +269,26 @@ fn main() {
         let mut set: libc::sigset_t = mem::zeroed();
         libc::sigemptyset(&mut set);
         libc::sigaddset(&mut set, libc::SIGUSR1);
-        assert_eq!(libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut()), 0);
+        assert_eq!(
+            libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut()),
+            0
+        );
         let mut act: libc::sigaction = mem::zeroed();
         act.sa_sigaction = addr1(thread_handler);
-        assert_eq!(libc::sigaction(libc::SIGUSR1, &act, std::ptr::null_mut()), 0);
+        assert_eq!(
+            libc::sigaction(libc::SIGUSR1, &act, std::ptr::null_mut()),
+            0
+        );
     }
     let worker = std::thread::spawn(|| unsafe {
         // Threads inherit the mask, so this one has to unblock explicitly.
         let mut set: libc::sigset_t = mem::zeroed();
         libc::sigemptyset(&mut set);
         libc::sigaddset(&mut set, libc::SIGUSR1);
-        assert_eq!(libc::pthread_sigmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut()), 0);
+        assert_eq!(
+            libc::pthread_sigmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut()),
+            0
+        );
         WORKER_READY.store(true, Ordering::SeqCst);
         let deadline = Instant::now() + Duration::from_secs(5);
         while CAUGHT_ON.load(Ordering::SeqCst) == 0 && Instant::now() < deadline {
@@ -234,7 +299,11 @@ fn main() {
     while !WORKER_READY.load(Ordering::SeqCst) {
         std::thread::sleep(Duration::from_millis(5));
     }
-    assert_eq!(unsafe { libc::kill(libc::getpid(), libc::SIGUSR1) }, 0, "kill(self, SIGUSR1)");
+    assert_eq!(
+        unsafe { libc::kill(libc::getpid(), libc::SIGUSR1) },
+        0,
+        "kill(self, SIGUSR1)"
+    );
     let worker_tid = worker.join().expect("worker thread");
     let caught = CAUGHT_ON.load(Ordering::SeqCst);
     let landed = if caught == 0 {
@@ -256,7 +325,10 @@ fn main() {
         let mut set: libc::sigset_t = mem::zeroed();
         libc::sigemptyset(&mut set);
         libc::sigaddset(&mut set, libc::SIGUSR1);
-        assert_eq!(libc::pthread_sigmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut()), 0);
+        assert_eq!(
+            libc::pthread_sigmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut()),
+            0
+        );
     }
 
     // The realtime range. musl reaches SIGRTMIN/SIGRTMAX through
@@ -272,7 +344,11 @@ fn main() {
     // the rest; elsewhere this reports what the host did.
     let rtmin = libc::SIGRTMIN();
     let rtmax = libc::SIGRTMAX();
-    assert_eq!((rtmin, rtmax), (35, 64), "the shim's realtime range drifted from musl's");
+    assert_eq!(
+        (rtmin, rtmax),
+        (35, 64),
+        "the shim's realtime range drifted from musl's"
+    );
     unsafe {
         let mut act: libc::sigaction = mem::zeroed();
         act.sa_sigaction = addr1(plain_handler);
@@ -283,13 +359,22 @@ fn main() {
         let seen = PLAIN_SIG.load(Ordering::SeqCst);
         if ape::is_linux() {
             assert_eq!(install, 0, "sigaction(SIGRTMIN) failed: {install_err}");
-            assert!(raised, "raise(SIGRTMIN) failed: {}", std::io::Error::last_os_error());
-            assert_eq!(seen, rtmin, "the realtime handler was handed a different signum");
+            assert!(
+                raised,
+                "raise(SIGRTMIN) failed: {}",
+                std::io::Error::last_os_error()
+            );
+            assert_eq!(
+                seen, rtmin,
+                "the realtime handler was handed a different signum"
+            );
         }
         if seen == rtmin {
             println!("SIGRTMIN({rtmin})..SIGRTMAX({rtmax}), raise delivered and coded as {seen}");
         } else if install != 0 {
-            println!("SIGRTMIN({rtmin})..SIGRTMAX({rtmax}) bounds ok, sigaction refused: {install_err}");
+            println!(
+                "SIGRTMIN({rtmin})..SIGRTMAX({rtmax}) bounds ok, sigaction refused: {install_err}"
+            );
         } else {
             println!("SIGRTMIN({rtmin})..SIGRTMAX({rtmax}) installed, but the handler never ran");
         }
@@ -304,7 +389,11 @@ fn main() {
         let n = libc::write(fds[1], b"x".as_ptr().cast(), 1);
         let raw = std::io::Error::last_os_error().raw_os_error();
         assert_eq!(n, -1, "writing into a reader-less pipe reported success");
-        assert_eq!(raw, Some(libc::EPIPE), "expected EPIPE from a reader-less pipe");
+        assert_eq!(
+            raw,
+            Some(libc::EPIPE),
+            "expected EPIPE from a reader-less pipe"
+        );
         assert_eq!(libc::close(fds[1]), 0);
         println!("write to a reader-less pipe gave EPIPE, not a SIGPIPE death");
     }
@@ -322,7 +411,10 @@ fn main() {
             .output()
             .expect("spawn self");
         let stderr = String::from_utf8_lossy(&out.stderr);
-        assert!(!out.status.success(), "overflow child {pad} exited cleanly?!");
+        assert!(
+            !out.status.success(),
+            "overflow child {pad} exited cleanly?!"
+        );
         let tail = &stderr[stderr.len().saturating_sub(3000)..];
         assert!(
             stderr.contains("overflowed its stack"),
@@ -331,7 +423,9 @@ fn main() {
             out.status
         );
     }
-    println!("stack overflow detected by std at {PADS} sp offsets: SA_ONSTACK/SA_SIGINFO/si_addr all intact");
+    println!(
+        "stack overflow detected by std at {PADS} sp offsets: SA_ONSTACK/SA_SIGINFO/si_addr all intact"
+    );
 
     for pad in 0..PADS {
         let out = std::process::Command::new(&self_path)

@@ -13,7 +13,9 @@ fn main() {
 
         let mut f = smol::fs::File::create(&path).await.expect("create");
         for line in LINES {
-            f.write_all(format!("{line}\n").as_bytes()).await.expect("write");
+            f.write_all(format!("{line}\n").as_bytes())
+                .await
+                .expect("write");
         }
         f.flush().await.expect("flush");
         drop(f);
@@ -23,7 +25,9 @@ fn main() {
         println!("wrote {} bytes", md.len());
 
         // Read the whole thing back.
-        let whole = smol::fs::read_to_string(&path).await.expect("read_to_string");
+        let whole = smol::fs::read_to_string(&path)
+            .await
+            .expect("read_to_string");
         let expected: String = LINES.iter().map(|l| format!("{l}\n")).collect();
         assert_eq!(whole, expected, "content differs from what we wrote");
 

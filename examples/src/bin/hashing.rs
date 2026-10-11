@@ -53,8 +53,16 @@ fn main() {
         sha.update(chunk);
         b3.update(chunk);
     }
-    assert_eq!(hex(&sha.finalize()), BIG_SHA256, "incremental sha256 differs");
-    assert_eq!(b3.finalize().to_hex().to_string(), BIG_BLAKE3, "incremental blake3 differs");
+    assert_eq!(
+        hex(&sha.finalize()),
+        BIG_SHA256,
+        "incremental sha256 differs"
+    );
+    assert_eq!(
+        b3.finalize().to_hex().to_string(),
+        BIG_BLAKE3,
+        "incremental blake3 differs"
+    );
     println!("incremental in 1237-byte chunks matches");
 
     // The everyday use: digest a file you're streaming off disk.
@@ -74,7 +82,11 @@ fn main() {
         }
         sha.update(&buf[..n]);
     }
-    assert_eq!(hex(&sha.finalize()), BIG_SHA256, "sha256 of the file differs");
+    assert_eq!(
+        hex(&sha.finalize()),
+        BIG_SHA256,
+        "sha256 of the file differs"
+    );
     std::fs::remove_file(&path).expect("remove");
     println!("streamed a {}-byte file to the same digest", big.len());
 

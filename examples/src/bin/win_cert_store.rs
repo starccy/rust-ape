@@ -19,7 +19,9 @@ use std::ffi::c_void;
 
 fn main() {
     if !ape::is_windows() {
-        println!("no crypt32 on this host; its roots are in /etc/ssl, where the unix path of every certs crate already looks");
+        println!(
+            "no crypt32 on this host; its roots are in /etc/ssl, where the unix path of every certs crate already looks"
+        );
         println!("\nwin cert store ok");
         return;
     }
@@ -78,7 +80,10 @@ fn enumerate() {
         let before = roots.len();
         unsafe {
             let store = open(std::ptr::null_mut(), store_name.as_ptr() as *const u8);
-            assert!(!store.is_null(), "CertOpenSystemStoreA({store_name:?}) failed");
+            assert!(
+                !store.is_null(),
+                "CertOpenSystemStoreA({store_name:?}) failed"
+            );
             let mut ctx: *const CertContext = std::ptr::null();
             loop {
                 ctx = next(store, ctx);
@@ -101,6 +106,12 @@ fn enumerate() {
         );
     }
 
-    assert!(!roots.is_empty(), "a Windows machine with an empty ROOT store");
-    println!("RootCertStore holds {} trust anchors from the host", roots.len());
+    assert!(
+        !roots.is_empty(),
+        "a Windows machine with an empty ROOT store"
+    );
+    println!(
+        "RootCertStore holds {} trust anchors from the host",
+        roots.len()
+    );
 }

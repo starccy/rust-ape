@@ -6,13 +6,13 @@
 //! another process's descriptors, so the fd case only expects its socket
 //! there; everything else must hold on all three. The BSDs skip.
 
+use rust_ape_examples::Report;
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
-use rust_ape_examples::Report;
 
 const TOKEN: &str = "PROC_OTHERS_TOKEN";
 
@@ -44,7 +44,12 @@ fn read_dir_names(path: &str) -> Result<Vec<String>, String> {
     let rd = fs::read_dir(path).map_err(|e| format!("read_dir {path}: {e}"))?;
     let mut v = Vec::new();
     for ent in rd {
-        v.push(ent.map_err(|e| e.to_string())?.file_name().to_string_lossy().into_owned());
+        v.push(
+            ent.map_err(|e| e.to_string())?
+                .file_name()
+                .to_string_lossy()
+                .into_owned(),
+        );
     }
     Ok(v)
 }
@@ -67,7 +72,10 @@ fn main() {
         .expect("spawn child");
     let pid = child.id();
     let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
-    let ready = lines.next().expect("child died early").expect("child stdout");
+    let ready = lines
+        .next()
+        .expect("child died early")
+        .expect("child stdout");
     let ready = ready.strip_prefix("ready ").expect("ready line");
     let (held_file, child_cwd) = ready.split_once('|').expect("ready fields");
     let (held_file, child_cwd) = (held_file.to_string(), child_cwd.to_string());
@@ -81,102 +89,141 @@ fn main() {
         .to_string_lossy()
         .to_lowercase();
 
-    rep.check("child-comm", (|| {
-        let comm = fs::read_to_string(format!("{base}/comm")).map_err(|e| e.to_string())?;
-        let comm = comm.trim().to_lowercase();
-        let n = comm.len().min(exe_stem.len()).min(15);
-        if n == 0 || comm[..n] != exe_stem[..n] {
-            return Err(format!("comm {comm:?} vs binary {exe_stem:?}"));
-        }
-        Ok(comm)
-    })());
-
-    rep.check("child-cmdline", (|| {
-        let raw = fs::read(format!("{base}/cmdline")).map_err(|e| e.to_string())?;
-        let args: Vec<String> = raw
-            .split(|b| *b == 0)
-            .filter(|s| !s.is_empty())
-            .map(|s| String::from_utf8_lossy(s).into_owned())
-            .collect();
-        if args.len() < 2 || args.last().map(String::as_str) != Some("--child") {
-            return Err(format!("argv {args:?}"));
-        }
-        let argv0 = args[0].to_lowercase();
-        let loaderish = argv0.ends_with("/ape") || argv0 == "ape" || argv0.contains(".ape-");
-        // On Linux the kernel shows the loader binfmt ran; that is the real
-        // /proc and stays untouched. The emulated hosts answer the program.
-        if ape::is_linux() {
-            if !argv0.contains(&exe_stem) && !loaderish {
-                return Err(format!("argv[0] {argv0:?} is neither {exe_stem:?} nor a loader"));
+    rep.check(
+        "child-comm",
+        (|| {
+            let comm = fs::read_to_string(format!("{base}/comm")).map_err(|e| e.to_string())?;
+            let comm = comm.trim().to_lowercase();
+            let n = comm.len().min(exe_stem.len()).min(15);
+            if n == 0 || comm[..n] != exe_stem[..n] {
+                return Err(format!("comm {comm:?} vs binary {exe_stem:?}"));
             }
-        } else {
-            if !argv0.contains(&exe_stem) {
-                return Err(format!("argv[0] {argv0:?} does not name {exe_stem:?}"));
+            Ok(comm)
+        })(),
+    );
+
+    rep.check(
+        "child-cmdline",
+        (|| {
+            let raw = fs::read(format!("{base}/cmdline")).map_err(|e| e.to_string())?;
+            let args: Vec<String> = raw
+                .split(|b| *b == 0)
+                .filter(|s| !s.is_empty())
+                .map(|s| String::from_utf8_lossy(s).into_owned())
+                .collect();
+            if args.len() < 2 || args.last().map(String::as_str) != Some("--child") {
+                return Err(format!("argv {args:?}"));
             }
-            if loaderish {
-                return Err(format!("argv[0] {argv0:?} is the loader"));
+            let argv0 = args[0].to_lowercase();
+            let loaderish = argv0.ends_with("/ape") || argv0 == "ape" || argv0.contains(".ape-");
+            // On Linux the kernel shows the loader binfmt ran; that is the real
+            // /proc and stays untouched. The emulated hosts answer the program.
+            if ape::is_linux() {
+                if !argv0.contains(&exe_stem) && !loaderish {
+                    return Err(format!(
+                        "argv[0] {argv0:?} is neither {exe_stem:?} nor a loader"
+                    ));
+                }
+            } else {
+                if !argv0.contains(&exe_stem) {
+                    return Err(format!("argv[0] {argv0:?} does not name {exe_stem:?}"));
+                }
+                if loaderish {
+                    return Err(format!("argv[0] {argv0:?} is the loader"));
+                }
             }
-        }
-        Ok(format!("{} args, argv[0] {}", args.len(), args[0]))
-    })());
+            Ok(format!("{} args, argv[0] {}", args.len(), args[0]))
+        })(),
+    );
 
-    rep.check("child-exe", (|| {
-        let target = fs::read_link(format!("{base}/exe")).map_err(|e| e.to_string())?;
-        let name = target
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_lowercase();
-        let stem = target
-            .file_stem()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_lowercase();
-        let loaderish = name == "ape" || name.starts_with(".ape-");
-        // Linux truthfully names the loader binfmt ran; see child-cmdline
-        if stem != exe_stem && !(ape::is_linux() && loaderish) {
-            return Err(format!("exe {} vs {}", target.display(), exe.display()));
-        }
-        if !target.is_absolute() {
-            return Err(format!("exe {} not absolute", target.display()));
-        }
-        fs::metadata(&target).map_err(|e| format!("exe target unstatable: {e}"))?;
-        Ok(target.display().to_string())
-    })());
+    rep.check(
+        "child-exe",
+        (|| {
+            let target = fs::read_link(format!("{base}/exe")).map_err(|e| e.to_string())?;
+            let name = target
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_lowercase();
+            let stem = target
+                .file_stem()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_lowercase();
+            let loaderish = name == "ape" || name.starts_with(".ape-");
+            // Linux truthfully names the loader binfmt ran; see child-cmdline
+            if stem != exe_stem && !(ape::is_linux() && loaderish) {
+                return Err(format!("exe {} vs {}", target.display(), exe.display()));
+            }
+            if !target.is_absolute() {
+                return Err(format!("exe {} not absolute", target.display()));
+            }
+            fs::metadata(&target).map_err(|e| format!("exe target unstatable: {e}"))?;
+            Ok(target.display().to_string())
+        })(),
+    );
 
-    rep.check("child-cwd", (|| {
-        let cwd = fs::read_link(format!("{base}/cwd")).map_err(|e| e.to_string())?;
-        let got = fs::canonicalize(&cwd).map_err(|e| format!("canonicalize {}: {e}", cwd.display()))?;
-        // compare case-blind; one side may spell an NT path differently
-        if got.to_string_lossy().to_lowercase() != child_cwd.to_lowercase() {
-            return Err(format!("cwd {} vs child's own {}", got.display(), child_cwd));
-        }
-        Ok(got.display().to_string())
-    })());
+    rep.check(
+        "child-cwd",
+        (|| {
+            let cwd = fs::read_link(format!("{base}/cwd")).map_err(|e| e.to_string())?;
+            let got = fs::canonicalize(&cwd)
+                .map_err(|e| format!("canonicalize {}: {e}", cwd.display()))?;
+            // compare case-blind; one side may spell an NT path differently
+            if got.to_string_lossy().to_lowercase() != child_cwd.to_lowercase() {
+                return Err(format!(
+                    "cwd {} vs child's own {}",
+                    got.display(),
+                    child_cwd
+                ));
+            }
+            Ok(got.display().to_string())
+        })(),
+    );
 
-    rep.check("child-environ", (|| {
-        let raw = fs::read(format!("{base}/environ")).map_err(|e| e.to_string())?;
-        let s = String::from_utf8_lossy(&raw);
-        if !s.split('\0').any(|kv| kv == "PROC_OTHERS_TOKEN=witness-me") {
-            return Err(format!("{TOKEN} missing among {} vars", s.split('\0').filter(|x| !x.is_empty()).count()));
-        }
-        Ok(format!("{} vars, token seen", s.split('\0').filter(|x| !x.is_empty()).count()))
-    })());
+    rep.check(
+        "child-environ",
+        (|| {
+            let raw = fs::read(format!("{base}/environ")).map_err(|e| e.to_string())?;
+            let s = String::from_utf8_lossy(&raw);
+            if !s.split('\0').any(|kv| kv == "PROC_OTHERS_TOKEN=witness-me") {
+                return Err(format!(
+                    "{TOKEN} missing among {} vars",
+                    s.split('\0').filter(|x| !x.is_empty()).count()
+                ));
+            }
+            Ok(format!(
+                "{} vars, token seen",
+                s.split('\0').filter(|x| !x.is_empty()).count()
+            ))
+        })(),
+    );
 
-    rep.check("child-task", (|| {
-        let names = read_dir_names(&format!("{base}/task"))?;
-        let tids: Vec<&String> = names.iter().filter(|n| n.chars().all(|c| c.is_ascii_digit())).collect();
-        // main plus the two sleepers; hosts that cannot list threads answer
-        // one entry, which is a regression here on all three platforms
-        if tids.len() < 3 {
-            return Err(format!("{} thread entries: {names:?}", tids.len()));
-        }
-        let stat = fs::read_to_string(format!("{base}/task/{}/stat", tids[0])).map_err(|e| e.to_string())?;
-        if stat.split_whitespace().count() < 20 {
-            return Err(format!("task stat too short: {stat:?}"));
-        }
-        Ok(format!("{} threads, task/{}/stat readable", tids.len(), tids[0]))
-    })());
+    rep.check(
+        "child-task",
+        (|| {
+            let names = read_dir_names(&format!("{base}/task"))?;
+            let tids: Vec<&String> = names
+                .iter()
+                .filter(|n| n.chars().all(|c| c.is_ascii_digit()))
+                .collect();
+            // main plus the two sleepers; hosts that cannot list threads answer
+            // one entry, which is a regression here on all three platforms
+            if tids.len() < 3 {
+                return Err(format!("{} thread entries: {names:?}", tids.len()));
+            }
+            let stat = fs::read_to_string(format!("{base}/task/{}/stat", tids[0]))
+                .map_err(|e| e.to_string())?;
+            if stat.split_whitespace().count() < 20 {
+                return Err(format!("task stat too short: {stat:?}"));
+            }
+            Ok(format!(
+                "{} threads, task/{}/stat readable",
+                tids.len(),
+                tids[0]
+            ))
+        })(),
+    );
 
     rep.check("child-fd", (|| {
         let names = read_dir_names(&format!("{base}/fd"))?;
@@ -211,28 +258,31 @@ fn main() {
         Ok(format!("{} fds, file and socket links resolve", fds.len()))
     })());
 
-    rep.check("other-processes", (|| {
-        // at least one process that is not us or the child answers comm
-        let mut seen = 0;
-        for name in read_dir_names("/proc")? {
-            if !name.chars().all(|c| c.is_ascii_digit()) {
-                continue;
-            }
-            if name == pid.to_string() || name == std::process::id().to_string() {
-                continue;
-            }
-            if fs::read_to_string(format!("/proc/{name}/comm")).is_ok() {
-                seen += 1;
-                if seen >= 3 {
-                    break;
+    rep.check(
+        "other-processes",
+        (|| {
+            // at least one process that is not us or the child answers comm
+            let mut seen = 0;
+            for name in read_dir_names("/proc")? {
+                if !name.chars().all(|c| c.is_ascii_digit()) {
+                    continue;
+                }
+                if name == pid.to_string() || name == std::process::id().to_string() {
+                    continue;
+                }
+                if fs::read_to_string(format!("/proc/{name}/comm")).is_ok() {
+                    seen += 1;
+                    if seen >= 3 {
+                        break;
+                    }
                 }
             }
-        }
-        if seen == 0 {
-            return Err("no other process's comm readable".into());
-        }
-        Ok(format!("{seen}+ other processes answer comm"))
-    })());
+            if seen == 0 {
+                return Err("no other process's comm readable".into());
+            }
+            Ok(format!("{seen}+ other processes answer comm"))
+        })(),
+    );
 
     drop(child.stdin.take()); // release the child
     let _ = child.wait();

@@ -11,7 +11,11 @@ const ODD: &str = "测试呀 🦀";
 fn main() {
     // Child mode, driven by the parent's spawn at the end of main.
     if let Some(from_env) = env::var_os(ODD_VAR) {
-        assert_eq!(from_env.to_str(), Some(ODD), "the environment mangled non-ASCII text");
+        assert_eq!(
+            from_env.to_str(),
+            Some(ODD),
+            "the environment mangled non-ASCII text"
+        );
         let from_argv = env::args().nth(1).expect("child argv[1]");
         assert_eq!(from_argv, ODD, "argv mangled non-ASCII text");
         return;
@@ -33,7 +37,11 @@ fn main() {
     for key in ["PATH", "HOME", "USERPROFILE"] {
         if let Some(v) = env::var_os(key) {
             let v = v.to_string_lossy();
-            let shown = if v.len() > 60 { format!("{}...", &v[..60]) } else { v.into_owned() };
+            let shown = if v.len() > 60 {
+                format!("{}...", &v[..60])
+            } else {
+                v.into_owned()
+            };
             println!("  {key}={shown}");
         }
     }
@@ -41,14 +49,22 @@ fn main() {
     // Writing it, and reading it back.
     assert!(env::var_os(VAR).is_none(), "{VAR} was already set");
     unsafe { env::set_var(VAR, "hello") };
-    assert_eq!(env::var(VAR).as_deref(), Ok("hello"), "set_var did not take");
+    assert_eq!(
+        env::var(VAR).as_deref(),
+        Ok("hello"),
+        "set_var did not take"
+    );
     unsafe { env::remove_var(VAR) };
     assert!(env::var_os(VAR).is_none(), "remove_var did not take");
     println!("set and removed {VAR}");
 
     // Working directory.
     let cwd = env::current_dir().expect("current_dir");
-    assert!(cwd.is_absolute(), "current_dir returned a relative path: {}", cwd.display());
+    assert!(
+        cwd.is_absolute(),
+        "current_dir returned a relative path: {}",
+        cwd.display()
+    );
     assert!(cwd.is_dir(), "current_dir is not a directory");
     println!("cwd: {}", cwd.display());
 
@@ -69,7 +85,10 @@ fn main() {
         .env(ODD_VAR, ODD)
         .status()
         .expect("spawn self");
-    assert!(status.success(), "the child rejected the non-ASCII round trip: {status}");
+    assert!(
+        status.success(),
+        "the child rejected the non-ASCII round trip: {status}"
+    );
     println!("non-ASCII survived argv and the environment: {ODD:?}");
 
     println!("\nenv args ok");

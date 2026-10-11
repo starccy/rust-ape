@@ -48,7 +48,11 @@ async fn datagrams() {
                     sock.send_to(msg.as_bytes(), addr).await.expect("send_to");
                     let (n, from) = sock.recv_from(&mut buf).await.expect("recv_from");
                     assert_eq!(from, addr, "reply came from {from}, not the server");
-                    assert_eq!(&buf[..n], msg.as_bytes(), "client {id} got someone else's datagram");
+                    assert_eq!(
+                        &buf[..n],
+                        msg.as_bytes(),
+                        "client {id} got someone else's datagram"
+                    );
                 }
             })
         })
@@ -58,7 +62,10 @@ async fn datagrams() {
         c.await.expect("client");
     }
     echo.await.expect("echo server");
-    println!("{} datagrams echoed across {CLIENTS} sockets", CLIENTS * ROUNDS);
+    println!(
+        "{} datagrams echoed across {CLIENTS} sockets",
+        CLIENTS * ROUNDS
+    );
 }
 
 /// A connected UDP socket uses send/recv rather than send_to/recv_from, which is
@@ -95,16 +102,27 @@ async fn names() {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let port = listener.local_addr().expect("local_addr").port();
 
-    let resolved: Vec<_> = lookup_host(("localhost", port)).await.expect("lookup_host").collect();
+    let resolved: Vec<_> = lookup_host(("localhost", port))
+        .await
+        .expect("lookup_host")
+        .collect();
     assert!(!resolved.is_empty(), "localhost resolved to nothing");
-    assert!(resolved.iter().all(|a| a.ip().is_loopback()), "localhost gave {resolved:?}");
+    assert!(
+        resolved.iter().all(|a| a.ip().is_loopback()),
+        "localhost gave {resolved:?}"
+    );
     assert!(resolved.iter().all(|a| a.port() == port));
 
     // Connecting by name goes through the same resolver.
     let accepted = tokio::spawn(async move { listener.accept().await.expect("accept") });
-    let sock = tokio::net::TcpStream::connect(("localhost", port)).await.expect("connect by name");
+    let sock = tokio::net::TcpStream::connect(("localhost", port))
+        .await
+        .expect("connect by name");
     assert!(sock.peer_addr().expect("peer_addr").ip().is_loopback());
     accepted.await.expect("accept task");
 
-    println!("lookup_host: localhost -> {} address(es), connect by name worked", resolved.len());
+    println!(
+        "lookup_host: localhost -> {} address(es), connect by name worked",
+        resolved.len()
+    );
 }

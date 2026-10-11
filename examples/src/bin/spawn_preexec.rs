@@ -54,7 +54,11 @@ fn reaches_exec(exe: &str) {
     .expect("spawn with a pre_exec closure");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains(MARKER), "the child said {stdout:?}");
-    assert!(out.status.success(), "the child exited {:?}", out.status.code());
+    assert!(
+        out.status.success(),
+        "the child exited {:?}",
+        out.status.code()
+    );
     println!("a closure that succeeds: child ran and exited clean");
 }
 
@@ -70,7 +74,11 @@ fn carries_the_errno(exe: &str) {
             .spawn()
     }
     .expect_err("a pre_exec that refuses must fail the spawn");
-    assert_eq!(err.raw_os_error(), Some(REFUSAL), "the child's errno came back as {err:?}");
+    assert_eq!(
+        err.raw_os_error(),
+        Some(REFUSAL),
+        "the child's errno came back as {err:?}"
+    );
     println!("a closure that refuses: errno {REFUSAL} came back over the error channel");
 }
 
@@ -93,7 +101,10 @@ fn setsid(exe: &str) {
     }
     .expect("spawn with setsid in pre_exec");
     let text = String::from_utf8_lossy(&out.stdout);
-    let theirs: i32 = text.trim().parse().unwrap_or_else(|_| panic!("child printed {text:?}"));
+    let theirs: i32 = text
+        .trim()
+        .parse()
+        .unwrap_or_else(|_| panic!("child printed {text:?}"));
     // Getting this far already means setsid returned something other than -1,
     // since the closure turns that into a failed spawn. NT has no sessions to
     // ask about afterwards, and getsid answers -1 on both sides there.
