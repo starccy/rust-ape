@@ -19,14 +19,14 @@ int euidaccess(const char *, int);
 #include <libc/dce.h>
 #include <libc/sysv/consts/at.h>
 
-// shim/suffix.c
-int __ape_shim_exe_fallback(int dirfd, const char *path, char *buf);
+#include "suffix.h"
 
 int __ape_shim_fstatat(int dirfd, const char *path, struct stat *st, int flags) {
     int rc = fstatat(dirfd, path, st, flags);
     if (rc < 0 && errno == ENOENT) {
+        int dir = __ape_shim_miss_dir();
         char buf[PATH_MAX];
-        if (__ape_shim_exe_fallback(dirfd, path, buf))
+        if (__ape_shim_exe_fallback(dirfd, path, buf, dir))
             rc = fstatat(dirfd, buf, st, flags);
     }
     return rc;
@@ -37,8 +37,9 @@ int __ape_shim_fstatat(int dirfd, const char *path, struct stat *st, int flags) 
 int __ape_shim_stat(const char *path, struct stat *st) {
     int rc = stat(path, st);
     if (rc < 0 && errno == ENOENT) {
+        int dir = __ape_shim_miss_dir();
         char buf[PATH_MAX];
-        if (__ape_shim_exe_fallback(AT_FDCWD, path, buf)) rc = stat(buf, st);
+        if (__ape_shim_exe_fallback(AT_FDCWD, path, buf, dir)) rc = stat(buf, st);
     }
     return rc;
 }
@@ -46,8 +47,9 @@ int __ape_shim_stat(const char *path, struct stat *st) {
 int __ape_shim_lstat(const char *path, struct stat *st) {
     int rc = lstat(path, st);
     if (rc < 0 && errno == ENOENT) {
+        int dir = __ape_shim_miss_dir();
         char buf[PATH_MAX];
-        if (__ape_shim_exe_fallback(AT_FDCWD, path, buf)) rc = lstat(buf, st);
+        if (__ape_shim_exe_fallback(AT_FDCWD, path, buf, dir)) rc = lstat(buf, st);
     }
     return rc;
 }
@@ -55,8 +57,9 @@ int __ape_shim_lstat(const char *path, struct stat *st) {
 int __ape_shim_access(const char *path, int amode) {
     int rc = access(path, amode);
     if (rc < 0 && errno == ENOENT) {
+        int dir = __ape_shim_miss_dir();
         char buf[PATH_MAX];
-        if (__ape_shim_exe_fallback(AT_FDCWD, path, buf)) rc = access(buf, amode);
+        if (__ape_shim_exe_fallback(AT_FDCWD, path, buf, dir)) rc = access(buf, amode);
     }
     return rc;
 }
@@ -65,8 +68,9 @@ int __ape_shim_access(const char *path, int amode) {
 int __ape_shim_eaccess(const char *path, int amode) {
     int rc = eaccess(path, amode);
     if (rc < 0 && errno == ENOENT) {
+        int dir = __ape_shim_miss_dir();
         char buf[PATH_MAX];
-        if (__ape_shim_exe_fallback(AT_FDCWD, path, buf)) rc = eaccess(buf, amode);
+        if (__ape_shim_exe_fallback(AT_FDCWD, path, buf, dir)) rc = eaccess(buf, amode);
     }
     return rc;
 }
@@ -74,8 +78,9 @@ int __ape_shim_eaccess(const char *path, int amode) {
 int __ape_shim_euidaccess(const char *path, int amode) {
     int rc = euidaccess(path, amode);
     if (rc < 0 && errno == ENOENT) {
+        int dir = __ape_shim_miss_dir();
         char buf[PATH_MAX];
-        if (__ape_shim_exe_fallback(AT_FDCWD, path, buf))
+        if (__ape_shim_exe_fallback(AT_FDCWD, path, buf, dir))
             rc = euidaccess(buf, amode);
     }
     return rc;
@@ -84,8 +89,9 @@ int __ape_shim_euidaccess(const char *path, int amode) {
 int __ape_shim_faccessat(int dirfd, const char *path, int amode, int flags) {
     int rc = faccessat(dirfd, path, amode, flags);
     if (rc < 0 && errno == ENOENT) {
+        int dir = __ape_shim_miss_dir();
         char buf[PATH_MAX];
-        if (__ape_shim_exe_fallback(dirfd, path, buf))
+        if (__ape_shim_exe_fallback(dirfd, path, buf, dir))
             rc = faccessat(dirfd, buf, amode, flags);
     }
     return rc;
