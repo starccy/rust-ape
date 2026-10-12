@@ -11,6 +11,7 @@ pub(super) fn helper(
     explicit: &BTreeMap<String, Explicit>,
     os_ext: bool,
     callbacks: bool,
+    wide: bool,
     reexport: bool,
 ) -> String {
     let mut decls = String::new();
@@ -126,6 +127,7 @@ pub(super) fn helper(
     } else {
         ""
     };
+    let wide_fns = if wide { WIDE } else { "" };
     let mut dll_defs = String::new();
     for (name, x) in explicit {
         let sym = &x.sym;
@@ -274,7 +276,7 @@ pub mod __ape_hostlink {{
         unsafe {{ __hostos & 4 != 0 }}
     }}
 
-{os_ext_fns}{callback_ty}
+{os_ext_fns}{wide_fns}{callback_ty}
     /// where a declaration's function is, found the first time it's called
     pub struct Slot {{
         raw: AtomicPtr<c_void>,
@@ -610,3 +612,192 @@ macro_rules! __ape_hostlink_variadic {{
 {reexport}"#
     )
 }
+
+// The C library's wide character functions as Windows code means them,
+// with a 16-bit wchar_t, for the stand-ins the rewrite puts in place of
+// their declarations (see WIDE_FNS in transform.rs). The C library here
+// has a 32-bit one. Case folding is the "C" locale's, ASCII only.
+const WIDE: &str = r#"
+    pub mod wide {
+        use super::__core::ptr;
+
+        unsafe extern "C" {
+            fn malloc(n: usize) -> *mut u16;
+        }
+
+        fn fold(c: u16) -> u16 {
+            if (0x41..=0x5a).contains(&c) { c + 0x20 } else { c }
+        }
+
+        pub unsafe fn wcslen(s: *const u16) -> usize {
+            unsafe { wcsnlen(s, usize::MAX) }
+        }
+
+        pub unsafe fn wcsnlen(s: *const u16, max: usize) -> usize {
+            let mut n = 0;
+            while n < max && unsafe { *s.add(n) } != 0 {
+                n += 1;
+            }
+            n
+        }
+
+        unsafe fn cmp(a: *const u16, b: *const u16, n: usize, f: fn(u16) -> u16, nul: bool) -> i32 {
+            for i in 0..n {
+                let (x, y) = unsafe { (f(*a.add(i)), f(*b.add(i))) };
+                if x != y {
+                    return x as i32 - y as i32;
+                }
+                if nul && x == 0 {
+                    return 0;
+                }
+            }
+            0
+        }
+
+        pub unsafe fn wcscmp(a: *const u16, b: *const u16) -> i32 {
+            unsafe { cmp(a, b, usize::MAX, |c| c, true) }
+        }
+
+        pub unsafe fn wcsncmp(a: *const u16, b: *const u16, n: usize) -> i32 {
+            unsafe { cmp(a, b, n, |c| c, true) }
+        }
+
+        pub unsafe fn _wcsicmp(a: *const u16, b: *const u16) -> i32 {
+            unsafe { cmp(a, b, usize::MAX, fold, true) }
+        }
+
+        pub unsafe fn _wcsnicmp(a: *const u16, b: *const u16, n: usize) -> i32 {
+            unsafe { cmp(a, b, n, fold, true) }
+        }
+
+        pub unsafe fn wmemcmp(a: *const u16, b: *const u16, n: usize) -> i32 {
+            unsafe { cmp(a, b, n, |c| c, false) }
+        }
+
+        pub unsafe fn wcscpy(d: *mut u16, s: *const u16) -> *mut u16 {
+            unsafe { ptr::copy(s, d, wcslen(s) + 1) };
+            d
+        }
+
+        pub unsafe fn wcsncpy(d: *mut u16, s: *const u16, n: usize) -> *mut u16 {
+            let k = unsafe { wcsnlen(s, n) };
+            unsafe {
+                ptr::copy(s, d, k);
+                ptr::write_bytes(d.add(k), 0, n - k);
+            }
+            d
+        }
+
+        pub unsafe fn wcscat(d: *mut u16, s: *const u16) -> *mut u16 {
+            unsafe { wcscpy(d.add(wcslen(d)), s) };
+            d
+        }
+
+        pub unsafe fn wcsncat(d: *mut u16, s: *const u16, n: usize) -> *mut u16 {
+            unsafe {
+                let e = d.add(wcslen(d));
+                let k = wcsnlen(s, n);
+                ptr::copy(s, e, k);
+                *e.add(k) = 0;
+            }
+            d
+        }
+
+        pub unsafe fn wcschr(s: *const u16, c: u16) -> *mut u16 {
+            let mut p = s;
+            loop {
+                let x = unsafe { *p };
+                if x == c {
+                    return p as *mut u16;
+                }
+                if x == 0 {
+                    return ptr::null_mut();
+                }
+                p = unsafe { p.add(1) };
+            }
+        }
+
+        pub unsafe fn wcsrchr(s: *const u16, c: u16) -> *mut u16 {
+            let n = unsafe { wcslen(s) };
+            for i in (0..=n).rev() {
+                if unsafe { *s.add(i) } == c {
+                    return unsafe { s.add(i) } as *mut u16;
+                }
+            }
+            ptr::null_mut()
+        }
+
+        pub unsafe fn wcsstr(h: *const u16, n: *const u16) -> *mut u16 {
+            let (hl, nl) = unsafe { (wcslen(h), wcslen(n)) };
+            for i in 0..=hl.saturating_sub(nl) {
+                if nl <= hl && unsafe { cmp(h.add(i), n, nl, |c| c, false) } == 0 {
+                    return unsafe { h.add(i) } as *mut u16;
+                }
+            }
+            ptr::null_mut()
+        }
+
+        unsafe fn span(s: *const u16, set: *const u16, inside: bool) -> usize {
+            let mut n = 0;
+            loop {
+                let c = unsafe { *s.add(n) };
+                if c == 0 || unsafe { !wcschr(set, c).is_null() } != inside {
+                    return n;
+                }
+                n += 1;
+            }
+        }
+
+        pub unsafe fn wcsspn(s: *const u16, set: *const u16) -> usize {
+            unsafe { span(s, set, true) }
+        }
+
+        pub unsafe fn wcscspn(s: *const u16, set: *const u16) -> usize {
+            unsafe { span(s, set, false) }
+        }
+
+        pub unsafe fn wcspbrk(s: *const u16, set: *const u16) -> *mut u16 {
+            let n = unsafe { span(s, set, false) };
+            if unsafe { *s.add(n) } == 0 {
+                ptr::null_mut()
+            } else {
+                unsafe { s.add(n) as *mut u16 }
+            }
+        }
+
+        pub unsafe fn _wcsdup(s: *const u16) -> *mut u16 {
+            let n = unsafe { wcslen(s) } + 1;
+            let d = unsafe { malloc(n * 2) };
+            if !d.is_null() {
+                unsafe { ptr::copy_nonoverlapping(s, d, n) };
+            }
+            d
+        }
+
+        pub unsafe fn wmemcpy(d: *mut u16, s: *const u16, n: usize) -> *mut u16 {
+            unsafe { ptr::copy_nonoverlapping(s, d, n) };
+            d
+        }
+
+        pub unsafe fn wmemmove(d: *mut u16, s: *const u16, n: usize) -> *mut u16 {
+            unsafe { ptr::copy(s, d, n) };
+            d
+        }
+
+        pub unsafe fn wmemset(d: *mut u16, c: u16, n: usize) -> *mut u16 {
+            for i in 0..n {
+                unsafe { *d.add(i) = c };
+            }
+            d
+        }
+
+        pub unsafe fn wmemchr(s: *const u16, c: u16, n: usize) -> *mut u16 {
+            for i in 0..n {
+                if unsafe { *s.add(i) } == c {
+                    return unsafe { s.add(i) } as *mut u16;
+                }
+            }
+            ptr::null_mut()
+        }
+    }
+"#;

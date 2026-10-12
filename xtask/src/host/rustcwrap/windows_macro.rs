@@ -1,4 +1,5 @@
-//! The copy of a windows-family proc macro crate whose output gets its
+//! The copy of a proc macro crate that is Windows code (the windows-*
+//! ones, or one listed as such, see crate_info.rs) whose output gets its
 //! `extern "system"` fixed at expansion time.
 
 use std::collections::{HashMap, HashSet};
@@ -8,12 +9,12 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use syn::spanned::Spanned;
 
-use super::crate_info::Crate;
+use super::crate_info::{Crate, crate_mode};
 use super::shadow::compile_copy;
 use super::source::{blank, load, tokens};
 use super::{host_abi, values};
 
-// A proc macro of the windows family runs on the build machine and
+// A proc macro that is Windows code runs on the build machine and
 // writes `extern "system"` into whichever crate uses it, which the
 // rewrite of that crate's source never sees (`#[interface]` makes COM
 // vtables that way). The macro's crate is compiled from a copy in which
@@ -27,7 +28,7 @@ pub(super) fn windows_macro(args: &[String]) -> Result<Option<i32>> {
     let Some(name) = values(args, "--crate-name").into_iter().next() else {
         return Ok(None);
     };
-    if !name.starts_with("windows_") {
+    if !crate_mode(&name, "windows") {
         return Ok(None);
     }
     let Some(root_arg) = args[1..]

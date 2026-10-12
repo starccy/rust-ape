@@ -762,9 +762,12 @@ mod win {
         let dxgi: IDXGIDevice = device.cast()?;
         let adapter = unsafe { dxgi.GetAdapter() }?;
         let desc = unsafe { adapter.GetDesc() }?;
-        let name = String::from_utf16_lossy(&desc.Description)
-            .trim_end_matches('\0')
-            .to_string();
+        let name_len = desc
+            .Description
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(desc.Description.len());
+        let name = String::from_utf16_lossy(&desc.Description[..name_len]);
         let factory: IDXGIFactory2 = unsafe { adapter.GetParent() }?;
         let sc = DXGI_SWAP_CHAIN_DESC1 {
             Width: w,

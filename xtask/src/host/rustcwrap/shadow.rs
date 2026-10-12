@@ -91,6 +91,14 @@ pub(super) fn compile_copy(
         std::io::stderr().write_all(&output.stderr)?;
         return Ok(Some(0));
     }
+    // a compile_error! the rewrite put in is the answer, for something it
+    // can't make right; compiling the crate as it is would hide exactly that
+    let text = String::from_utf8_lossy(&output.stderr);
+    if text.contains("\"message\":\"rust-ape: ") || text.contains("error: rust-ape: ") {
+        use std::io::Write;
+        std::io::stderr().write_all(&output.stderr)?;
+        return Ok(Some(output.status.code().unwrap_or(1)));
+    }
     let log = base.join("failed.log");
     fs::write(&log, &output.stderr)?;
     eprintln!(

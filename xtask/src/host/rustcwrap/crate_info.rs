@@ -33,7 +33,7 @@ pub(super) struct Crate {
 // [package.metadata.rust-ape], or the project's lists it under
 // `windows-crates` / `apple-crates` (RUST_APE_CRATE_MODES, from `cargo
 // xtask build`). The windows-* crates are Windows code by name.
-fn crate_mode(name: &str, mode: &str) -> bool {
+pub(super) fn crate_mode(name: &str, mode: &str) -> bool {
     if mode == "windows" && (name == "windows" || name.starts_with("windows_")) {
         return true;
     }

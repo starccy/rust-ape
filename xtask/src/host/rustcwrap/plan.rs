@@ -24,6 +24,9 @@ pub(super) struct Plan {
     /// whether a struct field became a HostCallback, which the helper
     /// then defines
     pub(super) callbacks: bool,
+    /// whether a wide character function of the C library got a stand-in,
+    /// which calls the helper's `wide` module
+    pub(super) wide: bool,
 }
 
 // a module of the crate: a file, the inline modules down to it, and its

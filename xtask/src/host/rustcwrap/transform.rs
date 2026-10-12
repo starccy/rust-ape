@@ -216,6 +216,7 @@ pub(super) fn transform(args: &[String]) -> Result<Option<i32>> {
         linkage: false,
         os_ext: false,
         callbacks: false,
+        wide: false,
     };
     // what makes a variadic value's symbol this crate's own
     let tag: String = format!("{}{}", krate.name, krate.extra)
@@ -251,6 +252,12 @@ pub(super) fn transform(args: &[String]) -> Result<Option<i32>> {
         types.rewrite(&scopes, &mut plan);
     }
 
+    if krate.windows {
+        for (fi, src) in files.iter().enumerate() {
+            plan.wide |= nested_wide(fi, src, &mut plan.edits);
+        }
+    }
+
     for (si, Scope { fi, inline, .. }) in scopes.iter().enumerate() {
         let src = &files[*fi];
         let (items, end) = scope_items(src, inline);
@@ -277,6 +284,15 @@ pub(super) fn transform(args: &[String]) -> Result<Option<i32>> {
                 .map(|fw| format!("framework:{fw}"))
                 .or_else(|| fallback.clone());
             for fitem in &fm.items {
+                // what gets blanked is the declaration as written; what
+                // gets generated carries the block's cfg too
+                let (bs, be) = match fitem {
+                    syn::ForeignItem::Fn(f) => span_bytes(src, fitem.span(), &f.attrs),
+                    syn::ForeignItem::Static(st) => span_bytes(src, fitem.span(), &st.attrs),
+                    _ => continue,
+                };
+                let merged = with_block_cfgs(fitem, &fm.attrs);
+                let fitem = &merged;
                 if let syn::ForeignItem::Static(st) = fitem {
                     let sym =
                         attr_str(&st.attrs, "link_name").unwrap_or_else(|| st.ident.to_string());
@@ -292,21 +308,12 @@ pub(super) fn transform(args: &[String]) -> Result<Option<i32>> {
                 };
                 let sym =
                     attr_str(&f.attrs, "link_name").unwrap_or_else(|| f.sig.ident.to_string());
-                // the C library's wcslen counts 32-bit units here; Windows
-                // code means 16-bit ones
-                if krate.windows && sym == "wcslen" && f.sig.inputs.len() == 1 {
-                    let ty = match f.sig.inputs.first() {
-                        Some(syn::FnArg::Typed(t)) => tokens(&t.ty),
-                        _ => continue,
-                    };
-                    let (vis, name) = (tokens(&f.vis), &f.sig.ident);
-                    generated.push_str(&format!(
-                        "\n#[allow(warnings, clippy::all)]\n{vis} unsafe fn {name}(s: {ty}) -> usize {{ \
-let p: *const u16 = crate::__ape_hostlink::__core::mem::transmute_copy(&s); \
-let mut n = 0; unsafe {{ while *p.add(n) != 0 {{ n += 1; }} }} n }}\n"
-                    ));
-                    let (s, e) = span_bytes(src, fitem.span(), &f.attrs);
-                    plan.edits.push((*fi, s, e, blank(&src.text[s..e])));
+                // the C library's wide character functions take a 32-bit
+                // wchar_t here; Windows code means a 16-bit one
+                if krate.windows && is_wide(&sym) {
+                    generated.push_str(&wide_stand_in(f, &sym));
+                    plan.edits.push((*fi, bs, be, blank(&src.text[bs..be])));
+                    plan.wide = true;
                     continue;
                 }
                 let Some(lib) = owner.get(&sym).cloned().or_else(|| block_fallback.clone()) else {
@@ -350,8 +357,7 @@ let mut n = 0; unsafe {{ while *p.add(n) != 0 {{ n += 1; }} }} n }}\n"
                         &model,
                     ));
                 }
-                let (s, e) = span_bytes(src, fitem.span(), &f.attrs);
-                plan.edits.push((*fi, s, e, blank(&src.text[s..e])));
+                plan.edits.push((*fi, bs, be, blank(&src.text[bs..be])));
             }
         }
         if !generated.is_empty() {
@@ -373,6 +379,7 @@ let mut n = 0; unsafe {{ while *p.add(n) != 0 {{ n += 1; }} }} n }}\n"
             &plan.explicit,
             plan.os_ext,
             plan.callbacks,
+            plan.wide,
             reexport,
         ),
     ));
@@ -406,4 +413,170 @@ let mut n = 0; unsafe {{ while *p.add(n) != 0 {{ n += 1; }} }} n }}\n"
         changed.insert(files[fi].path.clone(), t);
     }
     compile_copy(args, &krate, manifest.as_deref(), out.as_deref(), changed)
+}
+
+// The C library's wide character functions that have a stand-in in the
+// helper's `wide` module: the name a declaration uses, the stand-in, and
+// each parameter as a pointer (p), a count (n) or a wchar_t (c), then the
+// result likewise or as an int (i)
+const WIDE_FNS: &[(&str, &str, &str)] = &[
+    ("wcslen", "wcslen", "p:n"),
+    ("wcsnlen", "wcsnlen", "pn:n"),
+    ("wcscmp", "wcscmp", "pp:i"),
+    ("wcsncmp", "wcsncmp", "ppn:i"),
+    ("_wcsicmp", "_wcsicmp", "pp:i"),
+    ("wcsicmp", "_wcsicmp", "pp:i"),
+    ("_wcsnicmp", "_wcsnicmp", "ppn:i"),
+    ("wcsnicmp", "_wcsnicmp", "ppn:i"),
+    ("wcscpy", "wcscpy", "pp:p"),
+    ("wcsncpy", "wcsncpy", "ppn:p"),
+    ("wcscat", "wcscat", "pp:p"),
+    ("wcsncat", "wcsncat", "ppn:p"),
+    ("wcschr", "wcschr", "pc:p"),
+    ("wcsrchr", "wcsrchr", "pc:p"),
+    ("wcsstr", "wcsstr", "pp:p"),
+    ("wcsspn", "wcsspn", "pp:n"),
+    ("wcscspn", "wcscspn", "pp:n"),
+    ("wcspbrk", "wcspbrk", "pp:p"),
+    ("_wcsdup", "_wcsdup", "p:p"),
+    ("wcsdup", "_wcsdup", "p:p"),
+    ("wmemcpy", "wmemcpy", "ppn:p"),
+    ("wmemmove", "wmemmove", "ppn:p"),
+    ("wmemset", "wmemset", "pcn:p"),
+    ("wmemcmp", "wmemcmp", "ppn:i"),
+    ("wmemchr", "wmemchr", "pcn:p"),
+];
+
+// a symbol of the C library's wcs* and wmem* families
+fn is_wide(sym: &str) -> bool {
+    let s = sym.trim_start_matches('_');
+    s.starts_with("wcs") || s.starts_with("wmem")
+}
+
+// A function with the declaration's own signature that calls the 16-bit
+// stand-in, converting each argument and the result: pointers by
+// transmute_copy, counts and characters with `as`, so a declaration whose
+// types don't fit fails to compile rather than calling the wrong thing.
+// One without a stand-in, or with another shape, is a compile error.
+fn wide_stand_in(f: &syn::ForeignItemFn, sym: &str) -> String {
+    let cfgs: String = f
+        .attrs
+        .iter()
+        .filter(|a| a.path().is_ident("cfg"))
+        .map(|a| tokens(a) + "\n")
+        .collect();
+    let fail = |why: &str| {
+        format!(
+            "\n{cfgs}compile_error!(\"rust-ape: {sym}, a wide character function of the C library, \
+{why}; Windows code means a 16-bit wchar_t, which the C library here doesn't have\");\n"
+        )
+    };
+    let Some(&(_, standin, shape)) = WIDE_FNS.iter().find(|w| w.0 == sym) else {
+        return fail("has no stand-in in rust-ape yet");
+    };
+    let (params, result) = shape.split_once(':').unwrap();
+    let tys: Vec<String> = f
+        .sig
+        .inputs
+        .iter()
+        .filter_map(|a| match a {
+            syn::FnArg::Typed(t) => Some(tokens(&t.ty)),
+            syn::FnArg::Receiver(_) => None,
+        })
+        .collect();
+    let syn::ReturnType::Type(_, ret) = &f.sig.output else {
+        return fail("is declared without a result");
+    };
+    if f.sig.variadic.is_some() || tys.len() != params.len() {
+        return fail("is declared with parameters it doesn't have");
+    }
+    let core = "crate::__ape_hostlink::__core";
+    let mut decl = Vec::new();
+    let mut args = Vec::new();
+    for (i, (ty, kind)) in tys.iter().zip(params.chars()).enumerate() {
+        decl.push(format!("a{i}: {ty}"));
+        args.push(match kind {
+            'p' => format!("{core}::mem::transmute_copy(&a{i})"),
+            'n' => format!("a{i} as usize"),
+            _ => format!("a{i} as u16"),
+        });
+    }
+    let ret = tokens(ret);
+    let back = match result {
+        "p" => format!("{core}::mem::transmute_copy(&r)"),
+        _ => format!("r as {ret}"),
+    };
+    format!(
+        "\n{cfgs}#[allow(warnings, clippy::all)]\n{vis} unsafe fn {name}({decl}) -> {ret} {{ \
+unsafe {{ let r = crate::__ape_hostlink::wide::{standin}({args}); {back} }} }}\n",
+        vis = tokens(&f.vis),
+        name = f.sig.ident,
+        decl = decl.join(", "),
+        args = args.join(", "),
+    )
+}
+
+// Wide character functions declared inside a function body, as
+// windows-strings does wcslen in PCWSTR::len, which the pass over each
+// module's items doesn't reach. A declaration is blanked and its
+// stand-in goes right after the block, in the same body. Returns whether
+// there was one.
+fn nested_wide(fi: usize, src: &Src, edits: &mut Vec<(usize, usize, usize, String)>) -> bool {
+    struct Finder<'a> {
+        fi: usize,
+        src: &'a Src,
+        edits: &'a mut Vec<(usize, usize, usize, String)>,
+        found: bool,
+    }
+    impl<'ast> syn::visit::Visit<'ast> for Finder<'_> {
+        fn visit_block(&mut self, b: &'ast syn::Block) {
+            for stmt in &b.stmts {
+                let syn::Stmt::Item(syn::Item::ForeignMod(fm)) = stmt else {
+                    continue;
+                };
+                let end = self.src.base + fm.span().byte_range().end;
+                for fitem in &fm.items {
+                    let syn::ForeignItem::Fn(f) = fitem else {
+                        continue;
+                    };
+                    let sym =
+                        attr_str(&f.attrs, "link_name").unwrap_or_else(|| f.sig.ident.to_string());
+                    if !is_wide(&sym) {
+                        continue;
+                    }
+                    let (s, e) = span_bytes(self.src, fitem.span(), &f.attrs);
+                    self.edits
+                        .push((self.fi, s, e, blank(&self.src.text[s..e])));
+                    let syn::ForeignItem::Fn(f) = with_block_cfgs(fitem, &fm.attrs) else {
+                        continue;
+                    };
+                    self.edits
+                        .push((self.fi, end, end, wide_stand_in(&f, &sym)));
+                    self.found = true;
+                }
+            }
+            syn::visit::visit_block(self, b);
+        }
+    }
+    let mut finder = Finder {
+        fi,
+        src,
+        edits,
+        found: false,
+    };
+    syn::visit::Visit::visit_file(&mut finder, &src.file);
+    finder.found
+}
+
+// an item of an extern block with the block's cfg attributes added to its
+// own, so what's generated for it exists exactly when the item does
+fn with_block_cfgs(item: &syn::ForeignItem, block: &[syn::Attribute]) -> syn::ForeignItem {
+    let cfgs = block.iter().filter(|a| a.path().is_ident("cfg")).cloned();
+    let mut item = item.clone();
+    match &mut item {
+        syn::ForeignItem::Fn(f) => f.attrs.extend(cfgs),
+        syn::ForeignItem::Static(st) => st.attrs.extend(cfgs),
+        _ => {}
+    }
+    item
 }

@@ -212,10 +212,13 @@ fn main() {
     for i in 0..n {
         let device = unsafe { devices.Item(i) }.expect("Item");
         let id = unsafe { device.GetId() }.expect("GetId");
-        println!(
-            "  {:?} {}",
-            friendly_name(&device),
-            unsafe { id.to_string() }.unwrap()
+        let id = unsafe { id.to_string() }.unwrap();
+        println!("  {:?} {id}", friendly_name(&device));
+        // a wide string measured with the C library's 32-bit wcslen comes
+        // out cut short or running on into whatever follows it
+        assert!(
+            id.starts_with('{') && id.ends_with('}') && id.matches('{').count() == 2,
+            "endpoint id {id:?} isn't whole"
         );
     }
     let default = match unsafe { enumerator.GetDefaultAudioEndpoint(eRender, eConsole) } {
