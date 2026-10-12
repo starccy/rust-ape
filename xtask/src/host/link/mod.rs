@@ -24,8 +24,8 @@ use anyhow::{Context, Result, bail};
 use self::stubs::stub_archive;
 use crate::metadata::Metadata;
 
-// bump when the generated code changes, so cached archives get remade
-pub(super) const GEN_VERSION: u32 = 7;
+// a hash of this module's source, so cached archives get remade when it changes
+pub(super) const LINKGEN_HASH: &str = env!("LINKGEN_HASH");
 
 /// What the command was asked to do; cli/hostlink.rs has the flags.
 pub struct Options {

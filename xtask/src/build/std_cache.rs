@@ -87,38 +87,43 @@ pub(super) fn purge_older_linked(dir: &Path, newer_than: std::time::SystemTime) 
     Ok(())
 }
 
-// The windows-* proc macros are host units, which RUSTFLAGS and its
-// version cfg don't reach, so their artifacts are dropped by hand when
-// the rewrite changes (see host/rustcwrap/windows_macro.rs).
-pub(super) fn purge_windows_macros(target_dir: &Path, profile: &str) -> Result<()> {
+// Proc macros are host units, which RUSTFLAGS and its rewrite hash don't
+// reach, so when the rewrite changes their fingerprints are dropped by
+// hand (see host/rustcwrap/windows_macro.rs). A proc macro is the deps
+// entry that is a dynamic library; its fingerprint directory ends in the
+// same metadata hash.
+pub(super) fn purge_proc_macros(target_dir: &Path, profile: &str) -> Result<()> {
     let stamp = target_dir.join("ape").join(format!(".rustcwrap-{profile}"));
-    let version = crate::host::rustcwrap::VERSION.to_string();
-    if fs::read_to_string(&stamp).ok().as_deref() == Some(version.as_str()) {
+    let hash = crate::host::rustcwrap::REWRITE_HASH;
+    if fs::read_to_string(&stamp).ok().as_deref() == Some(hash) {
         return Ok(());
     }
     let host = target_dir.join(profile);
-    for (sub, prefix) in [
-        ("deps", "libwindows_"),
-        ("deps", "windows_"),
-        (".fingerprint", "windows-"),
-    ] {
-        let Ok(rd) = fs::read_dir(host.join(sub)) else {
-            continue;
-        };
+    let mut metas = Vec::new();
+    if let Ok(rd) = fs::read_dir(host.join("deps")) {
         for e in rd.flatten() {
-            let name = e.file_name();
-            if name.to_string_lossy().starts_with(prefix) {
-                let p = e.path();
-                if p.is_dir() {
-                    fs::remove_dir_all(&p)?;
-                } else {
-                    fs::remove_file(&p)?;
-                }
+            let name = e.file_name().to_string_lossy().into_owned();
+            let Some(stem) = [".so", ".dylib", ".dll"]
+                .iter()
+                .find_map(|ext| name.strip_suffix(ext))
+            else {
+                continue;
+            };
+            if let Some((_, meta)) = stem.rsplit_once('-') {
+                metas.push(format!("-{meta}"));
+            }
+        }
+    }
+    if let Ok(rd) = fs::read_dir(host.join(".fingerprint")) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if metas.iter().any(|m| name.ends_with(m.as_str())) {
+                fs::remove_dir_all(e.path())?;
             }
         }
     }
     fs::create_dir_all(stamp.parent().unwrap())?;
-    fs::write(&stamp, version)?;
+    fs::write(&stamp, hash)?;
     Ok(())
 }
 

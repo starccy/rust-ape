@@ -9,7 +9,7 @@ use std::process::Command;
 use anyhow::{Context, Result, bail};
 
 use self::std_cache::{
-    clean_std, purge_older_linked, purge_stale_shim_links, purge_windows_macros, std_stamp,
+    clean_std, purge_older_linked, purge_proc_macros, purge_stale_shim_links, std_stamp,
     verify_std_redirects,
 };
 use crate::host::link;
@@ -225,7 +225,7 @@ impl Session {
                 )?;
             }
         }
-        purge_windows_macros(&session.target_dir, profile)?;
+        purge_proc_macros(&session.target_dir, profile)?;
         Ok(session)
     }
 
@@ -415,10 +415,10 @@ impl Session {
         // scripts keep linking the real libc symbols.
         rustflags.push_str("--cfg rustix_use_libc --cfg rust_ape_shim");
         // cargo doesn't rebuild a crate when RUSTC_WRAPPER changes what it does,
-        // so a new version of the rewrite says so here
+        // so a hash of the rewrite's source goes in here
         rustflags.push_str(&format!(
             " --cfg rust_ape_hostlink_{}",
-            crate::host::rustcwrap::VERSION
+            crate::host::rustcwrap::REWRITE_HASH
         ));
         // likewise when the project changes which crates are one host's code,
         // or which of its libraries exist on which host

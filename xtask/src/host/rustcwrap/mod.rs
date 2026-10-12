@@ -81,8 +81,8 @@ pub const ENV: &str = "RUST_APE_RUSTC_WRAP";
 /// A wrapper the user had set, which we run rustc through in turn
 pub const NEXT: &str = "RUST_APE_RUSTC_WRAPPER_NEXT";
 
-/// Bumped when the rewrite changes, which rebuilds everything once
-pub const VERSION: u32 = 13;
+/// A hash of the rewrite's source, which rebuilds everything once it changes
+pub const REWRITE_HASH: &str = env!("REWRITE_HASH");
 
 /// `args` is what cargo passed: rustc's path, then its arguments.
 pub fn run(args: Vec<OsString>) -> i32 {

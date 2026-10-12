@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use super::exports::exports_of;
 use super::find::lib_symbol;
 use super::sdk::{is_tbd, sdk_exports};
-use super::{GEN_VERSION, OSES, Options, host_names};
+use super::{LINKGEN_HASH, OSES, Options, host_names};
 use crate::util;
 
 pub(super) fn stub_archive(args: &Options, name: &str, path: &Path) -> Result<PathBuf> {
@@ -23,7 +23,7 @@ pub(super) fn stub_archive(args: &Options, name: &str, path: &Path) -> Result<Pa
     let overrides = std::env::var("RUST_APE_HOST_LIBS").unwrap_or_default();
     let mut h = Sha256::new();
     h.update(format!(
-        "{GEN_VERSION}\0{}\0{name}\0{}\0{}\0{mtime}\0{overrides}",
+        "{LINKGEN_HASH}\0{}\0{name}\0{}\0{}\0{mtime}\0{overrides}",
         args.arch,
         path.display(),
         meta.len()

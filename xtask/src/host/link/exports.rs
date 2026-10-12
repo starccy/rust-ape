@@ -7,7 +7,7 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use sha2::{Digest, Sha256};
 
-use super::GEN_VERSION;
+use super::LINKGEN_HASH;
 use super::sdk::{is_tbd, tbd_exports};
 use crate::util;
 
@@ -30,7 +30,7 @@ pub fn exports_of(path: &Path) -> Result<Exports> {
         .as_nanos();
     let mut h = Sha256::new();
     h.update(format!(
-        "{GEN_VERSION}\0{}\0{}\0{mtime}",
+        "{LINKGEN_HASH}\0{}\0{}\0{mtime}",
         path.display(),
         meta.len()
     ));
