@@ -37,6 +37,9 @@ enum Cmd {
     /// Make lazy-binding stubs for host shared libraries (run by the linker wrapper)
     #[command(hide = true)]
     Hostlink(cli::hostlink::HostLinkArgs),
+    /// Build the TLS plugin for a release (run by .github/workflows/tls-plugin.yml)
+    #[command(hide = true)]
+    TlsPlugin(cli::tls_plugin::TlsPluginArgs),
 }
 
 fn main() -> Result<()> {
@@ -56,5 +59,6 @@ fn main() -> Result<()> {
         Cmd::Audit(args) => cli::audit::run(&args),
         Cmd::HostBindings(args) => cli::host_bindings::run(&args),
         Cmd::Hostlink(args) => cli::hostlink::run(&args),
+        Cmd::TlsPlugin(args) => cli::tls_plugin::run(&args),
     }
 }

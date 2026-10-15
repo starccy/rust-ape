@@ -435,6 +435,10 @@ impl Session {
         if tiny {
             rustflags.push_str(" -C link-arg=-mtiny");
         }
+        rustflags.push_str(&crate::toolchain::tls_plugin::rustflags(
+            root,
+            &target_json,
+        )?);
         cmd.env("RUSTFLAGS", rustflags);
 
         // the linker wrapper runs `xtask hostlink` for libraries only the host has

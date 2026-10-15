@@ -2,12 +2,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 // Hashes of the code whose output cargo and the stub cache can't see change:
-// REWRITE_HASH for what rustcwrap writes, LINKGEN_HASH for the link stubs.
+// REWRITE_HASH for what rustcwrap writes, LINKGEN_HASH for the link stubs,
+// TLS_PLUGIN_HASH for the LLVM plugin.
 fn main() {
     let rewrite = hash(&["src/host/rustcwrap", "src/host/link"]);
     let linkgen = hash(&["src/host/link"]);
+    let tls = hash(&["tls-plugin"]);
     println!("cargo:rustc-env=REWRITE_HASH={rewrite:016x}");
     println!("cargo:rustc-env=LINKGEN_HASH={linkgen:016x}");
+    println!("cargo:rustc-env=TLS_PLUGIN_HASH={tls:016x}");
 }
 
 fn hash(dirs: &[&str]) -> u64 {

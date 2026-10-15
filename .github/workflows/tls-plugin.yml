@@ -1,0 +1,44 @@
+# Builds the LLVM plugin for thread_local! against the pinned rustc and
+# publishes it as a release, which `cargo xtask setup` downloads
+name: tls-plugin
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - rust-toolchain.toml
+      - xtask/tls-plugin/**
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build (${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        include:
+          - { arch: x86_64, os: ubuntu-latest }
+          - { arch: aarch64, os: ubuntu-24.04-arm }
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the pinned toolchain
+        run: rustup show active-toolchain || rustup toolchain install
+
+      - name: Build the plugin
+        id: plugin
+        run: cargo xtask tls-plugin --out dist | tee out.txt && grep '^tag=' out.txt >> "$GITHUB_OUTPUT"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.plugin.outputs.tag }}
+        run: |
+          gh release view "$TAG" >/dev/null 2>&1 ||
+            gh release create "$TAG" --title "$TAG" --notes "TLS plugin for $TAG" --target "$GITHUB_SHA" ||
+            gh release view "$TAG" >/dev/null
+          gh release upload "$TAG" dist/* --clobber

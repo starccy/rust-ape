@@ -6,6 +6,7 @@ use anyhow::{Context, Result, bail};
 
 use crate::toolchain::config;
 use crate::toolchain::fetch;
+use crate::toolchain::tls_plugin;
 use crate::util;
 
 /// What the command was asked to do; cli/setup.rs has the flags.
@@ -14,11 +15,14 @@ pub struct Options {
     pub force: bool,
     /// Use a locally built toolchain instead of the pinned release zip
     pub cosmocc: Option<PathBuf>,
+    /// Build the tls plugin here instead of downloading it, and fail if it can't be
+    pub build_tls_plugin: bool,
 }
 
 /// setup = restore vendor/ + materialize.
 pub fn run(args: &Options) -> Result<()> {
     fetch::run(args.force, args.cosmocc.as_deref())?;
+    tls_plugin::fetch(&util::repo_root(), args.force, args.build_tls_plugin)?;
     materialize()?;
     println!("setup done");
     Ok(())
@@ -85,7 +89,15 @@ fn materialize() -> Result<()> {
                 template.display()
             );
         }
-        let rendered = json.replace("@APE_LINKER@", &shim.display().to_string());
+        let mut rendered = json.replace("@APE_LINKER@", &shim.display().to_string());
+        // with the plugin, thread-locals live in the real TLS segment
+        const EMULATED: &str = "\"tls-model\": \"emulated\"";
+        if !rendered.contains(EMULATED) {
+            bail!("template {} has no {EMULATED}", template.display());
+        }
+        if tls_plugin::path(&root).is_file() {
+            rendered = rendered.replace(EMULATED, "\"tls-model\": \"local-exec\"");
+        }
         let out = generated.join(format!("{triple}.json"));
         fs::write(&out, rendered)?;
         println!("==> wrote generated/{triple}.json");

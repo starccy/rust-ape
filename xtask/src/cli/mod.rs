@@ -9,3 +9,4 @@ pub mod host_bindings;
 pub mod hostlink;
 pub mod setup;
 pub mod test;
+pub mod tls_plugin;
