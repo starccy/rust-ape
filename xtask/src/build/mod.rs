@@ -21,9 +21,10 @@ use crate::util;
 /// Extra flags handed to every C dependency.
 ///
 /// `_GNU_SOURCE` puts cosmo's headers in the Linux shape a library built for
-/// linux-musl expects, gating declarations like `madvise`. cosmo uses the
-/// macro for visibility only, never to switch a function's signature the way
-/// glibc does for `strerror_r`.
+/// linux-musl expects, gating declarations like `madvise`. The fork also
+/// follows glibc where the macro switches a signature: `strerror_r` is the
+/// GNU `char *` one under it (OpenSSL's o_str.c assumes exactly that), the
+/// XSI one otherwise.
 ///
 /// `scripts/cdeps-predef.h` rides along as a force-include for the cases a
 /// `-D` cannot express; read it for what is in there and why.

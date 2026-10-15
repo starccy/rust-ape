@@ -38,6 +38,37 @@ fn child() {
     assert_eq!(meta.len(), ASSET_TEXT.len() as u64);
 
     list_zip();
+    cwd_in_zip();
+}
+
+/// The zip store can be the working directory too, so relative paths,
+/// "." and ".." work from there; stepping above /zip lands on the host's
+/// root.
+fn cwd_in_zip() {
+    let before = std::env::current_dir().expect("current_dir");
+    std::env::set_current_dir("/zip").expect("chdir /zip");
+    let cwd = std::env::current_dir().expect("current_dir in /zip");
+    assert_eq!(cwd, std::path::Path::new("/zip"), "cwd is {cwd:?}");
+    let text = fs::read_to_string("some_file.txt").expect("read the asset by a relative path");
+    assert_eq!(text, ASSET_TEXT);
+    let here: Vec<String> = fs::read_dir(".")
+        .expect("read_dir .")
+        .filter_map(|e| e.ok().map(|e| e.file_name().to_string_lossy().into_owned()))
+        .collect();
+    assert!(
+        here.iter().any(|n| n == "some_file.txt"),
+        "read_dir . gave {here:?}"
+    );
+    assert!(fs::metadata("./some_file.txt").unwrap().is_file());
+    assert_eq!(
+        fs::write("new.txt", b"x").unwrap_err().raw_os_error(),
+        Some(libc::EROFS),
+        "the store is read-only"
+    );
+    std::env::set_current_dir("..").expect("chdir ..");
+    assert_eq!(std::env::current_dir().unwrap(), std::path::Path::new("/"));
+    std::env::set_current_dir(&before).expect("chdir back");
+    println!("cwd in /zip: {cwd:?}, then .. is /");
 }
 
 fn list_zip() {

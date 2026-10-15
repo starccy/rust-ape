@@ -2,13 +2,13 @@
 //!
 //! rustls-native-certs picks its backend at compile time and this target
 //! says linux, so on every host it reads /etc/ssl. Linux has that, macOS
-//! has cert.pem there, Windows has nothing, and the crate reports nothing
-//! either: zero roots and zero errors, so every TLS handshake fails with
-//! an unknown issuer. examples/bundle.toml packs the build machine's
-//! ca-certificates.crt into this binary, and cosmo serves it at the Linux
-//! path wherever the host lacks one. So the count has to be a real one
-//! everywhere, and a request through ureq's platform verifier (which is
-//! that same crate underneath) has to complete.
+//! has cert.pem there, and on Windows the fork serves ca-certificates.crt
+//! from the system ROOT store. examples/bundle.toml also packs the build
+//! machine's ca-certificates.crt into this binary, which cosmo serves at
+//! the Linux path wherever the host has nothing there (a host that has
+//! the file, the fork's virtual one included, wins). So the count has to
+//! be a real one everywhere, and a request through ureq's platform
+//! verifier (which is that same crate underneath) has to complete.
 
 use std::time::Duration;
 use ureq::config::Config;
@@ -21,8 +21,10 @@ fn main() {
     }
     println!("{} roots from the system store", result.certs.len());
     assert!(result.errors.is_empty(), "the store loaded with errors");
+    // Linux and macOS bundles carry well over a hundred roots; a Windows
+    // machine's ROOT store can be as small as a couple of dozen
     assert!(
-        result.certs.len() > 50,
+        result.certs.len() > 10,
         "{} roots is not a real store; is the bundle in this binary (unzip -l)?",
         result.certs.len()
     );

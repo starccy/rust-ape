@@ -1,13 +1,14 @@
-//! Reading the Windows certificate store, the third option in the README's
-//! TLS section.
+//! Reading the Windows certificate store directly, the third option in the
+//! README's TLS section.
 //!
 //! Every crate that reads the system store picks its backend at compile time,
-//! and this target says unix, so on Windows they all look in /etc/ssl and
-//! come back empty. The store itself is fine; it sits behind crypt32, which
-//! cosmo imports nothing from. So the way in is `LoadLibraryA` plus
-//! `GetProcAddress`, and the pointers that come back want Microsoft's x64
-//! convention, which is what `extern "win64"` is and why the enumeration is
-//! x86_64 only.
+//! and this target says unix, so on Windows they all look in /etc/ssl. The
+//! fork serves /etc/ssl/certs/ca-certificates.crt there from the ROOT store,
+//! so the crates find the roots without help; this example goes to the store
+//! itself, which sits behind crypt32, a library cosmo imports nothing from.
+//! The way in is `LoadLibraryA` plus `GetProcAddress`, and the pointers that
+//! come back want Microsoft's x64 convention, which is what `extern "win64"`
+//! is and why the enumeration is x86_64 only.
 //!
 //! What the enumeration yields is plain DER, exactly what rustls wants in a
 //! `RootCertStore`, and feeding it through `add()` is also the parse check.
